@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Branch Admin Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="../../css/design.css">
+    <link rel="stylesheet" href="../../css/branch_admin_dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script type="module" src="../../js/index.js"></script>
+    <script type="module" src="../../js/modules/dashboard_branch_admin.js"></script>
+</head>
+<body>
+    <header id="dynamic-header"></header>
+
+    <main class="main-content branch-admin-page">
+        <div class="branch-admin-topbar">
+            <div>
+                <h1 class="page-title mb-1">BRANCH ADMIN DASHBOARD</h1>
+                <p class="branch-admin-subtitle">Your center's schedule, enrollment, classes, and collections at a glance.</p>
+            </div>
+            <div class="branch-admin-branch-pill" id="branch-admin-branch-name">Assigned Branch</div>
+        </div>
+
+        <div class="branch-admin-dashboard">
+            <section class="branch-admin-stats-grid" id="branch-admin-stats-grid" aria-label="Branch operations summary"></section>
+
+            <section class="branch-admin-shortcuts" aria-label="Branch admin shortcuts">
+                <a href="schedule.html"><i class="bi bi-calendar3"></i><span>Schedule</span></a>
+                <a href="enrollement.html"><i class="bi bi-journal-check"></i><span>Enrollments</span></a>
+                <a href="payment.html"><i class="bi bi-credit-card"></i><span>Payments</span></a>
+                <a href="class.html"><i class="bi bi-building"></i><span>Classes</span></a>
+                <a href="session.html"><i class="bi bi-clock"></i><span>Session</span></a>
+            </section>
+
+            <section class="branch-admin-main-grid">
+                <article class="branch-admin-card" data-dashboard-modal="today-schedules">
+                    <div class="branch-admin-card-heading"><div><i class="bi bi-clock-history"></i><h2>Today's Schedule Desk</h2></div><a href="schedule.html">Open schedule <i class="bi bi-chevron-right"></i></a></div>
+                    <div id="branch-admin-today-schedule" class="branch-admin-list branch-admin-scroll-list"></div>
+                </article>
+                <article class="branch-admin-card" data-dashboard-modal="enrollment-pipeline">
+                    <div class="branch-admin-card-heading"><div><i class="bi bi-funnel"></i><h2>Enrollment Pipeline</h2></div><span class="branch-admin-count-badge" id="branch-admin-pending-applications">0 pending</span></div>
+                    <div id="branch-admin-enrollment-pipeline" class="branch-admin-pipeline"></div>
+                </article>
+            </section>
+
+            <section class="branch-admin-card mb-3" data-dashboard-modal="class-overview">
+                <div class="branch-admin-card-heading"><div><i class="bi bi-easel2"></i><h2>Class Load</h2></div><a href="class.html">Manage classes <i class="bi bi-chevron-right"></i></a></div>
+                <div class="branch-admin-table-wrap"><table class="branch-admin-table">
+                    <thead><tr><th>Program</th><th>Sections</th><th>Enrolled</th><th>Status</th></tr></thead>
+                    <tbody id="branch-admin-class-overview"></tbody>
+                </table></div>
+            </section>
+
+            <section class="branch-admin-detail-grid">
+                <article class="branch-admin-card" data-dashboard-modal="recent-enrollments">
+                    <div class="branch-admin-card-heading"><div><i class="bi bi-person-plus"></i><h2>Recent Enrollments</h2></div><a href="enrollement.html">View all <i class="bi bi-chevron-right"></i></a></div>
+                    <div class="branch-admin-table-wrap"><table class="branch-admin-table">
+                        <thead><tr><th>Student</th><th>Program</th><th>Date</th><th>Status</th></tr></thead>
+                        <tbody id="branch-admin-recent-enrollments"></tbody>
+                    </table></div>
+                </article>
+                <article class="branch-admin-card" data-dashboard-modal="billing-queue">
+                    <div class="branch-admin-card-heading"><div><i class="bi bi-cash-stack"></i><h2>Collection Desk</h2></div><span class="branch-admin-count-badge" id="branch-admin-billing-count">0 due</span></div>
+                    <div id="branch-admin-billing-queue" class="branch-admin-list"></div>
+                </article>
+                <article class="branch-admin-card" data-dashboard-modal="staff-summary">
+                    <div class="branch-admin-card-heading"><div><i class="bi bi-person-badge"></i><h2>Branch Staff</h2></div></div>
+                    <div id="branch-admin-staff-summary" class="branch-admin-list"></div>
+                </article>
+            </section>
+
+            <section class="branch-admin-card" data-dashboard-modal="upcoming-schedules">
+                <div class="branch-admin-card-heading"><div><i class="bi bi-calendar-event"></i><h2>Upcoming Sessions</h2></div><a href="schedule.html">View calendar <i class="bi bi-chevron-right"></i></a></div>
+                <div id="branch-admin-upcoming-schedule" class="branch-admin-list"></div>
+            </section>
+
+            <p class="branch-admin-error" id="branch-admin-dashboard-error" role="status"></p>
+        </div>
+    </main>
+</body>
+</html>

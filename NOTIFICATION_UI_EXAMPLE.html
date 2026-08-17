@@ -1,0 +1,249 @@
+<!-- 
+    Example: How Schedule Notifications Appear in the Notification Bell UI
+    This shows what students and teachers will see when they click the notification bell
+-->
+
+<!-- STUDENT VIEW: Schedule Reminders -->
+<div class="notification-dropdown" style="position: absolute; top: 100%; right: 0; background: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); z-index: 1000; min-width: 350px; max-height: 500px; overflow-y: auto;">
+    
+    <!-- Notification Header -->
+    <div style="padding: 12px; border-bottom: 1px solid #eee; background: #f8f9fa;">
+        <strong>📬 Your Notifications</strong>
+        <span style="float: right; color: #666; font-size: 12px;">5 unread</span>
+    </div>
+
+    <!-- Unread Schedule Notification -->
+    <div class="notification-item" style="padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; background: #f8f9fa; transition: all 0.2s;">
+        
+        <div style="display: flex; gap: 10px;">
+            <!-- Icon -->
+            <div style="flex-shrink: 0;">
+                <span style="font-size: 24px;">📅</span>
+            </div>
+            
+            <!-- Content -->
+            <div style="flex: 1;">
+                <div style="font-weight: bold; color: #333; margin-bottom: 4px;">
+                    Schedule Reminder - April 17, 2026
+                </div>
+                
+                <div style="font-size: 13px; color: #666; margin-bottom: 8px;">
+                    You have a tutoring session today at 1:00 PM with instructor Paul Espinosa
+                </div>
+                
+                <!-- Schedule Details -->
+                <div style="background: white; border-left: 3px solid #2563eb; padding: 8px; margin-bottom: 8px; font-size: 12px; color: #555;">
+                    <div><strong>📚 Program:</strong> English Tutoring</div>
+                    <div><strong>👨‍🏫 Teacher:</strong> Paul Espinosa</div>
+                    <div><strong>🕐 Time:</strong> 1:00 PM - 2:00 PM</div>
+                    <div><strong>📍 Branch:</strong> Main Branch</div>
+                </div>
+                
+                <!-- Metadata -->
+                <div style="font-size: 11px; color: #999;">
+                    💌 Email sent 14:44:03
+                    <span style="margin-left: 12px; color: #dc2626; font-weight: bold;">🔴 UNREAD</span>
+                </div>
+            </div>
+            
+            <!-- Close Button -->
+            <div style="flex-shrink: 0;">
+                <button style="background: none; border: none; cursor: pointer; color: #999; font-size: 18px;">×</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Another Unread Schedule Notification -->
+    <div class="notification-item" style="padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; background: #f8f9fa; transition: all 0.2s;">
+        
+        <div style="display: flex; gap: 10px;">
+            <div style="flex-shrink: 0;">
+                <span style="font-size: 24px;">📅</span>
+            </div>
+            
+            <div style="flex: 1;">
+                <div style="font-weight: bold; color: #333; margin-bottom: 4px;">
+                    Schedule Reminder - April 17, 2026
+                </div>
+                
+                <div style="font-size: 13px; color: #666; margin-bottom: 8px;">
+                    Class scheduled for Physics session this afternoon
+                </div>
+                
+                <div style="background: white; border-left: 3px solid #2563eb; padding: 8px; margin-bottom: 8px; font-size: 12px; color: #555;">
+                    <div><strong>📚 Program:</strong> Physics Tutoring</div>
+                    <div><strong>👨‍🏫 Teacher:</strong> Maria Gonzalez</div>
+                    <div><strong>🕐 Time:</strong> 3:00 PM - 4:00 PM</div>
+                    <div><strong>📍 Branch:</strong> Uptown Branch</div>
+                </div>
+                
+                <div style="font-size: 11px; color: #999;">
+                    💌 Email sent 14:43:50
+                    <span style="margin-left: 12px; color: #dc2626; font-weight: bold;">🔴 UNREAD</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Read Schedule Notification -->
+    <div class="notification-item" style="padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; background: #fff; opacity: 0.8;">
+        
+        <div style="display: flex; gap: 10px;">
+            <div style="flex-shrink: 0;">
+                <span style="font-size: 24px;">✅</span>
+            </div>
+            
+            <div style="flex: 1;">
+                <div style="font-weight: normal; color: #666; margin-bottom: 4px;">
+                    Schedule Reminder - April 16, 2026
+                </div>
+                
+                <div style="font-size: 13px; color: #999; margin-bottom: 8px;">
+                    Session completed with Dr. Robert Chen
+                </div>
+                
+                <div style="background: #f5f5f5; border-left: 3px solid #6b7280; padding: 8px; margin-bottom: 8px; font-size: 12px; color: #666;">
+                    <div><strong>📚 Program:</strong> Mathematics</div>
+                    <div><strong>👨‍🏫 Teacher:</strong> Dr. Robert Chen</div>
+                </div>
+                
+                <div style="font-size: 11px; color: #999;">
+                    💌 Email sent yesterday at 06:00
+                    <span style="margin-left: 12px; color: #10b981;">✓ READ</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding: 10px; border-top: 1px solid #eee; text-align: center; background: #f8f9fa;">
+        <a href="#" style="color: #2563eb; text-decoration: none; font-size: 12px;">View All Notifications</a>
+    </div>
+</div>
+
+<!-- TEACHER VIEW: Teaching Schedule Reminders -->
+<div class="notification-dropdown-teacher" style="position: absolute; top: 100%; right: 0; background: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); z-index: 1000; min-width: 350px; max-height: 500px; overflow-y: auto;">
+    
+    <!-- Notification Header -->
+    <div style="padding: 12px; border-bottom: 1px solid #eee; background: #f8f9fa;">
+        <strong>📬 Your Notifications</strong>
+        <span style="float: right; color: #666; font-size: 12px;">2 unread</span>
+    </div>
+
+    <!-- Unread Teaching Schedule Notification -->
+    <div class="notification-item" style="padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; background: #f8f9fa; transition: all 0.2s;">
+        
+        <div style="display: flex; gap: 10px;">
+            <!-- Icon -->
+            <div style="flex-shrink: 0;">
+                <span style="font-size: 24px;">📅</span>
+            </div>
+            
+            <!-- Content -->
+            <div style="flex: 1;">
+                <div style="font-weight: bold; color: #333; margin-bottom: 4px;">
+                    Teaching Schedule Reminder - April 17, 2026
+                </div>
+                
+                <div style="font-size: 13px; color: #666; margin-bottom: 8px;">
+                    You have a tutoring session with student John Michael today at 1:00 PM
+                </div>
+                
+                <!-- Schedule Details -->
+                <div style="background: white; border-left: 3px solid #059669; padding: 8px; margin-bottom: 8px; font-size: 12px; color: #555;">
+                    <div><strong>📚 Program:</strong> English Tutoring</div>
+                    <div><strong>👤 Student:</strong> John Michael</div>
+                    <div><strong>🕐 Time:</strong> 1:00 PM - 2:00 PM</div>
+                    <div><strong>📍 Branch:</strong> Main Branch</div>
+                </div>
+                
+                <!-- Metadata -->
+                <div style="font-size: 11px; color: #999;">
+                    💌 Email sent 14:44:03
+                    <span style="margin-left: 12px; color: #dc2626; font-weight: bold;">🔴 UNREAD</span>
+                </div>
+            </div>
+            
+            <!-- Close Button -->
+            <div style="flex-shrink: 0;">
+                <button style="background: none; border: none; cursor: pointer; color: #999; font-size: 18px;">×</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Another Teaching Session -->
+    <div class="notification-item" style="padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; background: #f8f9fa;">
+        
+        <div style="display: flex; gap: 10px;">
+            <div style="flex-shrink: 0;">
+                <span style="font-size: 24px;">📅</span>
+            </div>
+            
+            <div style="flex: 1;">
+                <div style="font-weight: bold; color: #333; margin-bottom: 4px;">
+                    Teaching Schedule Reminder - April 17, 2026
+                </div>
+                
+                <div style="font-size: 13px; color: #666; margin-bottom: 8px;">
+                    Physics class with student Maria Cruz at 3:00 PM
+                </div>
+                
+                <div style="background: white; border-left: 3px solid #059669; padding: 8px; margin-bottom: 8px; font-size: 12px; color: #555;">
+                    <div><strong>📚 Program:</strong> Physics Tutoring</div>
+                    <div><strong>👤 Student:</strong> Maria Cruz</div>
+                    <div><strong>🕐 Time:</strong> 3:00 PM - 4:00 PM</div>
+                    <div><strong>📍 Branch:</strong> Uptown Branch</div>
+                </div>
+                
+                <div style="font-size: 11px; color: #999;">
+                    💌 Email sent 14:44:00
+                    <span style="margin-left: 12px; color: #dc2626; font-weight: bold;">🔴 UNREAD</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding: 10px; border-top: 1px solid #eee; text-align: center; background: #f8f9fa;">
+        <a href="#" style="color: #2563eb; text-decoration: none; font-size: 12px;">View All Notifications</a>
+    </div>
+</div>
+
+<!-- 
+FEATURES SHOWN:
+
+✅ Schedule Icon (📅) - Easily identifies schedule notifications
+✅ Email Timestamp (💌) - Shows when email was sent
+✅ Read Status (🔴 UNREAD / ✓ READ) - Visual indicator of read status
+✅ Schedule Details (Program, Teacher/Student, Time, Branch)
+✅ Student View - Shows teacher name and session details
+✅ Teacher View - Shows student name and teaching assignments
+✅ Unread Count Badge (5 unread, 2 unread) - Shows on notification bell
+✅ Dismiss Button (×) - Delete/close notifications
+✅ Visual Distinction - Unread items highlighted, read items greyed out
+✅ Compact yet Informative - All key info without clutter
+
+HOW IT WORKS IN THE SYSTEM:
+
+1. At 6:00 AM daily:
+   - schedule_notifications.php runs
+   - Finds all today's schedules
+   - Sends emails to students and teachers
+   - Stores notifications in database
+
+2. User clicks notification bell:
+   - Frontend calls getNotifications(user_id, user_type)
+   - API returns user's schedule notifications
+   - Display rendered in dropdown
+   - Badge shows unread count
+
+3. User interactions:
+   - Click notification → Mark as read (updateNotification)
+   - Click X → Delete notification (deleteNotification)
+   - Visual updates reflect in UI
+
+4. Database tracking:
+   - All actions logged with timestamps
+   - Status updated (is_read: 0/1)
+   - History preserved for auditing
+-->

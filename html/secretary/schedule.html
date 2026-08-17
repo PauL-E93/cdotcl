@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secretary Schedule</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="../../css/design.css?v=20260814-all-schedule-details">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script type="module" src="../../js/index.js?v=20260814-all-schedule-details"></script>
+</head>
+<body>
+    <header id="dynamic-header"></header>
+
+    <main class="main-content">
+        <div class="top-bar">
+            <h1 class="page-title">SCHEDULE</h1>
+
+            <div class="d-flex gap-3">
+                <div class="search-wrapper">
+                    <input type="text" class="form-control shadow-sm" placeholder="Search..." id="search-input">
+                    <i class="bi bi-search search-icon"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="filter-container secretary-schedule-filter shadow-sm mb-4">
+            <div class="filter-heading secretary-schedule-filter-row">
+                <div class="d-flex align-items-center gap-3 flex-wrap">
+                    <span class="filter-label">Filter by:</span>
+                    <button type="button" class="btn btn-theme filter-toggle-btn d-md-none">
+                        <i class="bi bi-funnel me-2"></i> Filter & Sort
+                    </button>
+                </div>
+
+                <div class="filter-panel secretary-schedule-filter-panel align-items-center">
+                    <select class="form-select" id="secretary-schedule-branch-filter" aria-label="Filter schedule by center">
+                        <option value="all">All Centers</option>
+                    </select>
+                    <select class="form-select" id="secretary-schedule-status-filter" aria-label="Filter schedule by status">
+                        <option value="all">All Statuses</option>
+                        <option value="pending">Pending</option>
+                        <option value="confirmed">Confirmed</option>
+                        <option value="ongoing">Ongoing</option>
+                        <option value="done">Done</option>
+                        <option value="cancelled">Cancelled</option>
+                        <option value="no-show">No-show</option>
+                    </select>
+                </div>
+
+                <div class="d-flex gap-2 filter-actions">
+                    <button class="btn btn-theme apply-filters-btn" type="button">Apply Filters</button>
+                    <button class="btn btn-outline-dark rounded-circle filter-settings-btn" type="button">
+                        <i class="bi bi-gear"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="calendar-container" class="module-container"></div>
+    </main>
+
+    <script type="module">
+        import SecretaryCalendarModule from '../../js/modules/secretary_schedule.js?v=20260814-all-schedule-details';
+        document.addEventListener('DOMContentLoaded', () => {
+            if (window.__scheduleRbacLocked) return;
+            new SecretaryCalendarModule('calendar-container');
+        });
+    </script>
+</body>
+</html>

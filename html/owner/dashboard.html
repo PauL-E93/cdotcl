@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Owner Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="../../css/design.css">
+    <link rel="stylesheet" href="../../css/owner_dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script type="module" src="../../js/index.js"></script>
+    <script type="module" src="../../js/modules/dashbaord_owner.js"></script>
+</head>
+<body>
+    <header id="dynamic-header"></header>
+
+    <main class="main-content owner-page">
+        <div class="owner-topbar">
+            <div>
+                <h1 class="page-title mb-1">OWNER DASHBOARD</h1>
+                <p class="owner-subtitle">Organization-wide overview and management shortcuts.</p>
+            </div>
+            <select id="owner-branch-filter" class="owner-branch-filter" aria-label="Filter dashboard by center">
+                <option value="all">All Centers</option>
+            </select>
+        </div>
+
+        <div class="owner-dashboard">
+            <section class="owner-stats-grid" aria-label="Organization summary">
+                <article class="owner-stat-card owner-stat-pink owner-stat-expanded" data-dashboard-modal="total-enrollments">
+                    <div class="owner-stat-icon"><i class="bi bi-people-fill"></i></div>
+                    <div><p>Total Enrollments</p><strong id="owner-total-enrollments">0</strong><span>Across all programs</span></div>
+                </article>
+                <article class="owner-stat-card owner-stat-blue owner-stat-expanded" data-dashboard-modal="received-revenue">
+                    <div class="owner-stat-icon"><i class="bi bi-cash-stack"></i></div>
+                    <div><p>Received Revenue</p><strong class="owner-stat-money" id="owner-received-revenue">PHP 0.00</strong><span>Confirmed payments</span></div>
+                </article>
+            </section>
+
+
+            <section class="owner-main-grid">
+                <article class="owner-card" data-dashboard-modal="program-enrollments">
+                    <div class="owner-card-heading">
+                        <div><i class="bi bi-pie-chart"></i><h2>Enrollments by Program</h2></div>
+                        <select id="owner-program-period" class="owner-small-select" aria-label="Enrollment program period">
+                            <option value="day">Today</option>
+                            <option value="week">This Week</option>
+                            <option value="month" selected>This Month</option>
+                        </select>
+                    </div>
+                    <div id="owner-program-enrollments" class="owner-payment-overview"></div>
+                </article>
+                <article class="owner-card" data-dashboard-modal="payments">
+                    <div class="owner-card-heading">
+                        <div><i class="bi bi-cash-stack"></i><h2>Payments by Program</h2></div>
+                        <select id="owner-payment-period" class="owner-small-select" aria-label="Payment period">
+                            <option value="day">Today</option>
+                            <option value="week">This Week</option>
+                            <option value="month" selected>This Month</option>
+                        </select>
+                    </div>
+                    <div id="owner-payment-overview" class="owner-payment-overview"></div>
+                </article>
+            </section>
+
+            <section class="owner-card owner-branch-card" data-dashboard-modal="center-performance">
+                <div class="owner-card-heading">
+                    <div><i class="bi bi-shop-window"></i><h2>Center Performance</h2></div>
+                    <select id="owner-center-period" class="owner-small-select" aria-label="Center performance period">
+                        <option value="day">Today</option>
+                        <option value="week">This Week</option>
+                        <option value="month" selected>This Month</option>
+                    </select>
+                </div>
+                <div class="owner-table-wrap"><table class="owner-table">
+                    <thead><tr><th>Center</th><th>Location</th><th>Enrollments</th><th>Revenue</th><th>Employees</th><th>Classes</th><th>Pending Payments</th></tr></thead>
+                    <tbody id="owner-branch-performance"></tbody>
+                </table></div>
+                <a class="owner-card-link" href="center.html">Manage centers <i class="bi bi-chevron-right"></i></a>
+            </section>
+
+            <section class="owner-detail-grid">
+                <article class="owner-card owner-list-card" data-dashboard-modal="recent-enrollments">
+                    <div class="owner-card-heading"><div><i class="bi bi-journal-check"></i><h2>Recent Enrollments</h2></div></div>
+                    <div class="owner-table-wrap"><table class="owner-table">
+                        <thead><tr><th>Student</th><th>Program</th><th>Center</th><th>Status</th></tr></thead>
+                        <tbody id="owner-recent-enrollments"></tbody>
+                    </table></div>
+                    <a class="owner-card-link" href="enrollement.html">View all enrollments <i class="bi bi-chevron-right"></i></a>
+                </article>
+                <article class="owner-card owner-list-card" data-dashboard-modal="pending-payments">
+                    <div class="owner-card-heading"><div><i class="bi bi-credit-card"></i><h2>Pending Payments</h2></div><span class="owner-count-badge" id="owner-pending-count">0</span></div>
+                    <div class="owner-pending-list" id="owner-pending-payments"></div>
+                    <a class="owner-card-link" href="payment.html">Review payments <i class="bi bi-chevron-right"></i></a>
+                </article>
+            </section>
+
+            <section class="owner-card" data-dashboard-modal="enrollment-activity">
+                <div class="owner-card-heading">
+                    <div><i class="bi bi-graph-up-arrow"></i><h2>Enrollment Activity</h2></div>
+                    <select id="owner-trend-period" class="owner-small-select" aria-label="Enrollment activity period">
+                        <option value="week">This Week</option>
+                        <option value="month">This Month</option>
+                        <option value="year">This Year</option>
+                    </select>
+                </div>
+                <div id="owner-enrollment-trend" class="owner-trend-chart"></div>
+            </section>
+            <p class="owner-error" id="owner-dashboard-error" role="status"></p>
+        </div>
+    </main>
+</body>
+</html>

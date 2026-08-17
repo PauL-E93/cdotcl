@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="../../css/design.css">
+    <link rel="stylesheet" href="../../css/student_dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script type="module" src="../../js/index.js"></script>
+    <script type="module" src="../../js/studentmodule/dashboard.js"></script>
+</head>
+<body>
+    <header id="dynamic-header"></header>
+
+    <main class="main-content">
+        <div class="top-bar">
+            <h1 class="page-title">DASHBOARD</h1>
+
+            <div class="d-flex gap-3">
+                <div class="search-wrapper">
+                    <input type="search" class="form-control shadow-sm" placeholder="Search today's schedule..." id="student-dashboard-search">
+                    <i class="bi bi-search search-icon"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="student-dashboard">
+            <section class="student-stats-grid" aria-label="Dashboard summary">
+                <article class="student-stat-card student-stat-pink" data-dashboard-modal="today-classes">
+                    <div class="student-stat-icon"><i class="bi bi-calendar3"></i></div>
+                    <div>
+                        <p>Today's Classes</p>
+                        <strong id="student-today-classes-count">0</strong>
+                        <span>Classes scheduled today</span>
+                    </div>
+                </article>
+
+                <article class="student-stat-card student-stat-blue" data-dashboard-modal="total-enrollments">
+                    <div class="student-stat-icon"><i class="bi bi-journal-check"></i></div>
+                    <div>
+                        <p>Total Enrollments</p>
+                        <strong id="student-total-enrollments-count">0</strong>
+                        <span>Programs you are enrolled in</span>
+                    </div>
+                </article>
+
+                <article class="student-stat-card student-stat-green" data-dashboard-modal="upcoming-classes">
+                    <div class="student-stat-icon"><i class="bi bi-calendar2-week"></i></div>
+                    <div>
+                        <p>Upcoming Classes</p>
+                        <strong id="student-upcoming-classes-count">0</strong>
+                        <span>Classes scheduled ahead</span>
+                    </div>
+                </article>
+
+                <article class="student-stat-card student-stat-orange" data-dashboard-modal="completed-sessions">
+                    <div class="student-stat-icon"><i class="bi bi-check2-circle"></i></div>
+                    <div>
+                        <p>Completed Sessions</p>
+                        <strong id="student-completed-sessions-count">0</strong>
+                        <span>Finished tutorial sessions</span>
+                    </div>
+                </article>
+            </section>
+
+            <section class="student-dashboard-main-grid">
+                <article class="student-dashboard-card student-schedule-card" data-dashboard-modal="today-classes">
+                    <div class="student-card-heading">
+                        <div>
+                            <i class="bi bi-calendar3"></i>
+                            <h2>Today's Schedule</h2>
+                        </div>
+                        <a class="student-outline-link" href="schedule.html">View Full Schedule</a>
+                    </div>
+
+                    <div class="student-table-wrapper">
+                        <table class="student-schedule-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Subject</th>
+                                    <th>Teacher</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="student-today-schedule">
+                                <tr>
+                                    <td colspan="4" class="student-table-message">Loading today's schedule...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+
+                <article class="student-dashboard-card student-calendar-card" data-dashboard-modal="calendar">
+                    <div class="student-card-heading">
+                        <div>
+                            <i class="bi bi-calendar-month"></i>
+                            <h2>Schedule Calendar</h2>
+                        </div>
+                        <div class="student-calendar-actions">
+                            <button type="button" id="student-calendar-prev" aria-label="Previous month"><i class="bi bi-chevron-left"></i></button>
+                            <button type="button" id="student-calendar-next" aria-label="Next month"><i class="bi bi-chevron-right"></i></button>
+                        </div>
+                    </div>
+
+                    <div class="student-calendar-month" id="student-calendar-title"></div>
+                    <div class="student-calendar-weekdays" aria-hidden="true">
+                        <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+                    </div>
+                    <div class="student-calendar-grid" id="student-calendar-grid"></div>
+                    <p class="student-calendar-help">Dates with a dot have scheduled classes. Select a date to open your schedule.</p>
+                </article>
+            </section>
+
+            <section class="student-dashboard-bottom-grid">
+                <article class="student-dashboard-card student-empty-card" data-dashboard-modal="announcements">
+                    <div class="student-card-heading">
+                        <div>
+                            <i class="bi bi-megaphone"></i>
+                            <h2>Recent Announcements</h2>
+                        </div>
+                    </div>
+                    <div class="student-empty-state">
+                        <i class="bi bi-inbox"></i>
+                        <p>No announcements available yet.</p>
+                    </div>
+                </article>
+
+                <article class="student-dashboard-card student-empty-card" data-dashboard-modal="tasks">
+                    <div class="student-card-heading">
+                        <div>
+                            <i class="bi bi-clipboard2"></i>
+                            <h2>Upcoming Tasks</h2>
+                        </div>
+                    </div>
+                    <div class="student-empty-state">
+                        <i class="bi bi-inbox"></i>
+                        <p>No tasks available yet.</p>
+                    </div>
+                </article>
+
+                <article class="student-dashboard-card student-empty-card" data-dashboard-modal="attendance">
+                    <div class="student-card-heading">
+                        <div>
+                            <i class="bi bi-people"></i>
+                            <h2>Attendance Overview</h2>
+                        </div>
+                    </div>
+                    <div class="student-empty-state">
+                        <i class="bi bi-inbox"></i>
+                        <p>Attendance data is not available yet.</p>
+                    </div>
+                </article>
+            </section>
+
+            <p class="student-dashboard-error" id="student-dashboard-error" role="status"></p>
+        </div>
+    </main>
+</body>
+</html>

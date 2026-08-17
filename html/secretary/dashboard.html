@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secretary Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="../../css/design.css">
+    <link rel="stylesheet" href="../../css/secretary_dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script type="module" src="../../js/index.js"></script>
+    <script type="module" src="../../js/modules/dashboard_secretary.js"></script>
+</head>
+<body>
+    <header id="dynamic-header"></header>
+    <main class="main-content secretary-page">
+        <div class="secretary-topbar">
+            <div>
+                <h1 class="page-title mb-1">SECRETARY DASHBOARD</h1>
+                <p class="secretary-subtitle">Daily enrollment coordination, center activity, and staff visibility.</p>
+            </div>
+            <select id="secretary-center-filter" class="secretary-center-filter" aria-label="Filter dashboard by center">
+                <option value="all">All Centers</option>
+            </select>
+        </div>
+
+        <div class="secretary-dashboard">
+            <section class="secretary-stats-grid" aria-label="Daily coordination summary">
+                <article class="secretary-stat-card secretary-stat-pink" data-dashboard-modal="pending-applications"><div class="secretary-stat-icon"><i class="bi bi-journal-plus"></i></div><div><p>Pending Applications</p><strong id="secretary-pending-applications">0</strong><span>Enrollments waiting for follow-up</span></div></article>
+                <article class="secretary-stat-card secretary-stat-blue" data-dashboard-modal="today-sessions"><div class="secretary-stat-icon"><i class="bi bi-calendar-check"></i></div><div><p>Today's Sessions</p><strong id="secretary-today-sessions">0</strong><span>Scheduled tutorial sessions today</span></div></article>
+                <article class="secretary-stat-card secretary-stat-green" data-dashboard-modal="pending-payments"><div class="secretary-stat-icon"><i class="bi bi-credit-card"></i></div><div><p>Pending Payments</p><strong id="secretary-pending-payments-total">0</strong><span>Payments needing confirmation</span></div></article>
+                <article class="secretary-stat-card secretary-stat-orange" data-dashboard-modal="active-employees"><div class="secretary-stat-icon"><i class="bi bi-person-badge"></i></div><div><p>Active Employees</p><strong id="secretary-active-employees">0</strong><span>Available staff across centers</span></div></article>
+            </section>
+
+           
+
+            <section class="secretary-main-grid">
+                <article class="secretary-card" data-dashboard-modal="enrollment-pipeline">
+                    <div class="secretary-card-heading"><div><i class="bi bi-funnel"></i><h2>Enrollment Pipeline</h2></div><a href="enrollement.html">Manage enrollments <i class="bi bi-chevron-right"></i></a></div>
+                    <div id="secretary-enrollment-pipeline" class="secretary-pipeline"></div>
+                </article>
+                <article class="secretary-card" data-dashboard-modal="today-sessions">
+                    <div class="secretary-card-heading"><div><i class="bi bi-clock-history"></i><h2>Today's Session Desk</h2></div><a href="schedule.html">Open schedule <i class="bi bi-chevron-right"></i></a></div>
+                    <div id="secretary-today-schedule" class="secretary-schedule-list"></div>
+                </article>
+            </section>
+
+            <section class="secretary-card secretary-center-card" data-dashboard-modal="center-workload">
+                <div class="secretary-card-heading"><div><i class="bi bi-shop-window"></i><h2>Center Workload</h2></div><a href="center.html">Manage centers <i class="bi bi-chevron-right"></i></a></div>
+                <div class="secretary-table-wrap"><table class="secretary-table">
+                    <thead><tr><th>Center</th><th>Location</th><th>Enrollments</th><th>Pending Applications</th><th>Today's Sessions</th><th>Active Employees</th><th>Pending Payments</th></tr></thead>
+                    <tbody id="secretary-center-workload"></tbody>
+                </table></div>
+            </section>
+
+            <section class="secretary-detail-grid">
+                <article class="secretary-card" data-dashboard-modal="recent-applications">
+                    <div class="secretary-card-heading"><div><i class="bi bi-person-plus"></i><h2>Recent Applications</h2></div><a href="enrollement.html">View all <i class="bi bi-chevron-right"></i></a></div>
+                    <div class="secretary-table-wrap"><table class="secretary-table">
+                        <thead><tr><th>Student</th><th>Program</th><th>Center</th><th>Status</th></tr></thead>
+                        <tbody id="secretary-recent-enrollments"></tbody>
+                    </table></div>
+                </article>
+                <article class="secretary-card" data-dashboard-modal="pending-payments">
+                    <div class="secretary-card-heading"><div><i class="bi bi-wallet2"></i><h2>Payment Follow-up</h2></div><span class="secretary-count-badge" id="secretary-payment-count">0</span></div>
+                    <div id="secretary-pending-payments" class="secretary-payment-list"></div>
+                </article>
+                <article class="secretary-card" data-dashboard-modal="active-employees">
+                    <div class="secretary-card-heading"><div><i class="bi bi-people"></i><h2>Staff Mix</h2></div><a href="employee.html">Employees <i class="bi bi-chevron-right"></i></a></div>
+                    <div id="secretary-staff-summary" class="secretary-staff-list"></div>
+                </article>
+            </section>
+            <p class="secretary-error" id="secretary-dashboard-error" role="status"></p>
+        </div>
+    </main>
+</body>
+</html>

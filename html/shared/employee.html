@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CDO Enrollment</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="../../css/design.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script type="module" src="../../js/index.js"></script> 
+    </head>
+<body>
+
+    <header id="dynamic-header"></header>
+    
+    <main class="main-content">
+        <div class="top-bar">
+            <h1 class="page-title">EMPLOYEE</h1>
+
+                <div class="d-flex gap-3">
+                    <div class="search-wrapper">
+                    <input type="text" class="form-control shadow-sm" placeholder="Search employee name..." id="search-input">
+                    <i class="bi bi-search search-icon"></i>
+                </div>
+                  <button class="btn btn-add shadow-sm px-4" onclick="openAddEmployeeModal()">
+                    <i class="bi bi-plus-lg"></i> Add Employee
+                </button>
+
+            </div>
+            
+        </div>
+
+        <div class="filter-container shadow-sm mb-4">
+            <div class="filter-heading d-flex align-items-center justify-content-between gap-3 flex-wrap">
+                <div class="d-flex align-items-center gap-3 flex-wrap">
+                    <span class="filter-label">Filter by:</span>
+                    <button type="button" class="btn btn-theme filter-toggle-btn d-md-none">
+                        <i class="bi bi-funnel me-2"></i> Filter & Sort
+                    </button>
+                </div>
+                <div class="d-flex gap-2 filter-actions">
+                    <button class="btn btn-theme" id="employee-apply-filters">Apply Filters</button>
+                    <button class="btn btn-outline-dark" id="employee-reset-filters">Reset</button>
+                </div>
+            </div>
+
+            <div class="filter-panel d-flex flex-wrap align-items-center gap-3">
+                <select class="form-select w-auto border-secondary shadow-sm" id="employee-status-filter">
+                    <option value="">All Status</option>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                </select>
+                <select class="form-select w-auto border-secondary shadow-sm" id="employee-branch-filter">
+                    <option value="">All Branches</option>
+                </select>
+                <select class="form-select w-auto border-secondary shadow-sm" id="employee-role-filter">
+                    <option value="">All Roles</option>
+                </select>
+                <select class="form-select w-auto border-secondary shadow-sm" id="employee-program-filter">
+                    <option value="">All Programs</option>
+                </select>
+            </div>
+        </div>
+
+        <section class="card main-card shadow-sm p-3 mb-4 employee-rbac-card">
+            <div class="card-body">
+                <div class="employee-rbac-header">
+                    <div>
+                        <p class="employee-rbac-eyebrow mb-1">Access and permissions</p>
+                        <h5 class="fw-bold mb-1">Role Based Access Control</h5>
+                        <p class="text-muted mb-0">Monitor roles, review module access, and keep employee management in one place.</p>
+                    </div>
+                    <div class="employee-rbac-header-actions">
+                        <button class="btn btn-outline-dark" type="button" id="rbac-reset-selected-role">Reset Role Preset</button>
+                        <button class="btn btn-add shadow-sm px-4" type="button" id="rbac-add-user-shortcut">
+                            <i class="bi bi-plus-lg"></i> Add User
+                        </button>
+                    </div>
+                </div>
+
+                <div class="employee-rbac-summary-grid">
+                    <article class="employee-rbac-summary-card">
+                        <div class="employee-rbac-summary-icon role">
+                            <i class="bi bi-person-gear"></i>
+                        </div>
+                        <div class="employee-rbac-summary-copy">
+                            <span>Total Roles</span>
+                            <strong id="rbac-total-roles">0</strong>
+                            <small>Configured access groups</small>
+                        </div>
+                    </article>
+                    <article class="employee-rbac-summary-card">
+                        <div class="employee-rbac-summary-icon active">
+                            <i class="bi bi-people"></i>
+                        </div>
+                        <div class="employee-rbac-summary-copy">
+                            <span>Active Users</span>
+                            <strong id="rbac-active-users">0</strong>
+                            <small>Employees with active access</small>
+                        </div>
+                    </article>
+                    <article class="employee-rbac-summary-card">
+                        <div class="employee-rbac-summary-icon restricted">
+                            <i class="bi bi-shield-lock"></i>
+                        </div>
+                        <div class="employee-rbac-summary-copy">
+                            <span>Restricted Modules</span>
+                            <strong id="rbac-restricted-modules">0</strong>
+                            <small>For the selected role</small>
+                        </div>
+                    </article>
+                    <article class="employee-rbac-summary-card">
+                        <div class="employee-rbac-summary-icon inactive">
+                            <i class="bi bi-person-x"></i>
+                        </div>
+                        <div class="employee-rbac-summary-copy">
+                            <span>Inactive Users</span>
+                            <strong id="rbac-inactive-users">0</strong>
+                            <small>Accounts needing follow-up</small>
+                        </div>
+                    </article>
+                </div>
+
+                <div class="employee-rbac-workspace">
+                    <aside class="employee-rbac-side-column">
+                        <section class="employee-rbac-role-panel">
+                            <div class="employee-rbac-panel-heading">
+                                <div>
+                                    <h6 class="fw-bold mb-1">Roles</h6>
+                                    <span id="rbac-role-count">0 roles</span>
+                                </div>
+                            </div>
+
+                            <div class="search-wrapper employee-rbac-role-search">
+                                <input type="text" class="form-control shadow-sm" placeholder="Search roles..." id="rbac-role-search">
+                                <i class="bi bi-search search-icon"></i>
+                            </div>
+
+                            <div class="employee-rbac-role-list" id="rbac-role-list">
+                                <div class="employee-rbac-empty-state">Loading roles...</div>
+                            </div>
+                        </section>
+
+                        <section class="card employee-rbac-panel-card">
+                            <div class="employee-rbac-table-header">
+                                <h6 class="fw-bold mb-0">Navigation Preview</h6>
+                                <span id="rbac-navigation-preview-count">0 items</span>
+                            </div>
+                            <p class="employee-rbac-helper mb-3">This preview shows what the selected role will see in the sidebar for RBAC-controlled modules.</p>
+                            <div class="employee-rbac-preview-grid" id="rbac-navigation-preview">
+                                <div class="employee-rbac-empty-state">Select a role to preview its navigation.</div>
+                            </div>
+                        </section>
+                    </aside>
+
+                    <div class="employee-rbac-detail-panel">
+                        <div class="employee-rbac-detail-header">
+                            <div>
+                                <p class="employee-rbac-selected-label mb-1">Selected Role</p>
+                                <div class="employee-rbac-selected-title">
+                                    <span class="employee-rbac-selected-icon"><i class="bi bi-shield-check"></i></span>
+                                    <h6 class="fw-bold mb-0" id="rbac-selected-role-name">Select a role</h6>
+                                    <span class="employee-rbac-status-pill" id="rbac-selected-role-status">Inactive</span>
+                                </div>
+                                <p class="text-muted mb-0" id="rbac-selected-role-description">Choose a role to inspect its module permissions.</p>
+                            </div>
+                            <p class="employee-rbac-helper mb-0">Expand a module to manage its <span class="fw-semibold">CAN</span> access and review the pages under it.</p>
+                        </div>
+
+                        <section class="card employee-rbac-panel-card">
+                            <div class="employee-rbac-table-header">
+                                <h6 class="fw-bold mb-0">Modules</h6>
+                                <span id="rbac-permission-summary">0 modules enabled</span>
+                            </div>
+                            <div class="employee-rbac-module-list" id="rbac-permission-tree">
+                                <div class="employee-rbac-empty-state">Loading modules...</div>
+                            </div>
+                        </section>
+
+                        <section class="card employee-rbac-panel-card">
+                            <div class="employee-rbac-table-header">
+                                <h6 class="fw-bold mb-0">Employee List</h6>
+                                <span id="rbac-assigned-users-count">0 users</span>
+                            </div>
+                            <div class="table-responsive employee-rbac-users-wrap">
+                                <table class="table table-custom table-hover employee-table employee-rbac-users-table mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th style="background-color:#ea9aa6;">Employee Name</th>
+                                            <th style="background-color:#ea9aa6;">Birthday</th>
+                                            <th style="background-color:#ea9aa6;">Username</th>
+                                            <th style="background-color:#ea9aa6;">Role</th>
+                                            <th style="background-color:#ea9aa6;">Status</th>
+                                            <th style="background-color:#ea9aa6;">Branch</th>
+                                            <th style="background-color:#ea9aa6;">Subjects</th>
+                                            <th style="background-color:#ea9aa6;">Program</th>
+                                            <th style="background-color:#ea9aa6;">Date Created</th>
+                                            <th style="background-color:#ea9aa6;">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="rbac-assigned-users-body">
+                                        <tr>
+                                            <td colspan="10" class="text-center text-muted py-4">Loading role members...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <div class="card main-card shadow-sm p-3">
+            <div class="card-body">
+                
+                <h5 class="fw-bold mb-3">Employee Summary </h5>
+                <div class="stats-grid employee-summary-grid">
+                    <div class="card stat-card">
+                        <div class="stat-info">
+                            <h4 class="mb-0 fw-bold" id="employee-summary-total">0</h4>
+                            <small class="text-muted">Total Employees</small>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-people-fill fs-1 text-dark"></i>
+                        </div>
+                    </div>
+
+                    <div class="card stat-card">
+                        <div class="stat-info">
+                            <h4 class="mb-0 fw-bold" id="employee-summary-active">0</h4>
+                            <small class="text-muted">Active Employees</small>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-shield-check fs-1 text-success"></i>
+                        </div>
+                    </div>
+
+                    <div class="card stat-card">
+                        <div class="stat-info">
+                            <h4 class="mb-0 fw-bold" id="employee-summary-branches">0</h4>
+                            <small class="text-muted">Branch Coverage</small>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-buildings fs-1 text-dark"></i>
+                        </div>
+                    </div>
+
+                    <div class="card stat-card">
+                        <div class="stat-info">
+                            <h4 class="mb-0 fw-bold" id="employee-summary-roles">0</h4>
+                            <small class="text-muted">Roles In Use</small>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-person-badge-fill fs-1 text-dark"></i>
+                        </div>
+                        
+                    </div>
+                </div>
+
+                <h6 class="fw-bold mb-3 fs-5 mt-4">Employee List</h6>
+                
+                <div class="card content-panel">
+                    <div class="table-responsive">
+                        <table class="table table-custom table-hover employee-table">
+                            <thead>
+                                <tr>
+                                    <th style="background-color:#ea9aa6;">Employee Name</th>
+                                <th style="background-color:#ea9aa6;">Birthday</th>
+                                <th style="background-color:#ea9aa6;">Username</th>
+                                <th style="background-color:#ea9aa6;">Role</th>
+                                <th style="background-color:#ea9aa6;">Status</th>
+                                <th style="background-color:#ea9aa6;">Branch</th>
+                                <th style="background-color:#ea9aa6;">Subjects</th>
+                                <th style="background-color:#ea9aa6;">Program</th>
+                                <th style="background-color:#ea9aa6;">Date Created</th>
+                                    <th style="background-color:#ea9aa6;">Actions</th>
+                                </tr>
+                            </thead>
+                           
+                           <tbody id="employeeTableBody">
+                                <tr>
+                                    <td colspan="10" class="text-center text-muted">Loading...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center mt-4">
+                        <small class="text-muted" id="employee-table-summary">Showing 0 of 0 entries</small>
+                        <nav>
+                            <ul class="pagination mb-0">
+                                <li class="page-item"><a class="page-link btn-theme border-0 rounded-start">Previous</a></li>
+                                <li class="page-item active"><a class="page-link border-0">1</a></li>
+                                <li class="page-item"><a class="page-link border-0 text-dark">2</a></li>
+                                <li class="page-item"><a class="page-link border-0 text-dark">Next</a></li>
+                            </ul>
+                        </nav>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </main>
+    </body>
+</html>

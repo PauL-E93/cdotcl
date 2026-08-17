@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CDO Enrollment</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="../../css/design.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="../../js/utilities/paging.js"></script>
+    <script type="module" src="../../js/index.js?v=20260814-teacher-enrollment-payment-filters"></script>
+    </head>
+<body>
+
+    <header id="dynamic-header"></header>
+    
+    <main class="main-content">
+        <div class="top-bar">
+            <h1 class="page-title">Payment</h1>
+
+            <div class="d-flex gap-3">
+                <div class="search-wrapper">
+                    <input type="text" class="form-control shadow-sm" placeholder="Search..." id="search-input">
+                    <i class="bi bi-search search-icon"></i>
+                </div>  
+            </div>
+        </div>
+
+            <div class="filter-container shadow-sm mb-4">
+            <div class="filter-heading d-flex align-items-center justify-content-between gap-3 flex-wrap">
+                <div class="d-flex align-items-center gap-3 flex-wrap">
+                    <span class="filter-label">Filter by:</span>
+                    <button type="button" class="btn btn-theme filter-toggle-btn d-md-none">
+                        <i class="bi bi-funnel me-2"></i> Filter & Sort
+                    </button>
+                </div>
+            </div>
+
+            <div class="filter-panel d-flex flex-wrap align-items-center gap-3">
+                <select id="enrollment-status-filter" class="form-select w-auto border-secondary shadow-sm">
+                    <option value="">All Status</option>
+                </select>
+                <select id="enrollment-subject-filter" class="form-select w-auto border-secondary shadow-sm">
+                    <option value="">All Subject</option>
+                </select>
+            </div>
+        </div>
+    
+        <div class="card main-card shadow-sm p-3">
+            <div class="card-body">
+                
+                <h5 class="fw-bold mb-3">Payment Summary </h5>
+                <div class="stats-grid payment-summary-grid">
+                    <div class="card stat-card payment-summary-card" data-category="pending" style="cursor:pointer;">
+                        <div class="stat-info">
+                            <h4 class="mb-0 fw-bold" id="pendingCount">0</h4>
+                            <small class="text-muted">Pending</small>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-journal-text fs-1 text-dark"></i>
+                        </div>
+                    </div>
+
+                    <div class="card stat-card payment-summary-card" data-category="due_today" style="cursor:pointer;">
+                        <div class="stat-info">
+                            <h4 class="mb-0 fw-bold" id="dueTodayCount">0</h4>
+                            <small class="text-muted">Due today</small>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-star-fill fs-1 text-warning"></i>
+                        </div>
+                    </div>
+
+                    <div class="card stat-card payment-summary-card" data-category="due_tomorrow" style="cursor:pointer;">
+                        <div class="stat-info">
+                            <h4 class="mb-0 fw-bold" id="dueTomorrowCount">0</h4>
+                            <small class="text-muted">Due tomorrow</small>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-clock-history fs-1 text-dark"></i>
+                        </div>
+                    </div>
+
+                    <div class="card stat-card payment-summary-card" data-category="overdue" style="cursor:pointer;">
+                        <div class="stat-info">
+                            <h4 class="mb-0 fw-bold" id="overdueCount">0</h4>
+                            <small class="text-muted">Over due</small>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-x-square-fill fs-1 text-dark"></i>
+                        </div>
+                    </div>
+
+                    <div class="card stat-card payment-summary-card" data-category="to_receive" style="cursor:pointer; display:none;">
+                        <div class="stat-info">
+                            <h4 class="mb-0 fw-bold" id="toReceiveCount">0</h4>
+                            <small class="text-muted">To Receive Payment</small>
+                        </div>
+                        <div class="stat-icon">
+                            <i class="bi bi-cash-coin fs-1 text-success"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center gap-3 mt-4 mb-3">
+                    <h6 class="fw-bold fs-5 mb-0">Student Enrollment List</h6>
+                    <button type="button" class="btn btn-outline-secondary shadow-sm" id="export-enrollment-table"><i class="bi bi-download me-2"></i>Export</button>
+                </div>
+                
+                <div class="card content-panel">
+                    <div class="table-responsive">
+                        <table class="table table-custom table-hover">
+                            <thead>
+                                <tr>
+                                    <th style="background-color:#ea9aa6;">Student ID</th>
+                                    <th style="background-color:#ea9aa6;">Student Name</th>
+                                <th style="background-color:#ea9aa6;">Subject</th>
+                                <th style="background-color:#ea9aa6;">Tutor</th>
+                                <th style="background-color:#ea9aa6;">Enrollment Date</th>
+                                <th style="background-color:#ea9aa6;">Status</th>
+                                    <th style="background-color:#ea9aa6;">Actions</th>
+                                </tr>
+                            </thead>
+                           <tbody id="paymentTableBody">
+                                <tr>
+                                    <td colspan="6" class="text-center text-muted">Loading...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center mt-4">
+                        <small class="text-muted">Showing 1 to 10 of entries</small>
+                        <nav></nav>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </main>
+
+    <div class="modal fade" id="viewEnrollmentModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">Manage Enrollment</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-light border">
+                        <h6 class="text-primary fw-bold mb-3">Student Information</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="small text-muted">Student Name</label>
+                                <div class="fw-bold" id="view_student_name">...</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="small text-muted">Program</label>
+                                <div class="fw-bold" id="view_program">...</div> 
+                            </div>
+                            <div class="col-md-6">
+                                <label class="small text-muted">Subject & Grade</label>
+                                <div class="fw-bold" id="view_subject_grade">...</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="small text-muted">Preferred Teacher</label>
+                                <div class="fw-bold" id="view_teacher_ro">...</div> 
+                            </div>
+                            <div class="col-md-6">
+                                <label class="small text-muted">Class</label>
+                                <div class="fw-bold" id="view_class">...</div> 
+                            </div>
+                            <div class="col-md-6">
+                                <label class="small text-muted">Section</label>
+                                <div class="fw-bold" id="view_section">...</div> 
+                            </div>
+                            <div class="col-md-6">
+                                <label class="small text-muted">Preferred Schedule</label>
+                                <div class="fw-bold" id="view_schedule_ro">...</div> 
+                            </div>
+                            <div class="col-md-6">
+                                <label class="small text-muted">Status</label>
+                                <div id="view_status">...</div>
+                            </div>
+                            <div class="col-12">
+                                <label class="small text-muted">Goal</label>
+                                <div class="fst-italic" id="view_goal">...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr class="my-4">
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="paymentHistoryModal" tabindex="-1" aria-labelledby="paymentHistoryModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="paymentHistoryModalLabel">Payment History</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <h6 id="paymentHistoryStudentName"></h6>
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Amount</th>
+                                <th>Payment Method</th>
+                                <th>Reference No.</th>
+                            </tr>
+                        </thead>
+                        <tbody id="paymentHistoryTableBody">
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    </body>
+</html>

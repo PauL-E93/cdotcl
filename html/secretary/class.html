@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Classes</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="../../css/design.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script type="module" src="../../js/index.js"></script>
+</head>
+<body>
+    <header id="dynamic-header"></header>
+
+    <main class="main-content class-directory-page">
+        <div class="class-directory-header">
+            <div>
+                <h1 class="page-title">My Classes</h1>
+                <p>Manage your classes, sections and students.</p>
+            </div>
+            <div class="class-directory-header-actions">
+                <button class="btn btn-outline-primary shadow-sm px-4" id="btn-add-section" data-class-permission="manage_sections" type="button" disabled>
+                    <i class="bi bi-plus-lg me-2"></i>Add Section
+                </button>
+                <button class="btn btn-add shadow-sm px-4" id="btn-add-class" data-class-permission="create" type="button">
+                    <i class="bi bi-plus-lg me-2"></i>Add Class
+                </button>
+            </div>
+        </div>
+
+        <section class="class-selector-row" aria-label="Class and section selection">
+            <div class="selector-field">
+                <label for="class-selector">Class</label>
+                <select id="class-selector" class="form-select">
+                    <option value="">Select class...</option>
+                </select>
+            </div>
+            <div class="selector-field">
+                <label for="section-selector">Section</label>
+                <select id="section-selector" class="form-select" disabled>
+                    <option value="">Select a class first...</option>
+                </select>
+            </div>
+        </section>
+
+        <section id="selected-section-view" class="selected-section-view" aria-live="polite">
+            <div class="class-empty-state">
+                <i class="bi bi-journal-bookmark"></i>
+                <h2>Select a class and section</h2>
+                <p>Choose a class first, then select one of its sections to view its students and details.</p>
+            </div>
+        </section>
+
+        <!-- Retained for shared class-page scripts; the redesigned directory renders into selected-section-view. -->
+        <table class="d-none"><thead id="tableHead"></thead><tbody id="classTableBody"></tbody></table>
+    </main>
+</body>
+</html>

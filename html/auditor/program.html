@@ -1,0 +1,438 @@
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>CDO Enrollment</title>
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+        <link rel="stylesheet" href="../../css/design.css">
+
+
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+        <script type="module" src="../../js/index.js"></script>
+
+    </head>
+    <body>
+
+        <header id="dynamic-header"></header>
+        
+    <main class="main-content">
+            <div class="top-bar">
+                <h1 class="page-title">PROGRAM</h1>
+
+                <div class="d-flex gap-3">
+                    <div class="search-wrapper">
+                        <input type="text" class="form-control shadow-sm" placeholder="Search..." id="search-input">
+                        <i class="bi bi-search search-icon"></i>
+                    </div>  
+                    <!-- <button class="btn btn-add shadow-sm px-4" data-bs-toggle="modal" data-bs-target="#addProgramModal">
+                        <i class="bi bi-plus-lg"></i> Add PROGRAM
+                    </button>
+                    <a href="discount.html" class="btn btn-add-discount btn-outline-primary shadow-sm px-4" data-program-permission="create_discounts">
+                        <i class="bi bi-plus-lg"></i> Add DISCOUNT
+                    </a> -->
+
+                </div>
+            </div>
+
+            <div class="filter-container shadow-sm mb-4">
+            <div class="filter-heading d-flex align-items-center justify-content-between gap-3 flex-wrap">
+                <div class="d-flex align-items-center gap-3 flex-wrap">
+                    <span class="filter-label">Filter by:</span>
+                    <button type="button" class="btn btn-theme filter-toggle-btn d-md-none">
+                        <i class="bi bi-funnel me-2"></i> Filter & Sort
+                    </button>
+                </div>
+            </div>
+
+            <div class="filter-panel d-flex flex-wrap align-items-center gap-3">
+                <select class="form-select w-auto border-secondary shadow-sm">
+                    <option>All Status</option>
+                    <option>Active</option>
+                    <option>Pending</option>
+                    <option>Cancelled</option>
+                </select>
+                <select class="form-select w-auto border-secondary shadow-sm">
+                    <option>All Subject</option>
+                    <option>Math</option>
+                    <option>Science</option>
+                    <option>English</option>
+                </select>
+                <input type="date" class="form-control w-auto border-secondary shadow-sm">
+            </div>
+        </div>
+            <div class="card main-card shadow-sm p-3" data-program-feature="programs">
+        <div class="card-body">
+            
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="fw-bold mb-0">PROGRAM</h5>
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-sm btn-add shadow-sm px-3" id="btnAddProgram" data-program-permission="create"><i class="bi bi-plus-lg me-1"></i>Add Program</button>
+                    <div class="position-relative">
+                        <button class="btn btn-link text-secondary p-0" id="more_option">
+                            <i class="fa-solid fa-bars fa-lg"></i>
+                        </button>
+                        <div id="more_option_dropdown" class="position-absolute bg-white end-0" style="top: 100%; z-index: 1050;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="stats-grid">
+                <div class="card stat-card">
+                    <div class="stat-info">
+                        <h4 class="mb-0 fw-bold" id="total_programs">0</h4> <small class="text-muted">Total Programs</small>
+                    </div>
+                    <div class="stat-icon">
+                        <i class="bi bi-journal-text fs-1 text-dark"></i>
+                    </div>
+                </div>
+
+                <div class="card stat-card">
+                    <div class="stat-info">
+                        <h4 class="mb-0 fw-bold" id="active_programs">0</h4> <small class="text-muted">Active Programs</small>
+                    </div>
+                    <div class="stat-icon">
+                        <i class="bi bi-check-circle-fill fs-1 text-success"></i>
+                    </div>
+                </div>
+
+
+                <div class="card stat-card">
+                    <div class="stat-info">
+                        <h4 class="mb-0 fw-bold" id="inactive_programs">0</h4> <small class="text-muted">Inactive Programs</small>
+                    </div>
+                    <div class="stat-icon">
+                        <i class="bi bi-x-circle-fill fs-1 text-danger"></i>
+                    </div>
+                </div>
+            </div>
+
+ <h6 class="fw-bold mb-3 fs-5">Program list</h6>
+<div class="card content-panel">
+    <div class="table-responsive">
+        <table class="table table-custom table-hover">
+            <thead>
+                <tr>
+                    <th style="background-color:#ea9aa6;">Name </th>
+                    <th style="background-color:#ea9aa6;">Description</th>
+                    <th style="background-color:#ea9aa6;">Tuition</th>
+                    <th style="background-color:#ea9aa6;">Duration</th>
+                    <th style="background-color:#ea9aa6;">Program type</th>
+                    <th style="background-color:#ea9aa6;">Registration Fee</th>
+                    <th style="background-color:#ea9aa6;">Penalty Rule</th>
+                    <th style="background-color:#ea9aa6;">Current Discount</th>
+                    <th style="background-color:#ea9aa6;">Service</th>
+                    <th style="background-color:#ea9aa6;">Status</th>
+                    <th style="background-color:#ea9aa6;">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="program_table_body"> 
+                <tr><td colspan="11" class="text-center">Loading data...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+                
+                <div class="d-flex justify-content-between align-items-center mt-4">
+                    <small class="text-muted">Showing recent entries</small>
+                    <nav>
+                        <ul class="pagination mb-0">
+                            <li class="page-item"><a class="page-link btn-theme border-0 rounded-start">Previous</a></li>
+                            <li class="page-item active"><a class="page-link border-0">1</a></li>
+                            <li class="page-item"><a class="page-link border-0 text-dark">Next</a></li>
+                        </ul>
+                    </nav>
+                </div>
+            </div>
+            </div>
+
+            <section class="card content-panel program-secondary-card shadow-sm p-3 mb-4" data-program-feature="types">
+                <div class="d-flex justify-content-between align-items-center mb-3 gap-2"><h6 class="fw-bold mb-0 fs-5">Program Type list</h6><button type="button" class="btn btn-sm btn-add shadow-sm px-3" id="btnAddProgramType" data-program-permission="create_types"><i class="bi bi-plus-lg me-1"></i>Add Program Type</button></div>
+                <div class="table-responsive">
+                    <table class="table table-custom table-hover">
+                        <thead>
+                            <tr>
+                                <th style="background-color:#ea9aa6;">Type Name</th>
+                                <th style="background-color:#ea9aa6;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="program_type_table_body">
+                            <tr><td colspan="2" class="text-center">Loading data...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mt-4">
+                    <small class="text-muted">Showing recent entries</small>
+                    <nav>
+                        <ul class="pagination mb-0">
+                            <li class="page-item"><a class="page-link btn-theme border-0 rounded-start">Previous</a></li>
+                            <li class="page-item active"><a class="page-link border-0">1</a></li>
+                            <li class="page-item"><a class="page-link border-0 text-dark">Next</a></li>
+                        </ul>
+                    </nav>
+                </div>
+            </section>
+
+            <section class="card content-panel program-secondary-card shadow-sm p-3 mb-4" data-program-feature="subjects">
+                <h6 class="fw-bold mb-3 fs-5">Subject list</h6>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <div class="fw-semibold">Manage Subjects</div>
+                        <small class="text-muted">Create, edit and remove subject entries.</small>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-add shadow-sm px-3" id="btnAddSubject" data-program-permission="create_subjects">
+                        <i class="bi bi-plus-lg me-1"></i> Add Subject
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-custom table-hover">
+                        <thead>
+                            <tr>
+                                <th style="background-color:#ea9aa6;">Subject Name</th>
+                                <th style="background-color:#ea9aa6;" class="text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="subject_table_body">
+                            <tr><td colspan="2" class="text-center">Loading data...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mt-4">
+                    <small class="text-muted">Showing recent entries</small>
+                    <nav>
+                        <ul class="pagination mb-0">
+                            <li class="page-item"><a class="page-link btn-theme border-0 rounded-start">Previous</a></li>
+                            <li class="page-item active"><a class="page-link border-0">1</a></li>
+                            <li class="page-item"><a class="page-link border-0 text-dark">Next</a></li>
+                        </ul>
+                    </nav>
+                </div>
+            </section>
+
+            <section class="card content-panel program-secondary-card shadow-sm p-3 mb-4" data-program-feature="services">
+                <h6 class="fw-bold mb-3 fs-5">Service list</h6>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <div class="fw-semibold">Manage Services</div>
+                        <small class="text-muted">Create, edit and remove service entries.</small>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-add shadow-sm px-3" id="btnAddService" data-program-permission="create_services">
+                        <i class="bi bi-plus-lg me-1"></i> Add Service
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-custom table-hover">
+                        <thead>
+                            <tr>
+                                <th style="background-color:#ea9aa6;">Service Name</th>
+                                <th style="background-color:#ea9aa6;">Amount</th>
+                                <th style="background-color:#ea9aa6;">Available Branches</th>
+                                <th style="background-color:#ea9aa6;">Status</th>
+                                <th style="background-color:#ea9aa6;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="services_table_body">
+                            <tr><td colspan="5" class="text-center">Loading data...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mt-4">
+                    <small class="text-muted">Showing recent entries</small>
+                    <nav>
+                        <ul class="pagination mb-0">
+                            <li class="page-item"><a class="page-link btn-theme border-0 rounded-start">Previous</a></li>
+                            <li class="page-item active"><a class="page-link border-0">1</a></li>
+                            <li class="page-item"><a class="page-link border-0 text-dark">Next</a></li>
+                        </ul>
+                    </nav>
+                </div>
+            </section>
+
+            <section class="card content-panel program-secondary-card shadow-sm p-3 mb-4" data-program-feature="checklists">
+                <h6 class="fw-bold mb-3 fs-5">ECCD Checklist Management</h6>
+                <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                    <div>
+                        <div class="fw-semibold">Shared Pre-school and Play School Checklist</div>
+                        <small class="text-muted">Manage the centralized ECCD checklist, domains, and transmutation tables.</small>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-add shadow-sm px-3" id="btnAddReportCardType" data-program-permission="edit_checklists">
+                        <i class="bi bi-pencil-square me-1"></i> Manage Checklist
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-custom table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th style="background-color:#ea9aa6;">Card</th>
+                                <th style="background-color:#ea9aa6;">Status</th>
+                                <th style="background-color:#ea9aa6;" class="text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="report_card_table_body">
+                            <tr><td colspan="4" class="text-center">Loading data...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="card content-panel program-secondary-card shadow-sm p-3 mb-4" data-program-feature="discounts">
+                <div class="d-flex justify-content-between align-items-center mb-3 gap-2"><h6 class="fw-bold mb-0 fs-5">Discount list</h6><button type="button" class="btn btn-sm btn-add shadow-sm px-3" id="btnAddDiscount" data-program-permission="create_discounts"><i class="bi bi-plus-lg me-1"></i>Add Discount</button></div>
+                <div class="table-responsive">
+                    <table class="table table-custom table-hover">
+                        <thead>
+                            <tr>
+                                <th style="background-color:#ea9aa6;">Name</th>
+                                <th style="background-color:#ea9aa6;">Description</th>
+                                <th style="background-color:#ea9aa6;">Amount</th>
+                                <th style="background-color:#ea9aa6;">Status</th>
+                                <th style="background-color:#ea9aa6;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="discount_table_body"> <tr><td colspan="5" class="text-center">Loading data...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mt-4">
+                    <small class="text-muted">Showing recent entries</small>
+                    <nav>
+                        <ul class="pagination mb-0">
+                            <li class="page-item"><a class="page-link btn-theme border-0 rounded-start">Previous</a></li>
+                            <li class="page-item active"><a class="page-link border-0">1</a></li>
+                            <li class="page-item"><a class="page-link border-0 text-dark">Next</a></li>
+                        </ul>
+                    </nav>
+                </div>
+            </section>
+
+            <section class="card content-panel program-secondary-card shadow-sm p-3 mb-4" data-program-feature="registration">
+                <div class="d-flex justify-content-between align-items-center mb-3 gap-2"><h6 class="fw-bold mb-0 fs-5">Registration Amount</h6><button type="button" class="btn btn-sm btn-add shadow-sm px-3" id="btnAddRegistration" data-program-permission="create_registration"><i class="bi bi-plus-lg me-1"></i>Add Registration</button></div>
+                <div class="table-responsive">
+                    <table class="table table-custom table-hover">
+                        <thead>
+                            <tr>
+                                <th style="background-color:#ea9aa6;">Name</th>
+                                <th style="background-color:#ea9aa6;">Amount</th>
+                                <th style="background-color:#ea9aa6;">Status</th>
+                                <th style="background-color:#ea9aa6;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="registration_table_body">
+                            <tr><td colspan="4" class="text-center">Loading data...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mt-4">
+                    <small class="text-muted">Showing recent entries</small>
+                    <nav>
+                        <ul class="pagination mb-0">
+                            <li class="page-item"><a class="page-link btn-theme border-0 rounded-start">Previous</a></li>
+                            <li class="page-item active"><a class="page-link border-0">1</a></li>
+                            <li class="page-item"><a class="page-link border-0 text-dark">Next</a></li>
+                        </ul>
+                    </nav>
+                </div>
+            </section>
+
+            <section class="card content-panel program-secondary-card shadow-sm p-3 mb-4" data-program-feature="landing">
+                <h6 class="fw-bold mb-3 fs-5">Landing Page Content</h6>
+                <div class="mb-3"><div class="fw-semibold">Manage Landing Page</div><small class="text-muted">Changes are displayed on the public landing page.</small></div>
+                <form id="landing-page-form">
+                    <div class="row g-3">
+                        <div class="col-md-4"><label class="form-label" for="landing-announcement_1">Announcement 1</label><textarea class="form-control" id="landing-announcement_1" rows="3"></textarea></div>
+                        <div class="col-md-4"><label class="form-label" for="landing-announcement_2">Announcement 2</label><textarea class="form-control" id="landing-announcement_2" rows="3"></textarea></div>
+                        <div class="col-md-4"><label class="form-label" for="landing-announcement_3">Announcement 3</label><textarea class="form-control" id="landing-announcement_3" rows="3"></textarea></div>
+                        <div class="col-md-4"><label class="form-label" for="landing-picture_1">Picture 1 URL</label><input class="form-control" type="url" id="landing-picture_1"></div>
+                        <div class="col-md-4"><label class="form-label" for="landing-picture_2">Picture 2 URL</label><input class="form-control" type="url" id="landing-picture_2"></div>
+                        <div class="col-md-4"><label class="form-label" for="landing-picture_3">Picture 3 URL</label><input class="form-control" type="url" id="landing-picture_3"></div>
+                        <div class="col-md-6"><label class="form-label" for="landing-mission">Mission</label><textarea class="form-control" id="landing-mission" rows="4"></textarea></div>
+                        <div class="col-md-6"><label class="form-label" for="landing-vision">Vision</label><textarea class="form-control" id="landing-vision" rows="4"></textarea></div>
+                        <div class="col-12"><label class="form-label" for="landing-core_values">Core Values</label><textarea class="form-control" id="landing-core_values" rows="3" placeholder="One value per line, e.g. Courageous"></textarea></div>
+                        <div class="col-md-4"><label class="form-label" for="landing-gmail">Email</label><input class="form-control" type="email" id="landing-gmail"></div>
+                        <div class="col-md-4"><label class="form-label" for="landing-contact_number">Contact Number</label><input class="form-control" type="tel" id="landing-contact_number"></div>
+                        <div class="col-md-4"><label class="form-label" for="landing-facebook">Facebook URL</label><input class="form-control" type="url" id="landing-facebook"></div>
+                    </div>
+                    <div class="mt-3 text-end"><button id="landing-page-save" class="btn btn-add shadow-sm px-4" data-program-permission="edit_landing" type="submit">Save Landing Page Content</button></div>
+                </form>
+            </section>
+
+        </main>
+<div class="modal fade" id="addProgramModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="dynamicModalLabel">Modal Title</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            
+            <div class="modal-body">
+                <form id="dynamicForm"></form>
+            </div>
+            
+            <div class="modal-footer" id="dynamicModalFooter">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="addDiscountModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="discountModalLabel">Modal Title</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            
+            <div class="modal-body">
+                <form id="discountForm"></form>
+            </div>
+            
+            <div class="modal-footer" id="discountModalFooter">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="addRegistrationAmountModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="registrationModalLabel">Modal Title</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="registrationForm"></form>
+            </div>
+            <div class="modal-footer" id="registrationModalFooter">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="addServiceModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="serviceModalLabel">Service</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="serviceForm"></form>
+            </div>
+            <div class="modal-footer" id="serviceModalFooter">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+        
+
+    </body>
+    </html>
