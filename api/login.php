@@ -38,7 +38,7 @@ class Login {
     private function handleSessionTimeout() {
         if (empty($_SESSION['user_id'])) {
             return true;
-        }
+        }   
 
         $now = time();
         $lastActivity = isset($_SESSION['last_activity']) ? (int) $_SESSION['last_activity'] : $now;

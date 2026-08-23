@@ -200,7 +200,9 @@ export function initLandingPage() {
     }
 
     renderAnnouncements(ANNOUNCEMENTS);
-    loadEnrollmentBranches();
+    if (document.querySelector('[data-enrollment-branches]')) {
+        loadEnrollmentBranches();
+    }
 
     fetch(buildAppUrl('api/landing_page.php?operation=getLandingPage'))
         .then(response => {
@@ -211,10 +213,14 @@ export function initLandingPage() {
         .catch(error => console.error('Unable to load landing page content:', error));
 
     heroButton?.addEventListener('click', () => {
-        window.location.href = buildAppUrl('login.html');
+        window.location.href = buildAppUrl('new_student_enrollment.html');
     });
 
     enrollLinks.forEach(link => link.addEventListener('click', (event) => {
+        const target = link.getAttribute('href') || '';
+        if (!target.startsWith('#')) {
+            return;
+        }
         event.preventDefault();
         document.querySelector('#how-to-enroll')?.scrollIntoView({ behavior: 'smooth' });
         window.history.replaceState(null, '', '#how-to-enroll');

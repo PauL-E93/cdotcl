@@ -134,11 +134,12 @@ class OwnerSchedule {
 
             $data = json_decode(file_get_contents('php://input'), true) ?? $_POST;
             $preferenceId = $data['preference_id'] ?? null;
+            $preferenceIds = array_values(array_unique(array_filter(array_map('intval', (array)($data['preference_ids'] ?? [])))));
             $enrollmentDetailsId = $data['enrollment_details_id'] ?? null;
             $scheduleDate = $data['schedule_date'] ?? null;
             $newStatus = $data['new_status'] ?? null;
 
-            if (!$newStatus || (!$preferenceId && (!$enrollmentDetailsId || !$scheduleDate))) {
+            if (!$newStatus || (!$preferenceId && !$preferenceIds && (!$enrollmentDetailsId || !$scheduleDate))) {
                 echo json_encode(['status' => 'error', 'message' => 'Missing preference_id or schedule identifier']);
                 return;
             }
@@ -149,7 +150,22 @@ class OwnerSchedule {
                 return;
             }
 
-            if ($preferenceId) {
+            if ($preferenceIds) {
+                $idPlaceholders = [];
+                $verifyParams = [
+                    ':enrollment_details_id' => $enrollmentDetailsId,
+                    ':schedule_date' => $scheduleDate
+                ];
+                foreach ($preferenceIds as $index => $id) {
+                    $placeholder = ':merged_preference_' . $index;
+                    $idPlaceholders[] = $placeholder;
+                    $verifyParams[$placeholder] = $id;
+                }
+                $verifySql = "SELECT COUNT(*) FROM enrollment_preferred_schedule
+                              WHERE enrollment_details_id = :enrollment_details_id
+                                AND date = :schedule_date
+                                AND preference_id IN (" . implode(',', $idPlaceholders) . ")";
+            } elseif ($preferenceId) {
                 $verifySql = "SELECT 1
                               FROM enrollment_preferred_schedule
                               WHERE preference_id = :preference_id";
@@ -168,12 +184,38 @@ class OwnerSchedule {
             $verifyStmt = $conn->prepare($verifySql);
             $verifyStmt->execute($verifyParams);
 
-            if (!$verifyStmt->fetch()) {
+            $scheduleFound = $preferenceIds
+                ? (int)$verifyStmt->fetchColumn() === count($preferenceIds)
+                : (bool)$verifyStmt->fetch();
+            if (!$scheduleFound) {
                 echo json_encode(['status' => 'error', 'message' => 'Schedule not found']);
                 return;
             }
 
-            if ($preferenceId) {
+            if ($preferenceIds) {
+                $idPlaceholders = [];
+                $updateParams = [
+                    ':new_status' => $newStatus,
+                    ':update_enrollment_details_id' => $enrollmentDetailsId,
+                    ':update_schedule_date' => $scheduleDate
+                ];
+                foreach ($preferenceIds as $index => $id) {
+                    $placeholder = ':update_merged_preference_' . $index;
+                    $idPlaceholders[] = $placeholder;
+                    $updateParams[$placeholder] = $id;
+                }
+                $transitionFilter = match ($newStatus) {
+                    'ongoing' => " AND status IN ('pending', 'confirmed')",
+                    'done' => " AND status = 'ongoing'",
+                    'no-show' => " AND status IN ('pending', 'confirmed')",
+                    default => ''
+                };
+                $sql = "UPDATE enrollment_preferred_schedule
+                        SET status = :new_status
+                        WHERE enrollment_details_id = :update_enrollment_details_id
+                          AND date = :update_schedule_date
+                          AND preference_id IN (" . implode(',', $idPlaceholders) . "){$transitionFilter}";
+            } elseif ($preferenceId) {
                 $sql = "UPDATE enrollment_preferred_schedule
                         SET status = :new_status
                         WHERE preference_id = :preference_id";
@@ -199,7 +241,8 @@ class OwnerSchedule {
 
             if ($result && $affectedRows > 0) {
                 $notifications = new NotificationService($conn);
-                $schedule = $notifications->getScheduleContext($preferenceId, $enrollmentDetailsId, $scheduleDate);
+                $notificationPreferenceId = $preferenceId ?: ($preferenceIds[0] ?? null);
+                $schedule = $notifications->getScheduleContext($notificationPreferenceId, $enrollmentDetailsId, $scheduleDate);
                 $notifications->notifyScheduleStatus($schedule, $newStatus, 'employee', $_SESSION['employee_id'] ?? 0);
 
                 echo json_encode([

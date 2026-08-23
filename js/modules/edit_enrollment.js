@@ -591,7 +591,7 @@ function buildEditHtml(details) {
                     <label class="form-label">Grade Level</label>
                     <select class="form-select" id="editGradeLevelId">
                         <option value="">Select Grade</option>
-                        ${optionList(editLookups.grade_levels, 'grade_level_id', 'grade_level', details.grade_level_id || '')}
+                        ${optionList(editLookups.grade_levels_all || editLookups.grade_levels, 'grade_level_id', 'grade_level', details.grade_level_id || '')}
                     </select>
                 </div>
                 <div class="col-md-6">

@@ -10,6 +10,7 @@ header("Access-Control-Allow-Methods: POST, GET");
 header("Access-Control-Allow-Headers: Content-Type");
 
 require_once __DIR__ . '/../notification_helper.php';
+require_once __DIR__ . '/../grade_level_helper.php';
 
 class EnrollmentAPI {
 
@@ -19,7 +20,21 @@ class EnrollmentAPI {
     public function __construct() {
         include "connection-pdo.php"; 
         $this->conn = $conn;
+        ensureGradeLevelSchema($this->conn);
         $this->notifications = new NotificationService($this->conn);
+    }
+
+    private function assertActiveGradeLevel($gradeLevelId) {
+        $gradeLevelId = intval($gradeLevelId ?? 0);
+        if ($gradeLevelId <= 0) {
+            throw new Exception("Grade level is required for a Tutorial enrollment.");
+        }
+
+        $stmt = $this->conn->prepare("SELECT 1 FROM grade_level WHERE grade_level_id = ? AND status = 'active' LIMIT 1");
+        $stmt->execute([$gradeLevelId]);
+        if (!$stmt->fetchColumn()) {
+            throw new Exception("The selected grade level is no longer available. Please choose another grade.");
+        }
     }
 
     private function getBranchAdminBranchId() {
@@ -892,8 +907,14 @@ class EnrollmentAPI {
             $paymentMethodName = $this->getPaymentMethodName($methodId);
             $paymentStatus = (strtolower($paymentMethodName) === 'cash') ? 'Received' : 'Pending';
             $billingStatus = $paymentStatus === 'Received' ? 'paid' : 'unpaid';
+            $isStudentPayment = strtolower(trim((string)($_SESSION['user_role'] ?? ''))) === 'student';
+            $isGcashPayment = stripos($paymentMethodName, 'gcash') !== false;
 
-            if ($paymentStatus === 'Pending' && (!$uploadedScreenshot || ($uploadedScreenshot['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE)) {
+            if ($isGcashPayment && !$isStudentPayment && !$referenceNo) {
+                throw new Exception("GCash reference number is required.");
+            }
+
+            if ($isGcashPayment && $isStudentPayment && (!$uploadedScreenshot || ($uploadedScreenshot['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE)) {
                 throw new Exception("GCash payment screenshot is required.");
             }
 
@@ -1014,6 +1035,9 @@ class EnrollmentAPI {
             $isTutorialEnrollment = ($data['enrollment_category'] ?? 'tutorial') !== 'preschool';
             if ($isTutorialEnrollment && empty($subjectIds)) {
                 throw new Exception("At least one subject is required to complete enrollment.");
+            }
+            if ($isTutorialEnrollment) {
+                $this->assertActiveGradeLevel($data['grade_level_id'] ?? null);
             }
 
             $program = $this->getProgram($programId);
@@ -1206,6 +1230,9 @@ class EnrollmentAPI {
 
             if ($isTutorialEnrollment && empty($subjectIds)) {
                 throw new Exception("At least one subject is required to create an enrollment.");
+            }
+            if ($isTutorialEnrollment) {
+                $this->assertActiveGradeLevel($data['grade_level_id'] ?? null);
             }
 
             if (empty($school_year_id)) {
@@ -1528,6 +1555,7 @@ class EnrollmentAPI {
     public function getEnrollmentStats() {
         try {
             $type = isset($_GET['type']) ? $_GET['type'] : null;
+            $includeApplications = !empty($_GET['include_applications']) && $type === 'tutorial';
             $branchId = $this->getBranchAdminBranchId();
             $conditions = [$this->getProgramTypeCondition($type)];
             $params = [];
@@ -1552,6 +1580,44 @@ class EnrollmentAPI {
             $incomplete = $getCount(" AND $statusExpression = 'incomplete'");
             $cancelled = $getCount(" AND $statusExpression = 'cancelled'");
             $new = $getCount(" AND eh.date_created >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
+            if ($includeApplications) {
+                $applicationConditions = [
+                    "ea.enrollment_details_id IS NULL",
+                    "ea.status IN ('pending_review', 'approved_for_payment')",
+                    $this->getProgramTypeCondition($type)
+                ];
+                $applicationParams = [];
+                if ($branchId) {
+                    $applicationConditions[] = 'ea.branch_id = :application_branch_id';
+                    $applicationParams[':application_branch_id'] = $branchId;
+                }
+                $applicationBase = " FROM enrollment_applications ea JOIN program p ON ea.program_id = p.program_id WHERE " . implode(' AND ', $applicationConditions);
+                $applicationCount = function($extraCondition = '') use ($applicationBase, $applicationParams) {
+                    $stmt = $this->conn->prepare('SELECT COUNT(*)' . $applicationBase . $extraCondition);
+                    $stmt->execute($applicationParams);
+                    return intval($stmt->fetchColumn() ?: 0);
+                };
+                $activeApplications = $applicationCount();
+                $total += $activeApplications;
+                $pending += $activeApplications;
+                $new += $applicationCount(' AND ea.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)');
+
+                $readyConditions = [
+                    "ea.enrollment_details_id IS NOT NULL",
+                    "ea.status = 'ready_for_scheduling'",
+                    $this->getProgramTypeCondition($type)
+                ];
+                $readyParams = [];
+                if ($branchId) {
+                    $readyConditions[] = 'ea.branch_id = :ready_branch_id';
+                    $readyParams[':ready_branch_id'] = $branchId;
+                }
+                $readyStmt = $this->conn->prepare("SELECT COUNT(*) FROM enrollment_applications ea JOIN program p ON ea.program_id = p.program_id WHERE " . implode(' AND ', $readyConditions));
+                $readyStmt->execute($readyParams);
+                $readyApplications = intval($readyStmt->fetchColumn() ?: 0);
+                $pending += $readyApplications;
+                $incomplete = max(0, $incomplete - $readyApplications);
+            }
             echo json_encode(["status" => "success", "data" => ["total" => $total, "new" => $new, "pending" => $pending, "incomplete" => $incomplete, "cancelled" => $cancelled]]);
         } catch (Exception $e) { echo json_encode(["status" => "error", "message" => $e->getMessage()]); }
     }
@@ -1605,9 +1671,13 @@ class EnrollmentAPI {
             $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 10;
             $offset = ($page - 1) * $limit;
             $type = isset($_GET['type']) ? $_GET['type'] : null;
+            $includeApplications = !empty($_GET['include_applications']) && $type === 'tutorial';
             $summaryFilter = isset($_GET['summary_filter']) ? strtolower(trim($_GET['summary_filter'])) : 'total';
             $search = isset($_GET['search']) ? trim($_GET['search']) : '';
             $status = isset($_GET['status']) ? trim($_GET['status']) : '';
+            if ($status === 'pending_application') {
+                $status = 'pending';
+            }
             $subject = isset($_GET['subject']) ? trim($_GET['subject']) : '';
             $enrollmentDate = isset($_GET['enrollment_date']) ? trim($_GET['enrollment_date']) : '';
             $sessionBranchId = $this->getBranchAdminBranchId();
@@ -1622,12 +1692,20 @@ class EnrollmentAPI {
             if ($summaryFilter === 'new') {
                 $whereClause .= " AND eh.date_created >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
             } elseif ($summaryFilter === 'pending') {
-                $whereClause .= " AND $statusExpression = 'pending'";
+                $whereClause .= $includeApplications
+                    ? " AND ($statusExpression = 'pending' OR ea.status IN ('pending_review', 'approved_for_payment', 'ready_for_scheduling'))"
+                    : " AND $statusExpression = 'pending'";
             } elseif ($summaryFilter === 'incomplete') {
-                $whereClause .= " AND $statusExpression = 'incomplete'";
+                $whereClause .= $includeApplications
+                    ? " AND $statusExpression = 'incomplete' AND (ea.application_id IS NULL OR ea.status = 'enrolled')"
+                    : " AND $statusExpression = 'incomplete'";
             }
 
-            if ($status !== '') {
+            if (strtolower($status) === 'pending') {
+                $whereClause .= $includeApplications
+                    ? " AND ($statusExpression = 'pending' OR ea.status IN ('pending_review', 'approved_for_payment', 'ready_for_scheduling'))"
+                    : " AND LOWER($statusExpression) = 'pending'";
+            } elseif ($status !== '') {
                 $whereClause .= " AND LOWER($statusExpression) = LOWER(:status)";
             }
             if ($search !== '') {
@@ -1651,10 +1729,11 @@ class EnrollmentAPI {
                 "LEFT JOIN (SELECT es.enrollment_details_id, GROUP_CONCAT(s.subject_name ORDER BY s.subject_name SEPARATOR ', ') AS subject_names FROM enrollment_subjects es JOIN subject s ON es.subject_id = s.subject_id GROUP BY es.enrollment_details_id) esub ON ed.enrollment_details_id = esub.enrollment_details_id " .
                 "LEFT JOIN employee e ON ed.preferred_teacher = e.employee_id " .
                 "LEFT JOIN branch b ON eh.branch_id = b.branch_id " .
+                "LEFT JOIN enrollment_applications ea ON ea.enrollment_details_id = ed.enrollment_details_id " .
                 "JOIN program p ON ed.program_id = p.program_id " .
                 "WHERE 1=1" . $whereClause;
             $countStmt = $this->conn->prepare($countSql);
-            if ($status !== '') {
+            if ($status !== '' && strtolower($status) !== 'pending') {
                 $countStmt->bindValue(':status', $status, PDO::PARAM_STR);
             }
             if ($search !== '') {
@@ -1673,7 +1752,7 @@ class EnrollmentAPI {
             $total = $countStmt->fetchColumn();
 
             // Get paginated data
-            $sql = "SELECT ed.enrollment_details_id, ed.program_id, p.name AS program_name, st.student_id_number, TRIM(CONCAT_WS(' ', st.first_name, st.last_name, NULLIF(TRIM(st.ext), ''))) AS student_name, COALESCE(esub.subject_names, sub.subject_name) AS subject_name, CONCAT(e.first_name, ' ', e.last_name) AS teacher_name, b.branch_id, b.branch_name, DATE_FORMAT(eh.date_created, '%M %d, %Y') AS enrollment_date, COALESCE(NULLIF(eh.status, ''), ed.status) AS status, " .
+            $sql = "SELECT ed.enrollment_details_id, ed.program_id, p.name AS program_name, st.student_id_number, TRIM(CONCAT_WS(' ', st.first_name, st.last_name, NULLIF(TRIM(st.ext), ''))) AS student_name, COALESCE(esub.subject_names, sub.subject_name) AS subject_name, CONCAT(e.first_name, ' ', e.last_name) AS teacher_name, b.branch_id, b.branch_name, DATE_FORMAT(eh.date_created, '%M %d, %Y') AS enrollment_date, eh.date_created AS sort_date, COALESCE(NULLIF(eh.status, ''), ed.status) AS status, ea.application_id, ea.status AS application_status, " .
                 "CASE " .
                     "WHEN COALESCE(pt.pending_payment_count, 0) > 0 THEN 'Pending' " .
                     "WHEN (COALESCE(eh.total_of_program, 0) + COALESCE(bt.total_penalty, 0) - COALESCE(pt.total_paid, 0)) <= 0 THEN 'Fully Paid' " .
@@ -1687,12 +1766,13 @@ class EnrollmentAPI {
                 "LEFT JOIN (SELECT es.enrollment_details_id, GROUP_CONCAT(s.subject_name ORDER BY s.subject_name SEPARATOR ', ') AS subject_names FROM enrollment_subjects es JOIN subject s ON es.subject_id = s.subject_id GROUP BY es.enrollment_details_id) esub ON ed.enrollment_details_id = esub.enrollment_details_id " .
                 "LEFT JOIN employee e ON ed.preferred_teacher = e.employee_id " .
                 "LEFT JOIN branch b ON eh.branch_id = b.branch_id " .
+                "LEFT JOIN enrollment_applications ea ON ea.enrollment_details_id = ed.enrollment_details_id " .
                 "JOIN program p ON ed.program_id = p.program_id " .
                 "LEFT JOIN (SELECT enrollment_details_id, SUM(penalty_amount) AS total_penalty FROM billing_schedule GROUP BY enrollment_details_id) bt ON ed.enrollment_details_id = bt.enrollment_details_id " .
                 "LEFT JOIN (SELECT bs.enrollment_details_id, SUM(CASE WHEN pay.payment_status = 'Received' THEN pay.amount_paid ELSE 0 END) AS total_paid, SUM(CASE WHEN pay.payment_status = 'Pending' THEN 1 ELSE 0 END) AS pending_payment_count FROM billing_schedule bs LEFT JOIN payment pay ON bs.billing_schedule_id = pay.billing_schedule_id GROUP BY bs.enrollment_details_id) pt ON ed.enrollment_details_id = pt.enrollment_details_id " .
-                "WHERE 1=1" . $whereClause . " ORDER BY eh.date_created DESC LIMIT :limit OFFSET :offset";
+                "WHERE 1=1" . $whereClause . " ORDER BY eh.date_created DESC" . ($includeApplications ? '' : " LIMIT :limit OFFSET :offset");
             $stmt = $this->conn->prepare($sql);
-            if ($status !== '') {
+            if ($status !== '' && strtolower($status) !== 'pending') {
                 $stmt->bindValue(':status', $status, PDO::PARAM_STR);
             }
             if ($search !== '') {
@@ -1707,10 +1787,75 @@ class EnrollmentAPI {
             if ($branchId) {
                 $stmt->bindValue(':branch_id', $branchId, PDO::PARAM_INT);
             }
-            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+            if (!$includeApplications) {
+                $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+                $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+            }
             $stmt->execute();
             $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            if ($includeApplications) {
+                $applicationWhere = [
+                    "ea.enrollment_details_id IS NULL",
+                    "ea.status IN ('pending_review', 'approved_for_payment')",
+                    $this->getProgramTypeCondition($type)
+                ];
+                $applicationParams = [];
+                if ($summaryFilter === 'new') {
+                    $applicationWhere[] = 'ea.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)';
+                } elseif ($summaryFilter === 'incomplete') {
+                    $applicationWhere[] = '1=0';
+                }
+                if ($status !== '' && strtolower($status) !== 'pending') {
+                    $applicationWhere[] = '1=0';
+                }
+                if ($search !== '') {
+                    $applicationWhere[] = "(ea.application_number LIKE :application_search OR st.student_id_number LIKE :application_search OR TRIM(CONCAT_WS(' ', st.first_name, st.last_name, NULLIF(TRIM(st.ext), ''))) LIKE :application_search OR p.name LIKE :application_search OR COALESCE(easub.subject_names, '') LIKE :application_search OR COALESCE(b.branch_name, '') LIKE :application_search)";
+                    $applicationParams[':application_search'] = "%$search%";
+                }
+                if ($subject !== '') {
+                    $applicationWhere[] = "COALESCE(easub.subject_names, '') LIKE :application_subject";
+                    $applicationParams[':application_subject'] = "%$subject%";
+                }
+                if ($enrollmentDate !== '') {
+                    $applicationWhere[] = 'DATE(ea.created_at) = :application_date';
+                    $applicationParams[':application_date'] = $enrollmentDate;
+                }
+                if ($branchId) {
+                    $applicationWhere[] = 'ea.branch_id = :application_branch_id';
+                    $applicationParams[':application_branch_id'] = $branchId;
+                }
+                $applicationSql = "SELECT NULL AS enrollment_details_id, ea.program_id, p.name AS program_name,
+                        st.student_id_number,
+                        TRIM(CONCAT_WS(' ', st.first_name, st.last_name, NULLIF(TRIM(st.ext), ''))) AS student_name,
+                        COALESCE(easub.subject_names, 'N/A') AS subject_name,
+                        NULL AS teacher_name, b.branch_id, b.branch_name,
+                        DATE_FORMAT(ea.created_at, '%M %d, %Y') AS enrollment_date,
+                        ea.created_at AS sort_date, ea.status, ea.application_id,
+                        ea.status AS application_status, 'Unpaid' AS payment_status
+                    FROM enrollment_applications ea
+                    JOIN student st ON ea.student_id = st.student_id
+                    JOIN program p ON ea.program_id = p.program_id
+                    LEFT JOIN branch b ON ea.branch_id = b.branch_id
+                    LEFT JOIN (
+                        SELECT eas.application_id, GROUP_CONCAT(s.subject_name ORDER BY s.subject_name SEPARATOR ', ') AS subject_names
+                        FROM enrollment_application_subjects eas
+                        JOIN subject s ON eas.subject_id = s.subject_id
+                        GROUP BY eas.application_id
+                    ) easub ON ea.application_id = easub.application_id
+                    WHERE " . implode(' AND ', $applicationWhere);
+                $applicationStmt = $this->conn->prepare($applicationSql);
+                $applicationStmt->execute($applicationParams);
+                $result = array_merge($result, $applicationStmt->fetchAll(PDO::FETCH_ASSOC));
+                usort($result, fn($a, $b) => strcmp((string)($b['sort_date'] ?? ''), (string)($a['sort_date'] ?? '')));
+                $total = count($result);
+                $result = array_slice($result, $offset, $limit);
+            }
+
+            foreach ($result as &$row) {
+                unset($row['sort_date']);
+            }
+            unset($row);
 
             echo json_encode([
                 "status" => "success",
@@ -1754,7 +1899,7 @@ class EnrollmentAPI {
 
     // --- LOOKUPS ---
     public function getLookups() {
-        $data = ['genders'=>[], 'programs'=>[], 'subjects'=>[], 'branches'=>[], 'grade_levels'=>[], 'teachers'=>[], 'program_types'=>[], 'services'=>[], 'classes'=>[], 'sections'=>[], 'current_branch'=>null];
+        $data = ['genders'=>[], 'programs'=>[], 'subjects'=>[], 'branches'=>[], 'grade_levels'=>[], 'grade_levels_all'=>[], 'teachers'=>[], 'program_types'=>[], 'services'=>[], 'classes'=>[], 'sections'=>[], 'current_branch'=>null];
         try {
             $branchId = isset($_SESSION['branch_id']) ? intval($_SESSION['branch_id']) : null;
             $restrictedBranchId = $this->getBranchAdminBranchId();
@@ -1779,7 +1924,8 @@ class EnrollmentAPI {
             } else {
                 $data['branches'] = $this->conn->query("SELECT branch_id, branch_name FROM branch ORDER BY branch_name")->fetchAll(PDO::FETCH_ASSOC);
             }
-            $data['grade_levels'] = $this->conn->query("SELECT * FROM grade_level")->fetchAll(PDO::FETCH_ASSOC);
+            $data['grade_levels'] = $this->conn->query("SELECT grade_level_id, grade_level, status FROM grade_level WHERE status = 'active' ORDER BY grade_level_id")->fetchAll(PDO::FETCH_ASSOC);
+            $data['grade_levels_all'] = $this->conn->query("SELECT grade_level_id, grade_level, status FROM grade_level ORDER BY grade_level_id")->fetchAll(PDO::FETCH_ASSOC);
             $data['teachers'] = $this->conn->query("SELECT employee_id, CONCAT(first_name, ' ', COALESCE(middle_name, ''), ' ', last_name) as name FROM employee WHERE status = 'active' AND role_id IN (SELECT role_id FROM role WHERE role_name = 'teacher')")->fetchAll(PDO::FETCH_ASSOC);
             $data['program_types'] = $this->conn->query("SELECT * FROM program_type")->fetchAll(PDO::FETCH_ASSOC);
             if ($branchId && $this->tableExists('branch_services')) {
@@ -2190,6 +2336,9 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
             }
             if (!array_key_exists('goal', $data)) {
                 $goal = $existing['goal'] ?? null;
+            }
+            if ($gradeLevelId !== null && (string)$gradeLevelId !== (string)($existing['grade_level_id'] ?? '')) {
+                $this->assertActiveGradeLevel($gradeLevelId);
             }
             if (empty($subjectIds) && !empty($existing['subject_id'])) {
                 $subjectIds = [intval($existing['subject_id'])];

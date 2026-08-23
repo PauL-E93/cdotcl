@@ -10,6 +10,7 @@ import "./modules/billing.js";
 import { initProgramPage, setupAddProgramModal } from "./modules/program.js?v=20260814-program-filters";
 import { setupAddProgramTypeModal, loadProgramTypes } from "./modules/program_type.js";
 import { initSubjectPage, setupAddSubjectModal } from "./modules/subject.js";
+import { initGradeLevelPage, setupAddGradeLevelModal } from "./modules/grade_level.js?v=20260823-grade-level-paging";
 import { loadDiscounts, setupAddDiscountModal } from "./modules/discount.js";
 import { loadRegistrationAmounts, setupAddRegistrationAmountModal } from "./modules/registration_amount.js";
 import { initServicesPage, setupAddServiceModal } from "./modules/services.js";
@@ -17,11 +18,11 @@ import { initPaymentMethodsPage, setupAddPaymentMethodModal } from "./modules/pa
 import { loadSchoolYears, setupAddSchoolYearModal, setupEditSchoolYearStatusModal } from "./modules/school_year.js?v=20260814-schedule-details";
 import { initCardManagementPage, initCardManagementEditorPage } from "./modules/card_mangpre.js?v=20260814-school-year-curriculum";
 import "./modules/view_enrollment_pre_play.js?v=20260814-auditor-filters";
-import "./modules/view_enrollment.js?v=20260814-auditor-filters";
-import "./modules/edit_enrollment.js?v=20260812-edit-teacher-schedule";
+import "./modules/view_enrollment.js?v=20260823-unified-pending-status";
+import "./modules/edit_enrollment.js?v=20260823-grade-level-crud";
 import "./modules/employee.js";
 import "./modules/employee_rbac.js";
-import "./modules/role_base.js?v=20260814-remove-role-reset";
+import "./modules/role_base.js?v=20260823-grade-level-paging";
 import { openAddClassModal } from "./modules/class_add.js";
 import { initSectionView } from "./modules/section_view.js?v=20260814-profile-table-fields";
 import { initSectionAttendancePage } from "./modules/section_attendance.js";
@@ -29,9 +30,10 @@ import { initSectionReportCardsPage } from "./modules/preschool_report_card.js?v
 import { openAddSectionModal } from "./modules/section.js";
 import { initProductPage, openAddProductModal, openAddCategoryModal } from "./modules/product.js?v=20260814-product-search";
 import { resetEnrollmentState, openEnrollmentModal } from "./modules/addenrollment.js?v=20260814-branch-teacher-filter";
-import { initLandingPage } from "./modules/landingpage.js?v=20260814-enrollment-guide";
+import { initNewStudentApplications } from "./modules/enrollment_applications.js?v=20260823-unified-pending-status";
+import { initLandingPage } from "./modules/landingpage.js?v=20260823-public-applications";
 import { initLandingPageManager } from "./modules/landing_page_manager.js";
-import { SessionManager } from './studentmodule/session.js?v=20260814-shared-schedule-details';
+import { SessionManager } from './studentmodule/session.js?v=20260823-meeting-numbers';
 import { canUseProgramPermission, initProgramPermissions } from "./modules/program_rbac.js";
 import { applySchoolCalendarPagePermissions, canUseSchoolCalendarPermission, initSchoolCalendarPermissions } from "./modules/school_calendar_rbac.js";
 import { applyPaymentPagePermissions, initPaymentPermissions } from "./modules/payment_rbac.js";
@@ -39,6 +41,7 @@ import { applyClassPagePermissions, canUseClassPermission, initClassPermissions 
 import { applySessionPagePermissions, initSessionPermissions } from "./modules/session_rbac.js";
 import { applyProductPagePermissions, canUseProductPermission, initProductPermissions } from "./modules/product_rbac.js";
 import { applySchedulePagePermissions, initSchedulePermissions } from "./modules/schedule_rbac.js";
+import { initStudentManagementPage } from "./modules/student_management.js?v=20260823";
 
 
 
@@ -57,6 +60,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     createSidebar();
 
     const pathname = window.location.pathname;
+
+    if (pathname.includes('student_management.html')) {
+        await initStudentManagementPage();
+    }
 
     if (pathname.includes('/student/')) {
         import("./studentmodule/billingPlayPre.js?v=20260812-student-payment-qr-modal");
@@ -101,6 +108,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     if (pathname.endsWith('/enrollement.html') || pathname.endsWith('/enrollement_pre_play.html')) {
+        if (!pathname.includes('/student/')) {
+            initNewStudentApplications();
+        }
         const enrollBtn = document.getElementById('btn-start-enrollment');
         if (enrollBtn) {
             enrollBtn.addEventListener('click', () => {
@@ -215,6 +225,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         await initProgramPage();
 
         loadProgramTypes();
+        initGradeLevelPage();
         initSubjectPage();
         loadDiscounts();
         loadRegistrationAmounts();
@@ -243,6 +254,9 @@ document.addEventListener("DOMContentLoaded", async () => {
             }
             if (canUseProgramPermission('create_types')) {
                 programOptions.push({ text: "Add Program Type", id: "add-program-type-option", action: () => setupAddProgramTypeModal() });
+            }
+            if (canUseProgramPermission('create_grades')) {
+                programOptions.push({ text: "Add Grade Level", id: "add-grade-level-option", action: () => setupAddGradeLevelModal() });
             }
             if (canUseProgramPermission('create_subjects')) {
                 programOptions.push({ text: "Add Subject", id: "add-subject-option", action: () => setupAddSubjectModal() });

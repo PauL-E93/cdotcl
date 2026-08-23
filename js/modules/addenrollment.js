@@ -93,11 +93,149 @@ function getEnrollmentFinalizePermissionKey() {
     return pendingDownpaymentEnrollment?.enrollment_id ? 'approve' : 'create';
 }
 
+function ensureEnrollmentValidationSupport() {
+    if (!document.getElementById('adminEnrollmentValidationStyles')) {
+        const style = document.createElement('style');
+        style.id = 'adminEnrollmentValidationStyles';
+        style.textContent = `
+            .modal .form-control.is-invalid,
+            .modal .form-select.is-invalid {
+                border-color: #dc3545 !important;
+                background-color: #fff8f8 !important;
+                box-shadow: 0 0 0 .18rem rgba(220, 53, 69, .12) !important;
+            }
+            .modal .enrollment-invalid-area {
+                border: 1px solid #dc3545 !important;
+                border-radius: 8px;
+                background: #fff8f8;
+                box-shadow: 0 0 0 .18rem rgba(220, 53, 69, .10);
+            }
+            .modal .tutorial-subject-control.enrollment-invalid-area,
+            .modal .tutorial-schedule-table.enrollment-invalid-area {
+                padding: 5px;
+            }
+            .modal .enrollment-field-has-error > .form-label,
+            .modal .enrollment-field-has-error > label,
+            .modal .enrollment-field-has-error .form-label:first-child {
+                color: #b42318 !important;
+                font-weight: 700 !important;
+            }
+            .modal .enrollment-inline-error {
+                display: block;
+                width: 100%;
+                margin-top: 6px;
+                color: #b42318;
+                font-size: .78rem;
+                font-weight: 600;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    if (document.documentElement.dataset.enrollmentValidationBound === 'true') return;
+    document.documentElement.dataset.enrollmentValidationBound = 'true';
+    const clearChangedField = event => clearEnrollmentFieldError(event.target);
+    document.addEventListener('input', clearChangedField);
+    document.addEventListener('change', clearChangedField);
+}
+
+function getEnrollmentFieldContainer(element) {
+    return element?.closest('.col-md-6, .col-md-4, .col-12, .tutorial-date-field, .downpayment-due-panel, #referenceField')
+        || element?.parentElement;
+}
+
+function clearEnrollmentFieldError(element) {
+    if (!(element instanceof Element)) return;
+
+    const fieldId = element.id || '';
+    element.classList.remove('is-invalid');
+    element.removeAttribute('aria-invalid');
+    element.removeAttribute('aria-describedby');
+
+    document.querySelectorAll('[data-enrollment-error-for]').forEach(feedback => {
+        if (feedback.dataset.enrollmentErrorFor === fieldId) feedback.remove();
+    });
+    document.querySelectorAll('[data-enrollment-error-highlight-for]').forEach(highlight => {
+        if (highlight.dataset.enrollmentErrorHighlightFor === fieldId) {
+            highlight.classList.remove('enrollment-invalid-area');
+            delete highlight.dataset.enrollmentErrorHighlightFor;
+        }
+    });
+
+    const container = getEnrollmentFieldContainer(element);
+    if (container && !container.querySelector('.is-invalid, .enrollment-invalid-area')) {
+        container.classList.remove('enrollment-field-has-error');
+    }
+}
+
+function clearEnrollmentValidation(container = document) {
+    container.querySelectorAll('.is-invalid').forEach(element => {
+        element.classList.remove('is-invalid');
+        element.removeAttribute('aria-invalid');
+        element.removeAttribute('aria-describedby');
+    });
+    container.querySelectorAll('.enrollment-invalid-area').forEach(element => {
+        element.classList.remove('enrollment-invalid-area');
+        delete element.dataset.enrollmentErrorHighlightFor;
+    });
+    container.querySelectorAll('.enrollment-field-has-error').forEach(element => element.classList.remove('enrollment-field-has-error'));
+    container.querySelectorAll('[data-enrollment-error-for]').forEach(element => element.remove());
+}
+
+function markEnrollmentFieldInvalid(element, message, highlightElement = null) {
+    if (!element) return;
+    ensureEnrollmentValidationSupport();
+    clearEnrollmentFieldError(element);
+
+    const fieldId = element.id || `enrollment-field-${Date.now()}`;
+    if (!element.id) element.id = fieldId;
+    const feedbackId = `${fieldId}-enrollment-error`;
+    const highlight = highlightElement || element;
+    const container = getEnrollmentFieldContainer(highlight) || getEnrollmentFieldContainer(element);
+
+    element.classList.add('is-invalid');
+    element.setAttribute('aria-invalid', 'true');
+    element.setAttribute('aria-describedby', feedbackId);
+    if (highlight !== element) {
+        highlight.classList.add('enrollment-invalid-area');
+        highlight.dataset.enrollmentErrorHighlightFor = fieldId;
+    }
+    container?.classList.add('enrollment-field-has-error');
+
+    const feedback = document.createElement('div');
+    feedback.id = feedbackId;
+    feedback.className = 'enrollment-inline-error';
+    feedback.dataset.enrollmentErrorFor = fieldId;
+    feedback.textContent = message;
+    (container || element.parentElement)?.appendChild(feedback);
+}
+
+function showEnrollmentValidationAlert(title, issues) {
+    const validIssues = (issues || []).filter(issue => issue?.element);
+    validIssues.forEach(issue => markEnrollmentFieldInvalid(issue.element, issue.message, issue.highlight || null));
+    const messages = [...new Set(validIssues.map(issue => issue.message))];
+
+    return Swal.fire({
+        icon: 'warning',
+        title,
+        text: messages.length ? `Please correct: ${messages.join(' ')}` : 'Please complete the highlighted required fields.',
+        confirmButtonText: 'Review highlighted fields'
+    }).then(() => {
+        const firstField = validIssues[0]?.element;
+        if (!firstField) return;
+        firstField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (!firstField.disabled && typeof firstField.focus === 'function') {
+            window.setTimeout(() => firstField.focus({ preventScroll: true }), 250);
+        }
+    });
+}
+
 export function openEnrollmentModal() {
     if (!guardEnrollmentPermission('create', 'You do not have permission to add enrollment records.')) {
         return;
     }
 
+    ensureEnrollmentValidationSupport();
     const modalElement = document.getElementById('addEnrollmentModal');
     const modal = getBootstrapModal(modalElement);
     if (modal) {
@@ -600,9 +738,7 @@ function attachBirthdayValidation(input, isPreschool) {
         if (!validation.valid) {
             input.setCustomValidity(validation.message);
             input.value = '';
-            Swal.fire(validation.title, validation.message, 'warning').then(() => {
-                input.focus();
-            });
+            showEnrollmentValidationAlert(validation.title, [{ element: input, message: validation.message }]);
             return;
         }
 
@@ -2136,6 +2272,9 @@ function handleSaveStudent() {
         return;
     }
 
+    const studentForm = document.getElementById('studentForm');
+    clearEnrollmentValidation(studentForm || document);
+
     const isPreschool = window.currentEnrollmentCategory === 'preschool';
     const healthNotesInput = document.getElementById("healthNotes");
     const healthNoteValue = isPreschool && healthNotesInput && healthNotesInput.value.trim() !== ''
@@ -2166,44 +2305,54 @@ function handleSaveStudent() {
     };
 
     const requiredFields = [
-        {key: 'first_name', label: 'First Name'},
-        {key: 'middle_name', label: 'Middle Name'},
-        {key: 'last_name', label: 'Last Name'},
-        {key: 'birthday', label: 'Birthday'},
-        {key: 'gender_id', label: 'Gender'},
-        {key: 'guardian_name', label: 'Guardian Name'},
-        {key: 'email', label: 'Email'},
-        {key: 'guardian_contact', label: 'Guardian Contact'},
-        {key: 'guardian_relationship', label: 'Guardian Relationship'},
-        {key: 'adr_province', label: 'Province'},
-        {key: 'adr_city', label: 'City / Municipality'},
-        {key: 'adr_barangay', label: 'Barangay'},
-        {key: 'adr_street', label: 'Street / House No.'}
+        {key: 'first_name', label: 'First Name', id: 'firstName'},
+        {key: 'middle_name', label: 'Middle Name', id: 'middleName'},
+        {key: 'last_name', label: 'Last Name', id: 'lastName'},
+        {key: 'birthday', label: 'Birthday', id: 'birthday'},
+        {key: 'gender_id', label: 'Gender', id: 'genderId'},
+        {key: 'guardian_name', label: 'Guardian Name', id: 'guardianName'},
+        {key: 'email', label: 'Email', id: 'email'},
+        {key: 'guardian_contact', label: 'Guardian Contact', id: 'guardianContact'},
+        {key: 'guardian_relationship', label: 'Guardian Relationship', id: 'guardianRelationship'},
+        {key: 'adr_province', label: 'Province', id: 'adrProvince'},
+        {key: 'adr_city', label: 'City / Municipality', id: 'adrCity'},
+        {key: 'adr_barangay', label: 'Barangay', id: 'adrBarangay'},
+        {key: 'adr_street', label: 'Street / House No.', id: 'adrStreet'}
     ];
     // Health Notes is optional for preschool, not included in required validation
 
-    const missingFields = requiredFields
-        .filter(field => !data[field.key])
-        .map(field => field.label);
+    const missingFields = requiredFields.filter(field => String(data[field.key] ?? '').trim() === '');
 
     if (missingFields.length > 0) {
-        Swal.fire("Required Fields Missing", `Please fill in: ${missingFields.join(', ')}`, "warning");
+        showEnrollmentValidationAlert('Required Fields Missing', missingFields.map(field => ({
+            element: document.getElementById(field.id),
+            message: `${field.label} is required.`
+        })));
         return;
     }
 
     if(!isValidEmail(data.email)) {
-        Swal.fire("Invalid Email", "Please enter a valid email address.", "warning");
+        showEnrollmentValidationAlert('Invalid Email', [{
+            element: document.getElementById('email'),
+            message: 'Enter a valid email address.'
+        }]);
         return;
     }
 
     if(!isValidContactNumber(data.guardian_contact)) {
-        Swal.fire("Invalid Contact Number", "Please enter a valid Philippine mobile number in +63 format (for example, +639171234567).", "warning");
+        showEnrollmentValidationAlert('Invalid Contact Number', [{
+            element: document.getElementById('guardianContact'),
+            message: 'Enter a valid Philippine mobile number after +63 (for example, 9171234567).'
+        }]);
         return;
     }
 
     const birthdayValidation = validateBirthdayForEnrollmentCategory(data.birthday, isPreschool);
     if (!birthdayValidation.valid) {
-        Swal.fire(birthdayValidation.title, birthdayValidation.message, "warning");
+        showEnrollmentValidationAlert(birthdayValidation.title, [{
+            element: document.getElementById('birthday'),
+            message: birthdayValidation.message
+        }]);
         return;
     }
 
@@ -2298,6 +2447,9 @@ function handleSaveEnrollmentDetails() {
         return;
     }
 
+    const enrollmentForm = document.getElementById('enrollmentForm');
+    clearEnrollmentValidation(enrollmentForm || document);
+
     const studentId = Number(currentStudentId);
     if (!Number.isInteger(studentId) || studentId <= 0) {
         Swal.fire("No student selected", "Please select or create a valid student before finalizing enrollment.", "warning");
@@ -2305,6 +2457,7 @@ function handleSaveEnrollmentDetails() {
     }
 
     const progId = document.getElementById("programId").value;
+    const gradeLevelId = document.getElementById('gradeLevelId')?.value || '';
     const subjectIds = getSelectedSubjectIds();
     const program = globalLookups.programs.find(p => p.program_id == progId);
     const scheduleValidation = getSelectedProgramScheduleRequirement();
@@ -2314,32 +2467,50 @@ function handleSaveEnrollmentDetails() {
     
     console.log('Submitting enrollment for student_id:', studentId);
 
-    if (subjectIds.length === 0) {
-        Swal.fire("Subject Required", "Please select at least one subject.", "warning");
-        return;
-    }
-
     const preferredBranch = document.getElementById("preferredBranch")?.value || '';
-    if (!preferredBranch) {
-        Swal.fire("Branch Required", "Please select a branch before choosing a teacher.", "warning");
-        return;
-    }
-
     const preferredTeacher = document.getElementById("preferredTeacher").value;
-    if (!preferredTeacher) {
-        Swal.fire("Teacher Required", "Please select a teacher.", "warning");
-        return;
+    const validationIssues = [];
+    if (!progId) {
+        validationIssues.push({ element: document.getElementById('programId'), message: 'Program is required.' });
     }
-
+    if (!gradeLevelId) {
+        validationIssues.push({ element: document.getElementById('gradeLevelId'), message: 'Grade level is required.' });
+    }
+    if (subjectIds.length === 0) {
+        validationIssues.push({
+            element: document.getElementById('subjectId'),
+            highlight: document.querySelector('.tutorial-subject-control'),
+            message: 'Add at least one subject.'
+        });
+    }
+    if (!preferredBranch) {
+        validationIssues.push({ element: document.getElementById('preferredBranch'), message: 'Branch is required.' });
+    }
+    if (!preferredTeacher) {
+        validationIssues.push({ element: document.getElementById('preferredTeacher'), message: 'Teacher is required.' });
+    }
     if (scheduleValidation.applicable && !scheduleValidation.matches) {
-        showScheduleRequirementAlert(scheduleValidation, "Schedule Preference Mismatch");
+        const difference = formatScheduleUnits(Math.abs(scheduleValidation.differenceMinutes));
+        const scheduleMessage = scheduleValidation.currentMinutes === 0
+            ? 'Add the required schedule preference.'
+            : scheduleValidation.differenceMinutes > 0
+                ? `Add ${difference} more session unit(s) to the schedule.`
+                : `Remove ${difference} session unit(s) from the schedule.`;
+        validationIssues.push({
+            element: document.getElementById('schedDateInput'),
+            highlight: document.querySelector('.tutorial-schedule-table'),
+            message: scheduleMessage
+        });
+    }
+    if (validationIssues.length > 0) {
+        showEnrollmentValidationAlert('Enrollment Details Need Attention', validationIssues);
         return;
     }
 
     const data = {
         student_id: studentId,
         program_id: progId,
-        grade_level_id: document.getElementById("gradeLevelId").value,
+        grade_level_id: gradeLevelId,
         preferred_branch_id: preferredBranch,
         subject_id: subjectIds[0],
         subject_ids: subjectIds,
@@ -2370,9 +2541,24 @@ function handleSavePreschoolEnrollment() {
         return;
     }
 
+    const enrollmentForm = document.getElementById('enrollmentForm');
+    clearEnrollmentValidation(enrollmentForm || document);
+
     const progId = document.getElementById("preschoolProgram").value;
     const classId = document.getElementById("preschoolClass").value;
     const sectionId = document.getElementById("preschoolSection").value;
+    const validationIssues = [];
+    if (!progId) {
+        validationIssues.push({ element: document.getElementById('preschoolProgram'), message: 'Program is required.' });
+    } else if (!classId) {
+        validationIssues.push({ element: document.getElementById('preschoolClass'), message: 'Class is required.' });
+    } else if (!sectionId) {
+        validationIssues.push({ element: document.getElementById('preschoolSection'), message: 'Section is required.' });
+    }
+    if (validationIssues.length > 0) {
+        showEnrollmentValidationAlert('Enrollment Details Need Attention', validationIssues);
+        return;
+    }
     const includeService = preschoolServiceSelection.programId === String(progId) && preschoolServiceSelection.include;
     const serviceId = includeService ? preschoolServiceSelection.serviceId : null;
     const program = globalLookups.programs.find(p => p.program_id == progId);
@@ -3276,24 +3462,23 @@ async function handleSubmitDownpayment() {
         preschoolServiceSelection.programId === String(programId) &&
         preschoolServiceSelection.include;
     const serviceId = includeService ? preschoolServiceSelection.serviceId : null;
-
+    const downpaymentForm = document.getElementById('downpaymentForm');
+    clearEnrollmentValidation(downpaymentForm || document);
+    const validationIssues = [];
     if (!programId) {
-        Swal.fire("Program Required", "Please select the program before taking downpayment.", "warning");
-        return;
+        validationIssues.push({ element: programInput, message: 'Program is required.' });
     }
-    
     if (!amount || amount <= 0) {
-        Swal.fire("Invalid Amount", "Please enter a valid downpayment amount.", "warning");
-        return;
+        validationIssues.push({ element: amountInput, message: 'Enter a valid downpayment amount.' });
     }
-    
     if (!method) {
-        Swal.fire("Payment Method Required", "Please select a payment method.", "warning");
-        return;
+        validationIssues.push({ element: methodInput, message: 'Payment method is required.' });
     }
-
     if (methodName.toLowerCase().includes('gcash') && !referenceNo) {
-        Swal.fire("Reference Required", "Please enter the GCash reference number.", "warning");
+        validationIssues.push({ element: referenceInput, message: 'GCash reference number is required.' });
+    }
+    if (validationIssues.length > 0) {
+        showEnrollmentValidationAlert('Payment Details Need Attention', validationIssues);
         return;
     }
     

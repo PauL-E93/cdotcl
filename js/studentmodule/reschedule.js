@@ -73,6 +73,12 @@ export function openRescheduleModal(schedule, onSuccess, options = {}) {
                 return false;
             }
 
+            const packageSessionCount = Number(schedule.packageSessionCount || 1);
+            if (packageSessionCount > 1 && parseTimeToMinutes(endTimeInput) - parseTimeToMinutes(timeInput) !== packageSessionCount * 60) {
+                Swal.showValidationMessage(`This merged meeting must remain exactly ${packageSessionCount} hours.`);
+                return false;
+            }
+
             if (!validateRescheduleSelection(dateInput, timeInput, endTimeInput)) {
                 return false;
             }
@@ -381,6 +387,8 @@ function submitRescheduleRequest(originalSchedule, newSchedules, reason, onSucce
         operation: 'submitRescheduleRequest',
         original_enrollment_details_id: originalSchedule.enrollment_details_id,
         original_date: originalSchedule.date,
+        original_preference_ids: originalSchedule.preference_ids || [originalSchedule.preference_id].filter(Boolean),
+        session_count: Number(originalSchedule.packageSessionCount || 1),
         new_schedules: newSchedules,
         reason: reason
     }, {

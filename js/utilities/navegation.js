@@ -76,6 +76,15 @@ export function createSidebar() {
         { name: 'SCHEDULE', href: buildAppUrl(`html/${userFolder}/schedule.html`), icon: 'bi-calendar3', moduleKey: 'schedule', roles: ['owner','branch admin','student','teacher','secretary','auditor'] },
 
         {
+            name: 'STUDENTS',
+            href: buildAppUrl(`html/${userFolder}/student_management.html`),
+            icon: 'bi-person-vcard',
+            moduleKey: 'enrollment',
+            restrictToRoles: true,
+            roles: ['owner', 'branch admin', 'secretary', 'auditor']
+        },
+
+        {
             name: 'ENROLLMENT',
             icon: 'bi-journal-check',
             moduleKey: 'enrollment',
@@ -122,7 +131,9 @@ export function createSidebar() {
 
     navItems.forEach(item => {
         const defaultRoleAccess = userRole === 'owner' || item.roles.includes(userRole);
-        const canAccessItem = item.moduleKey ? canRoleAccessModule(userRole, item.moduleKey) : defaultRoleAccess;
+        const canAccessItem = item.restrictToRoles && !defaultRoleAccess
+            ? false
+            : (item.moduleKey ? canRoleAccessModule(userRole, item.moduleKey) : defaultRoleAccess);
 
         if (canAccessItem) {
 

@@ -1,4 +1,4 @@
-import { openRescheduleModal } from './reschedule.js';
+import { openRescheduleModal } from './reschedule.js?v=20260823-merged-meetings';
 import { canUseSessionPermission, shouldApplySessionRbac } from '../modules/session_rbac.js';
 import {
     getManagerScheduleModalActions,
@@ -17,6 +17,7 @@ export class SessionManager {
         this.currentEnrollmentId = null;
         this.initialEnrollmentId = this._getInitialEnrollmentId();
         this.pathname = window.location.pathname;
+        this.mergeConsecutiveSessions = this.pathname.includes('/owner/session.html');
         this.isTeacherView = this.pathname.includes('/teacher/');
         this.isAuditorView = this.pathname.includes('/auditor/');
         this.scheduleUpdateEndpoint = this._getScheduleUpdateEndpoint();
@@ -94,6 +95,68 @@ export class SessionManager {
         const name = `${enrollment.program_name || ''} ${enrollment.label || ''}`.toLowerCase();
         const prePlayKeywords = ['preschool', 'playschool', 'pre-school', 'play-school', 'pre school', 'play school'];
         return !prePlayKeywords.some(keyword => name.includes(keyword));
+    }
+
+    _mergeConsecutiveLessons(lessons = []) {
+        const merged = [];
+        lessons.forEach(lesson => {
+            const previous = merged[merged.length - 1];
+            const isConsecutive = previous
+                && previous.hasSchedule
+                && lesson.hasSchedule
+                && previous.date === lesson.date
+                && String(previous.endTime || '').slice(0, 8) === String(lesson.time || '').slice(0, 8);
+
+            if (!isConsecutive) {
+                merged.push({
+                    ...lesson,
+                    sessionStart: lesson.id,
+                    sessionEnd: lesson.id,
+                    packageSessionCount: 1,
+                    preference_ids: lesson.preference_id ? [lesson.preference_id] : []
+                });
+                return;
+            }
+
+            previous.sessionEnd = lesson.id;
+            previous.packageSessionCount += 1;
+            previous.endTime = lesson.endTime;
+            previous.duration = `${previous.time} - ${lesson.endTime}`;
+            previous.preference_ids.push(lesson.preference_id);
+            const statuses = [...(previous.groupStatuses || [previous.status]), lesson.status];
+            previous.groupStatuses = statuses;
+            previous.status = this._combinedLessonStatus(statuses);
+            previous.isNotified = Boolean(previous.isNotified && lesson.isNotified);
+            previous.id = `${previous.sessionStart}–${previous.sessionEnd}`;
+            previous.title = `Sessions ${previous.sessionStart}–${previous.sessionEnd}`;
+        });
+        return merged;
+    }
+
+    _combinedLessonStatus(statuses = []) {
+        const normalized = statuses.map(status => this.normalizeStatus(status));
+        if (normalized.every(status => status === normalized[0])) return normalized[0];
+        if (normalized.includes('ongoing')) return 'ongoing';
+        if (normalized.includes('in-progress')) return 'in-progress';
+        if (normalized.includes('confirmed')) return 'confirmed';
+        if (normalized.includes('pending')) return 'pending';
+        if (normalized.includes('no-show')) return 'no-show';
+        return normalized[0] || 'pending';
+    }
+
+    _getScheduledDurationLabel(lessons = [], fallback = 'TBD') {
+        const totalMinutes = lessons.reduce((sum, lesson) => {
+            if (!lesson?.hasSchedule || !lesson.time || !lesson.endTime) return sum;
+            const toMinutes = value => {
+                const [hours, minutes] = String(value).split(':').map(Number);
+                return (hours * 60) + minutes;
+            };
+            return sum + Math.max(0, toMinutes(lesson.endTime) - toMinutes(lesson.time));
+        }, 0);
+        if (!totalMinutes) return fallback;
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        return `${hours ? `${hours}h` : ''}${hours && minutes ? ' ' : ''}${minutes ? `${minutes}m` : ''}`;
     }
 
     /**
@@ -174,31 +237,34 @@ export class SessionManager {
     }
 
     render(data, container = this.container) {
-        this.currentSessionData = data;
+        const displayData = this.mergeConsecutiveSessions
+            ? { ...data, lessons: this._mergeConsecutiveLessons(data.lessons || []) }
+            : data;
+        this.currentSessionData = displayData;
         const noScheduleMessage = this.isScheduleManagerView
-            ? `The tutorial enrollment for <strong>${data.studentName}</strong> in <strong>${data.title}</strong> is active, but no sessions have been scheduled yet.`
-            : `Your enrollment for <strong>${data.title}</strong> is active. Contact your branch administrator to schedule your first session.`;
+            ? `The tutorial enrollment for <strong>${displayData.studentName}</strong> in <strong>${displayData.title}</strong> is active, but no sessions have been scheduled yet.`
+            : `Your enrollment for <strong>${displayData.title}</strong> is active. Contact your branch administrator to schedule your first session.`;
 
-        if (data.noScheduledSessions) {
+        if (displayData.noScheduledSessions) {
             container.innerHTML = `
                 <div class="alert alert-info mt-4" role="alert">
                     <i class="bi bi-calendar-plus fs-3 me-2"></i>
                     <strong>No sessions scheduled yet</strong><br>
                     ${noScheduleMessage}
                 </div>
-                ${this._createHeaderCard(data)}
-                ${this._createProgressTimeline(data)}
-                ${this._createDetailsSection(data)}
+                ${this._createHeaderCard(displayData)}
+                ${this._createProgressTimeline(displayData)}
+                ${this._createDetailsSection(displayData)}
             `;
         } else {
             container.innerHTML = `
-                ${this._createHeaderCard(data)}
-                ${this._createProgressTimeline(data)}
-                ${this._createDetailsSection(data)}
+                ${this._createHeaderCard(displayData)}
+                ${this._createProgressTimeline(displayData)}
+                ${this._createDetailsSection(displayData)}
             `;
         }
 
-        this._attachSessionStepListeners(data, container);
+        this._attachSessionStepListeners(displayData, container);
     }
 
     _createHeaderCard(data) {
@@ -263,10 +329,10 @@ _createProgressTimeline(data) {
 
                 <div class="text-end">
                     <div class="fw-semibold">
-                        ${data.totalLessons} Lessons
+                        ${data.lessons.length} ${this.mergeConsecutiveSessions ? 'Meetings' : 'Lessons'}${this.mergeConsecutiveSessions && data.lessons.length !== Number(data.totalLessons) ? ` · ${data.totalLessons} package sessions` : ''}
                     </div>
                     <small class="text-muted">
-                        ~${data.totalDuration} total
+                        ~${this._getScheduledDurationLabel(data.lessons, data.totalDuration)} total
                     </small>
                 </div>
             </div>
@@ -316,11 +382,13 @@ _createProgressTimeline(data) {
     const isMissed = lesson.status === 'no-show';
 
     let circleClass = 'pending';
-    let iconContent = lesson.id;
+    let iconContent = this.mergeConsecutiveSessions ? index + 1 : lesson.id;
 
-    if (isCompleted) {
+    if (isCompleted && !this.mergeConsecutiveSessions) {
         circleClass = 'completed';
         iconContent = `<i class="bi bi-check-lg"></i>`;
+    } else if (isCompleted) {
+        circleClass = 'completed';
     }
 
     if (isCurrent) {
@@ -337,7 +405,9 @@ _createProgressTimeline(data) {
 
     if (isMissed) {
         circleClass = 'no-show';
-        iconContent = `<i class="bi bi-x-lg"></i>`;
+        if (!this.mergeConsecutiveSessions) {
+            iconContent = `<i class="bi bi-x-lg"></i>`;
+        }
     }
 
     let badgeClass = 'badge-pending';
@@ -454,7 +524,7 @@ _createProgressTimeline(data) {
             showTeacher: this.isScheduleManagerView && !this.isTeacherView
         }).then(({ action }) => {
             if (['no-show', 'ongoing', 'done'].includes(action)) {
-                this.updateScheduleStatus(schedule.preference_id, schedule.enrollment_details_id, schedule.date, action);
+                this.updateScheduleStatus(schedule.preference_id, schedule.enrollment_details_id, schedule.date, action, schedule.preference_ids || []);
                 return;
             }
 
@@ -476,10 +546,12 @@ _createProgressTimeline(data) {
         });
     }
 
-    async updateScheduleStatus(preferenceId, enrollmentDetailsId, scheduleDate, newStatus) {
+    async updateScheduleStatus(preferenceId, enrollmentDetailsId, scheduleDate, newStatus, preferenceIds = []) {
+        const isMergedMeeting = preferenceIds.length > 1;
         const payload = {
             operation: 'updateScheduleStatus',
-            preference_id: preferenceId,
+            preference_id: isMergedMeeting ? null : preferenceId,
+            preference_ids: isMergedMeeting ? preferenceIds : [],
             enrollment_details_id: enrollmentDetailsId,
             schedule_date: scheduleDate,
             new_status: newStatus

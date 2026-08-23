@@ -239,6 +239,9 @@ function getTutorialListUrl(summaryFilter = 'total') {
     enrollmentFilters.summary = summaryFilter || 'total';
     const params = new URLSearchParams();
     params.append('type', 'tutorial');
+    if (window.location.pathname.includes('/owner/enrollement.html')) {
+        params.append('include_applications', '1');
+    }
 
     if (enrollmentFilters.summary && enrollmentFilters.summary !== 'total') {
         params.append('summary_filter', enrollmentFilters.summary);
@@ -431,7 +434,7 @@ function loadEnrollmentFilterLookups() {
             const branchSelect = document.getElementById('enrollment-branch-filter');
 
             if (Array.isArray(data.statuses)) {
-                populateEnrollmentStatusOptions(statusSelect, data.statuses);
+                populateEnrollmentStatusOptions(statusSelect, [...new Set(data.statuses)]);
             }
             if (Array.isArray(data.subjects)) {
                 populateEnrollmentSubjectOptions(subjectSelect, data.subjects);
@@ -651,7 +654,16 @@ function renderEnrollments(enrollments) {
         const paymentStatus = enrollmentLifecycleStatus === 'incomplete'
             ? 'Incomplete'
             : (item.payment_status || 'Unpaid');
-        const displayStatus = isPaymentPage ? paymentStatus : (item.status || '').toUpperCase();
+        const applicationStatusLabels = {
+            pending_review: 'PENDING',
+            approved_for_payment: 'AWAITING CENTER PAYMENT',
+            ready_for_scheduling: 'READY FOR SCHEDULING'
+        };
+        const applicationStatus = String(item.application_status || '').toLowerCase();
+        const isPendingOnlineApplication = Boolean(item.application_id && applicationStatusLabels[applicationStatus]);
+        const displayStatus = isPaymentPage
+            ? paymentStatus
+            : (applicationStatusLabels[applicationStatus] || (item.status || '').toUpperCase());
 
         let statusBadge;
         if (isPaymentPage) {
@@ -664,7 +676,9 @@ function renderEnrollments(enrollments) {
             };
             statusBadge = paymentStatusClasses[paymentStatus] || 'secondary';
         } else {
-            switch (enrollmentLifecycleStatus) {
+            if (isPendingOnlineApplication) {
+                statusBadge = applicationStatus === 'ready_for_scheduling' ? 'primary' : 'warning text-dark';
+            } else switch (enrollmentLifecycleStatus) {
                 case 'active':
                 case 'enrolled':
                     statusBadge = 'success';
@@ -727,7 +741,18 @@ function renderEnrollments(enrollments) {
             `;
         }
 
-        if (!window.location.pathname.includes('payment.html')) {
+        if (!window.location.pathname.includes('payment.html') && isPendingOnlineApplication) {
+            actionButtons = `
+                <div class="dropdown" onclick="event.stopPropagation();">
+                    <button class="btn btn-sm btn-outline-secondary border-0" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Application actions">
+                        <i class="bi bi-three-dots-vertical"></i>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); window.viewNewStudentApplication(${Number(item.application_id)})"><i class="bi bi-clipboard-check me-2"></i>Check Application</a></li>
+                    </ul>
+                </div>
+            `;
+        } else if (!window.location.pathname.includes('payment.html')) {
             if (status === 'pending' && !isStudentPage()) {
                 const pendingActions = [];
                 if (canApproveEnrollment) {
@@ -813,7 +838,8 @@ function renderEnrollments(enrollments) {
 }
 
 function loadEnrollmentStats() {
-    axios.get("../../api/admin/enrollment.php?operation=getEnrollmentStats&type=tutorial")
+    const includeApplications = window.location.pathname.includes('/owner/enrollement.html') ? '&include_applications=1' : '';
+    axios.get(`../../api/admin/enrollment.php?operation=getEnrollmentStats&type=tutorial${includeApplications}`)
     .then(res => {
         if (res.data.status === 'success') {
             const stats = res.data.data;

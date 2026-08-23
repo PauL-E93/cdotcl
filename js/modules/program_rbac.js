@@ -8,6 +8,7 @@ const DEFAULT_PROGRAM_PERMISSIONS = {
     approve: true,
     export: true,
     manage_types: true,
+    manage_grades: true,
     manage_subjects: true,
     manage_services: true,
     manage_checklists: true,
@@ -17,6 +18,9 @@ const DEFAULT_PROGRAM_PERMISSIONS = {
     view_types: true,
     create_types: true,
     edit_types: true,
+    view_grades: true,
+    create_grades: true,
+    edit_grades: true,
     view_subjects: true,
     create_subjects: true,
     edit_subjects: true,
@@ -42,6 +46,7 @@ const DEFAULT_PROGRAM_PERMISSIONS = {
 const PROGRAM_SECTION_CONFIG = [
     { permissionKey: 'view_programs', featureKey: 'programs', anchorSelector: '#program_table_body' },
     { permissionKey: 'view_types', featureKey: 'types', anchorSelector: '#program_type_table_body' },
+    { permissionKey: 'view_grades', featureKey: 'grades', anchorSelector: '#grade_level_table_body' },
     { permissionKey: 'view_subjects', featureKey: 'subjects', anchorSelector: '#subject_table_body' },
     { permissionKey: 'view_services', featureKey: 'services', anchorSelector: '#services_table_body' },
     { permissionKey: 'view_checklists', featureKey: 'checklists', anchorSelector: '#report_card_table_body' },
@@ -54,6 +59,7 @@ const PROGRAM_SECTION_CONFIG = [
 const PROGRAM_ACTION_CONFIG = [
     { permissionKey: 'create', selector: '#btnAddProgram' },
     { permissionKey: 'create_types', selector: '#btnAddProgramType' },
+    { permissionKey: 'create_grades', selector: '#btnAddGradeLevel' },
     { permissionKey: 'create_subjects', selector: '#btnAddSubject' },
     { permissionKey: 'create_services', selector: '#btnAddService' },
     { permissionKey: 'edit_checklists', selector: '#btnAddReportCardType' },
@@ -198,6 +204,7 @@ export function applyProgramPagePermissions() {
     const hasProgramOptions = [
         canUseProgramPermission('create'),
         canUseProgramPermission('create_types'),
+        canUseProgramPermission('create_grades'),
         canUseProgramPermission('create_subjects'),
         canUseProgramPermission('edit_checklists'),
         canUseProgramPermission('create_discounts'),

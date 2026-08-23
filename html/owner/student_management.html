@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Management</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="../../css/design.css">
+    <link rel="stylesheet" href="../../css/student_management.css?v=20260823">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script type="module" src="../../js/index.js?v=20260823-student-management"></script>
+</head>
+<body>
+    <header id="dynamic-header"></header>
+    <main class="main-content student-management-page" data-student-management-page>
+        <header class="student-management-header">
+            <div>
+                <h1>Student Management</h1>
+                <p>Search every student, review their current program, and maintain personal and guardian information from one place.</p>
+            </div>
+            <button type="button" class="student-export-button" id="student-export-button">
+                <i class="bi bi-download"></i><span>Export</span>
+            </button>
+        </header>
+
+        <section class="student-summary-grid" aria-label="Student summary">
+            <article class="student-summary-card"><div><span>Total students</span><strong id="student-total-count">0</strong></div><div class="student-summary-icon"><i class="bi bi-people"></i></div></article>
+            <article class="student-summary-card"><div><span>Active accounts</span><strong id="student-active-count">0</strong></div><div class="student-summary-icon"><i class="bi bi-person-check"></i></div></article>
+            <article class="student-summary-card"><div><span>Currently enrolled</span><strong id="student-enrolled-count">0</strong></div><div class="student-summary-icon"><i class="bi bi-mortarboard"></i></div></article>
+            <article class="student-summary-card"><div><span>Without program</span><strong id="student-unassigned-count">0</strong></div><div class="student-summary-icon"><i class="bi bi-person-dash"></i></div></article>
+        </section>
+
+        <section class="student-filter-card" aria-label="Student filters">
+            <div class="student-filter-field"><label for="student-search-input">Search students</label><div class="student-search-control"><i class="bi bi-search"></i><input type="search" class="form-control" id="student-search-input" placeholder="Name, student ID, email, guardian or phone"></div></div>
+            <div class="student-filter-field"><label for="student-program-filter">Program</label><select class="form-select" id="student-program-filter"><option value="">All programs</option></select></div>
+            <div class="student-filter-field"><label for="student-branch-filter">Branch</label><select class="form-select" id="student-branch-filter"><option value="">All branches</option></select></div>
+            <div class="student-filter-field"><label for="student-status-filter">Account status</label><select class="form-select" id="student-status-filter"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select></div>
+            <button type="button" class="student-clear-button" id="student-clear-filters"><i class="bi bi-arrow-counterclockwise me-1"></i>Reset</button>
+        </section>
+
+        <section class="student-table-card">
+            <div class="student-table-heading"><div><h2>Student Directory</h2><p>Showing the active or most recent program for each student.</p></div><span class="student-table-count" id="student-result-count">0 students</span></div>
+            <div class="table-responsive">
+                <table class="table student-directory-table">
+                    <thead><tr><th>Student ID</th><th>Student</th><th>Contact</th><th>Current program</th><th>Branch</th><th>Enrollment</th><th>Account</th><th>Action</th></tr></thead>
+                    <tbody id="student-directory-body"><tr><td colspan="8" class="student-loading-state"><i class="bi bi-arrow-repeat"></i>Loading student records...</td></tr></tbody>
+                </table>
+            </div>
+            <footer class="student-table-footer"><span class="student-table-count" id="student-page-summary">Showing 0 students</span><nav class="student-pagination" id="student-pagination" aria-label="Student directory pages"></nav></footer>
+        </section>
+    </main>
+
+    <div class="modal fade student-profile-modal" id="studentProfileModal" tabindex="-1" aria-labelledby="studentProfileModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header"><div><h2 class="modal-title" id="studentProfileModalLabel">Student Profile</h2><small class="text-muted">Personal information and enrollment overview</small></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+                <div class="modal-body">
+                    <div class="student-editor-layout">
+                        <form class="student-editor-form" id="student-editor-form">
+                            <input type="hidden" id="student-edit-id" name="student_id">
+                            <section class="student-editor-section"><h3><i class="bi bi-person-vcard"></i>Student information</h3><div class="row g-3">
+                                <div class="col-md-4"><label for="student-edit-number">Student ID</label><input class="form-control" id="student-edit-number" name="student_id_number"></div>
+                                <div class="col-md-4"><label for="student-edit-lrn">LRN</label><input class="form-control" id="student-edit-lrn" name="lrn"></div>
+                                <div class="col-md-4"><label for="student-edit-status">Account status</label><select class="form-select" id="student-edit-status" name="student_status"><option value="active">Active</option><option value="inactive">Inactive</option></select></div>
+                                <div class="col-md-4"><label for="student-edit-first-name">First name *</label><input class="form-control" id="student-edit-first-name" name="first_name" required></div>
+                                <div class="col-md-4"><label for="student-edit-middle-name">Middle name</label><input class="form-control" id="student-edit-middle-name" name="middle_name"></div>
+                                <div class="col-md-4"><label for="student-edit-last-name">Last name *</label><input class="form-control" id="student-edit-last-name" name="last_name" required></div>
+                                <div class="col-md-3"><label for="student-edit-ext">Suffix</label><input class="form-control" id="student-edit-ext" name="ext" placeholder="Jr., III"></div>
+                                <div class="col-md-3"><label for="student-edit-nickname">Nickname</label><input class="form-control" id="student-edit-nickname" name="nickname"></div>
+                                <div class="col-md-3"><label for="student-edit-birthday">Birthday</label><input type="date" class="form-control" id="student-edit-birthday" name="birthday"></div>
+                                <div class="col-md-3"><label for="student-edit-gender">Gender</label><select class="form-select" id="student-edit-gender" name="gender_id"><option value="">Not specified</option></select></div>
+                                <div class="col-12"><label for="student-edit-email">Email address</label><input type="email" class="form-control" id="student-edit-email" name="email"></div>
+                            </div></section>
+                            <section class="student-editor-section"><h3><i class="bi bi-geo-alt"></i>Home address</h3><div class="row g-3">
+                                <div class="col-md-6"><label for="student-edit-street">Street / House number</label><input class="form-control" id="student-edit-street" name="adr_street"></div>
+                                <div class="col-md-6"><label for="student-edit-barangay">Barangay</label><input class="form-control" id="student-edit-barangay" name="adr_barangay"></div>
+                                <div class="col-md-6"><label for="student-edit-city">City / Municipality</label><input class="form-control" id="student-edit-city" name="adr_city"></div>
+                                <div class="col-md-6"><label for="student-edit-province">Province</label><input class="form-control" id="student-edit-province" name="adr_province"></div>
+                                <div class="col-12"><label for="student-edit-address-note">Address notes</label><textarea class="form-control" id="student-edit-address-note" name="adr_note" rows="2"></textarea></div>
+                            </div></section>
+                            <section class="student-editor-section"><h3><i class="bi bi-people"></i>Guardian and health</h3><div class="row g-3">
+                                <div class="col-md-5"><label for="student-edit-guardian-name">Guardian name</label><input class="form-control" id="student-edit-guardian-name" name="guardian_name"></div>
+                                <div class="col-md-4"><label for="student-edit-guardian-contact">Contact number</label><input class="form-control" id="student-edit-guardian-contact" name="guardian_contact"></div>
+                                <div class="col-md-3"><label for="student-edit-guardian-relationship">Relationship</label><input class="form-control" id="student-edit-guardian-relationship" name="guardian_relationship"></div>
+                                <div class="col-12"><label for="student-edit-health-note">Health notes</label><textarea class="form-control" id="student-edit-health-note" name="health_note" rows="3"></textarea></div>
+                            </div></section>
+                        </form>
+                        <aside class="student-editor-aside">
+                            <div class="student-editor-summary" id="student-editor-summary"></div>
+                            <section class="student-aside-section"><h3><i class="bi bi-journal-check"></i>Enrollment history</h3><div class="student-enrollment-history" id="student-enrollment-history"></div></section>
+                            <section class="student-aside-section" id="student-audit-section"><h3><i class="bi bi-clock-history"></i>Recent profile changes</h3><div class="student-audit-history" id="student-audit-history"></div></section>
+                        </aside>
+                    </div>
+                </div>
+                <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button><button type="submit" form="student-editor-form" class="student-save-button" id="student-save-button"><i class="bi bi-check2 me-1"></i>Save changes</button></div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

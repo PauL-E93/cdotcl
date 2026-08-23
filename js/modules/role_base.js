@@ -90,6 +90,14 @@ const PROGRAM_FEATURE_DETAIL_MAP = [
         ]
     },
     {
+        key: 'grades', label: 'Grade Levels', hint: 'Grade choices available during enrollment.', icon: 'bi-mortarboard',
+        actions: [
+            { label: 'View', hint: 'Show the Grade Levels card.', permissionKey: 'view_grades' },
+            { label: 'Add', hint: 'Add grade levels.', permissionKey: 'create_grades' },
+            { label: 'Edit', hint: 'Rename grades and control enrollment availability.', permissionKey: 'edit_grades' }
+        ]
+    },
+    {
         key: 'subjects', label: 'Subjects', hint: 'Subjects used by programs.', icon: 'bi-book',
         actions: [
             { label: 'View', hint: 'Show the Subjects card.', permissionKey: 'view_subjects' },

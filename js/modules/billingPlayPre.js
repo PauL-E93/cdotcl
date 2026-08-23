@@ -474,8 +474,6 @@ window.exportPrePlayBillingStatement = async function(enrollmentId) {
 
 function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProducts = [], totalPaymentsMade = 0, showPayment = true, enrollmentStatus = 'unknown', paymentsHistory = [], enrollmentDetails = {}) {
     ensureAdminPrePlayBillingStyles();
-    const paymentPageContext = isPaymentModulePage();
-    const canApprovePayment = !paymentPageContext || canUsePaymentPermission('approve');
     const isIncompleteEnrollment = String(enrollmentStatus || '').toLowerCase() === 'incomplete';
     // 1. DATA CALCULATIONS (FIFO LOGIC)
     const allBillingItems = data.schedule ? data.schedule : [];
@@ -806,12 +804,6 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                 <div class="text-muted small"><i class="bi bi-eye"></i> Billing statement y.</div>
             </div>
 
-            ${enrollmentStatus === 'pending' && canApprovePayment ? `
-            <div class="text-center my-3">
-                <button class="btn btn-success" onclick="confirmEnrollment(${enrollmentId})"><i class="bi bi-check-circle"></i> Receive Enrollment</button>
-            </div>
-            ` : ''}
-
             ${paymentSection}
         </div>`;
 
@@ -856,13 +848,19 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
             const method = document.getElementById('modalPaymentMethod').value;
             const methodSelect = document.getElementById('modalPaymentMethod');
             const selectedOption = methodSelect.options[methodSelect.selectedIndex];
+            const methodName = selectedOption.text.toLowerCase();
+            const ref = document.getElementById('modalReferenceNo')?.value.trim() || null;
             if (!amount || amount <= 0) { Swal.showValidationMessage('Enter valid amount'); return false; }
             if (!method) { Swal.showValidationMessage('Select method'); return false; }
+            if (methodName.includes('gcash') && !ref) {
+                Swal.showValidationMessage('Please enter a reference number for GCash payment');
+                return false;
+            }
             return {
                 amount,
                 method,
                 methodName: selectedOption.text,
-                ref: document.getElementById('modalReferenceNo')?.value || null
+                ref
             };
         }
     }).then((result) => {

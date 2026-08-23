@@ -170,6 +170,9 @@ class PaymentAPI {
             refreshBillingSchedulePenalties($this->conn, $enrollment_id);
 
             $final_ref = $ref ?: null;
+            if (stripos((string)$payment_method, 'gcash') !== false && !$final_ref) {
+                throw new Exception("GCash reference number is required.");
+            }
             $amount_to_pay = $amount; // Use a mutable variable for the payment amount
 
             // --- VALIDATE PAYMENT AMOUNT ---

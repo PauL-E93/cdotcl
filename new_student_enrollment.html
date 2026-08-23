@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Student Enrollment | CDO Tutor</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="css/new_student_enrollment.css?v=20260823-billing-table">
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="js/vendor/sweetalert2.all.min.js"></script>
+</head>
+<body>
+    <header class="landing-header">
+        <a class="landing-header__brand" href="index.html" aria-label="Return to CDO Tutor home">
+            <img class="landing-logo" src="assist/logo.png" alt="CDO Tutor logo">
+            <div>
+                <p class="landing-brand__label">CDO TUTOR AND LEARNING CENTER</p>
+                <p class="landing-brand__sub">Since 2020</p>
+            </div>
+        </a>
+
+        <nav class="landing-nav" aria-label="Main navigation">
+            <a class="landing-nav__link" href="index.html#home">Home</a>
+            <a class="landing-nav__link" href="index.html#about">About Us</a>
+            <a class="landing-nav__link" href="index.html#programs">Programs</a>
+            <a class="landing-nav__link" href="index.html#contact">Contact Us</a>
+        </nav>
+
+        <div class="landing-header__actions">
+            <button type="button" class="landing-login-btn" id="trackApplicationButton">
+                <i class="bi bi-search" aria-hidden="true"></i>
+                Track Application
+            </button>
+            <a href="login.html" class="landing-cta-btn">
+                <i class="bi bi-person" aria-hidden="true"></i>
+                Student Login
+            </a>
+        </div>
+    </header>
+
+    <main class="application-shell">
+        <section class="application-intro">
+            <span class="application-eyebrow">ONLINE APPLICATION</span>
+            <h1>Start your child’s learning journey.</h1>
+            <p>This form is for new students only. Complete the application online, then visit your selected center after approval to pay the downpayment and finish enrollment.</p>
+            <div class="application-notice"><i class="bi bi-info-circle-fill"></i><span>A parent email may be shared by multiple children. A student is considered existing only when the same email, complete name, and birthdate all match.</span></div>
+        </section>
+
+        <section class="application-card">
+            <nav class="application-steps" aria-label="Enrollment application steps">
+                <button type="button" class="application-step active" data-step-indicator="1"><span>1</span><small>Student information</small></button>
+                <button type="button" class="application-step" data-step-indicator="2"><span>2</span><small>Email verification</small></button>
+                <button type="button" class="application-step" data-step-indicator="3"><span>3</span><small>Learning preferences</small></button>
+                <button type="button" class="application-step" data-step-indicator="4"><span>4</span><small>Billing</small></button>
+                <button type="button" class="application-step" data-step-indicator="5"><span>5</span><small>Application status</small></button>
+            </nav>
+
+            <form id="newStudentApplicationForm" novalidate>
+                <section class="form-step active" data-form-step="1">
+                    <div class="form-section-heading">
+                        <div><span>STEP 1</span><h2>Student Information</h2></div>
+                        <p>Enter the same information that will appear on the student’s official enrollment record.</p>
+                    </div>
+
+                    <h3 class="form-group-title">Basic information</h3>
+                    <div class="row g-3">
+                        <div class="col-md-4"><label class="form-label" for="firstName">First name *</label><input class="form-control" id="firstName" required></div>
+                        <div class="col-md-4"><label class="form-label" for="middleName">Middle name</label><input class="form-control" id="middleName"></div>
+                        <div class="col-md-3"><label class="form-label" for="lastName">Last name *</label><input class="form-control" id="lastName" required></div>
+                        <div class="col-md-1"><label class="form-label" for="extension">Ext.</label><input class="form-control" id="extension" placeholder="Jr."></div>
+                        <div class="col-md-4"><label class="form-label" for="nickname">Nickname</label><input class="form-control" id="nickname"></div>
+                        <div class="col-md-4"><label class="form-label" for="birthday">Birthdate *</label><input type="date" class="form-control" id="birthday" required></div>
+                        <div class="col-md-4"><label class="form-label" for="gender">Gender *</label><select class="form-select" id="gender" required><option value="">Select gender</option></select></div>
+                        <div class="col-12"><label class="form-label" for="healthNote">Health notes or learning considerations</label><textarea class="form-control" id="healthNote" rows="2" placeholder="Optional"></textarea></div>
+                    </div>
+
+                    <h3 class="form-group-title">Parent or guardian</h3>
+                    <div class="row g-3">
+                        <div class="col-md-5"><label class="form-label" for="guardianName">Full name *</label><input class="form-control" id="guardianName" required></div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="guardianContact">Contact number *</label>
+                            <div class="input-group contact-number-group">
+                                <span class="input-group-text">+63</span>
+                                <input class="form-control" id="guardianContact" type="tel" inputmode="numeric" autocomplete="tel" maxlength="15" pattern="9[0-9]{9}" placeholder="9171234567" aria-describedby="guardianContactHelp" required>
+                            </div>
+                            <div class="form-text" id="guardianContactHelp">Enter 10 digits beginning with 9 (example: 9171234567).</div>
+                        </div>
+                        <div class="col-md-3"><label class="form-label" for="guardianRelationship">Relationship *</label><input class="form-control" id="guardianRelationship" placeholder="Mother, Father, Guardian" required></div>
+                        <div class="col-md-6"><label class="form-label" for="email">Parent/guardian email *</label><input type="email" class="form-control" id="email" required><div class="form-text">This email can be used for applications for multiple children.</div></div>
+                    </div>
+
+                    <h3 class="form-group-title">Home address</h3>
+                    <div class="row g-3">
+                        <div class="col-md-6"><label class="form-label" for="province">Province *</label><select class="form-select" id="province" required><option value="">Loading provinces...</option></select></div>
+                        <div class="col-md-6"><label class="form-label" for="city">City/Municipality *</label><select class="form-select" id="city" required disabled><option value="">Select a province first</option></select></div>
+                        <div class="col-md-6"><label class="form-label" for="barangay">Barangay *</label><select class="form-select" id="barangay" required disabled><option value="">Select a city/municipality first</option></select></div>
+                        <div class="col-md-6"><label class="form-label" for="street">House/Street *</label><input class="form-control" id="street" autocomplete="street-address" required></div>
+                        <div class="col-12"><label class="form-label" for="addressNote">Address notes</label><input class="form-control" id="addressNote" placeholder="Landmark or additional directions"></div>
+                    </div>
+
+                    <h3 class="form-group-title">Student portal account</h3>
+                    <div class="row g-3">
+                        <div class="col-md-4"><label class="form-label" for="username">Username *</label><input class="form-control" id="username" autocomplete="username" minlength="4" maxlength="50" pattern="[A-Za-z0-9._-]{4,50}" required><div class="form-text">Use 4–50 letters, numbers, periods, underscores, or hyphens.</div></div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="password">Password *</label>
+                            <div class="input-group password-input-group">
+                                <input type="password" class="form-control" id="password" autocomplete="new-password" minlength="8" aria-describedby="passwordStrengthLabel passwordRequirements" required>
+                                <button type="button" class="btn password-toggle" data-password-toggle="password" aria-label="Show password" aria-pressed="false"><i class="bi bi-eye"></i></button>
+                            </div>
+                            <div class="password-strength" role="progressbar" aria-label="Password strength" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0">
+                                <span id="passwordStrengthBar"></span>
+                            </div>
+                            <div class="password-strength-label" id="passwordStrengthLabel">Enter a password</div>
+                            <ul class="password-requirements d-none" id="passwordRequirements" aria-live="polite">
+                                <li data-password-rule="length"><i class="bi bi-circle"></i> At least 8 characters</li>
+                                <li data-password-rule="uppercase"><i class="bi bi-circle"></i> One uppercase letter</li>
+                                <li data-password-rule="lowercase"><i class="bi bi-circle"></i> One lowercase letter</li>
+                                <li data-password-rule="number"><i class="bi bi-circle"></i> One number</li>
+                                <li data-password-rule="special"><i class="bi bi-circle"></i> One special character</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="confirmPassword">Confirm password *</label>
+                            <div class="input-group password-input-group">
+                                <input type="password" class="form-control" id="confirmPassword" autocomplete="new-password" minlength="8" required>
+                                <button type="button" class="btn password-toggle" data-password-toggle="confirmPassword" aria-label="Show confirmed password" aria-pressed="false"><i class="bi bi-eye"></i></button>
+                            </div>
+                            <div class="password-match-hint" id="passwordMatchHint" aria-live="polite"></div>
+                        </div>
+                    </div>
+
+                    <div class="form-actions"><a href="index.html" class="btn btn-light">Cancel</a><button type="button" class="btn btn-primary" id="continueToVerification">Check &amp; Continue <i class="bi bi-arrow-right ms-2"></i></button></div>
+                </section>
+
+                <section class="form-step" data-form-step="2">
+                    <div class="verification-panel">
+                        <div class="verification-icon"><i class="bi bi-envelope-check"></i></div>
+                        <span class="application-eyebrow">STEP 2</span>
+                        <h2>Verify the parent email</h2>
+                        <p>We’ll send a six-digit code to <strong id="verificationEmailLabel"></strong>. The code expires after ten minutes.</p>
+                        <button type="button" class="btn btn-primary" id="sendOtpButton">Send Verification Code</button>
+                        <div class="otp-entry d-none" id="otpEntry">
+                            <label for="otpCode" class="form-label">Verification code</label>
+                            <input id="otpCode" class="form-control" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000">
+                            <button type="button" class="btn btn-dark" id="verifyOtpButton">Verify Email</button>
+                        </div>
+                        <p class="verification-success d-none" id="verificationSuccess"><i class="bi bi-check-circle-fill"></i> Email verified. You may continue.</p>
+                    </div>
+                    <div class="form-actions"><button type="button" class="btn btn-light" data-go-step="1"><i class="bi bi-arrow-left me-2"></i>Back</button><button type="button" class="btn btn-primary" id="continueToPreferences" disabled>Continue <i class="bi bi-arrow-right ms-2"></i></button></div>
+                </section>
+
+                <section class="form-step" data-form-step="3">
+                    <div class="form-section-heading"><div><span>STEP 3</span><h2>Learning Preferences</h2></div><p id="learningPreferenceHelp">Select a program first. Tutorial preferences will appear only when a Tutorial program is selected.</p></div>
+                    <div class="row g-3">
+                        <div class="col-md-6"><label class="form-label" for="program">Program *</label><select class="form-select" id="program" required><option value="">Select program</option></select><div id="programSummary" class="selection-summary"></div></div>
+                        <div class="col-md-6"><label class="form-label" for="branch">Preferred center *</label><select class="form-select" id="branch" required><option value="">Select branch</option></select><div id="branchSummary" class="selection-summary"></div></div>
+                    </div>
+
+                    <div class="tutorial-preferences d-none" id="tutorialPreferences">
+                        <h3 class="form-group-title">Tutorial details</h3>
+                        <div class="row g-3">
+                            <div class="col-md-5"><label class="form-label" for="gradeLevel">Grade level</label><select class="form-select" id="gradeLevel"><option value="">Select grade level</option></select></div>
+                            <div class="col-md-7">
+                                <label class="form-label" for="subjectDropdownToggle">Subjects</label>
+                                <div class="subject-multiselect" id="subjectMultiSelect">
+                                    <button type="button" class="subject-dropdown-toggle" id="subjectDropdownToggle" aria-expanded="false" aria-controls="subjectPicker"><span id="subjectSelectionText">Select one or more subjects</span><i class="bi bi-chevron-down"></i></button>
+                                    <div class="subject-dropdown-menu d-none" id="subjectPicker" role="group" aria-label="Select subjects"><span class="text-muted">Loading subjects…</span></div>
+                                </div>
+                                <div class="selection-summary" id="selectedSubjectsSummary"></div>
+                            </div>
+                            <div class="col-12"><label class="form-label" for="goal">Learning goal</label><textarea class="form-control" id="goal" rows="2" placeholder="What would you like the student to improve?"></textarea></div>
+                        </div>
+
+                        <h3 class="form-group-title">Preferred weekly availability</h3>
+                        <p class="text-muted">Example: Monday, 1:00 PM to 5:00 PM. This is only an availability window; the center will plot the exact sessions with a matching teacher.</p>
+                        <div class="availability-builder">
+                            <select class="form-select" id="availabilityDay"><option>Monday</option><option>Tuesday</option><option>Wednesday</option><option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option></select>
+                            <input type="time" class="form-control" id="availabilityStart" value="13:00">
+                            <span>to</span>
+                            <input type="time" class="form-control" id="availabilityEnd" value="17:00">
+                            <button type="button" class="btn btn-outline-primary" id="addAvailability"><i class="bi bi-plus-lg"></i> Add</button>
+                        </div>
+                        <div class="availability-list" id="availabilityList" tabindex="-1"><p class="empty-availability">No preferred times added yet.</p></div>
+                    </div>
+
+                    <div class="form-actions"><button type="button" class="btn btn-light" data-go-step="2"><i class="bi bi-arrow-left me-2"></i>Back</button><button type="button" class="btn btn-primary" id="reviewBillingButton">Review Billing <i class="bi bi-arrow-right ms-2"></i></button></div>
+                </section>
+
+                <section class="form-step" data-form-step="4">
+                    <div class="form-section-heading"><div><span>STEP 4</span><h2>Billing Overview</h2></div><p>This is a view-only estimate. Payment is collected by the selected center after it reviews the application.</p></div>
+                    <div id="applicationBillingPanel"></div>
+                    <div class="form-actions" id="billingFormActions"><button type="button" class="btn btn-light" id="billingBackButton" data-go-step="3"><i class="bi bi-arrow-left me-2"></i>Back</button><button type="button" class="btn btn-primary" id="submitApplicationButton">Submit Application <i class="bi bi-send ms-2"></i></button><button type="button" class="btn btn-primary d-none" id="continueToApplicationStatus">Application Status <i class="bi bi-arrow-right ms-2"></i></button></div>
+                </section>
+
+                <section class="form-step" data-form-step="5">
+                    <div id="applicationStatusPanel"></div>
+                </section>
+            </form>
+        </section>
+    </main>
+
+    <footer class="application-footer"><span>CDO Tutor and Learning Center</span><span>Need help? Contact your preferred center.</span></footer>
+    <script src="js/new_student_enrollment.js?v=20260823-grade-level-crud" defer></script>
+</body>
+</html>

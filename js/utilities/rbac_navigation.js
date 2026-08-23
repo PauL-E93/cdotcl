@@ -14,6 +14,7 @@ export const SHARED_MODULE_PAGE_MAP = {
 const PROGRAM_FEATURE_PERMISSION_KEYS = [
     'view_programs',
     'view_types', 'create_types', 'edit_types',
+    'view_grades', 'create_grades', 'edit_grades',
     'view_subjects', 'create_subjects', 'edit_subjects',
     'view_services', 'create_services', 'edit_services',
     'view_checklists', 'edit_checklists',
@@ -24,6 +25,7 @@ const PROGRAM_FEATURE_PERMISSION_KEYS = [
 
 const LEGACY_PROGRAM_PERMISSION_MAP = {
     manage_types: ['view_types', 'create_types', 'edit_types'],
+    manage_grades: ['view_grades', 'create_grades', 'edit_grades'],
     manage_subjects: ['view_subjects', 'create_subjects', 'edit_subjects'],
     manage_services: ['view_services', 'create_services', 'edit_services'],
     manage_checklists: ['view_checklists', 'edit_checklists'],
@@ -34,7 +36,7 @@ const LEGACY_PROGRAM_PERMISSION_MAP = {
 export const MODULE_PERMISSION_EXTRAS = {
     employee: ['manage_rbac'],
     program: [
-        'manage_types', 'manage_subjects', 'manage_services', 'manage_checklists', 'manage_discounts', 'manage_registration',
+        'manage_types', 'manage_grades', 'manage_subjects', 'manage_services', 'manage_checklists', 'manage_discounts', 'manage_registration',
         ...PROGRAM_FEATURE_PERMISSION_KEYS
     ],
     class: ['manage_sections', 'edit_sections', 'manage_attendance', 'manage_students', 'manage_report_cards']
@@ -267,7 +269,7 @@ function buildDefaultPermissionMatrix(roleKey) {
     if (normalized === 'auditor') {
         setPermissions(matrix, ['schedule'], ['view']);
         setPermissions(matrix, ['enrollment', 'payment', 'product', 'center'], ['view', 'export']);
-        setPermissions(matrix, ['program'], ['view', 'view_programs']);
+        setPermissions(matrix, ['program'], ['view', 'view_programs', 'view_grades']);
         setPermissions(matrix, ['payment'], ['approve']);
         setPermissions(matrix, ['class'], ['view']);
         setPermissions(matrix, ['session'], ['view']);

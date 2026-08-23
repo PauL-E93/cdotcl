@@ -30,6 +30,8 @@ class StudentReschedule {
         $originalDate = $payload['original_date'];
         $newSchedule = $payload['new_schedules'][0];
         $reason = $payload['reason'] ?? '';
+        $sessionCount = max(1, (int)($payload['session_count'] ?? 1));
+        $preferenceIds = array_values(array_unique(array_filter(array_map('intval', (array)($payload['original_preference_ids'] ?? [])))));
         $studentId = $_SESSION['student_id'] ?? null;
         $employeeId = intval($_SESSION['employee_id'] ?? 0);
         $userRole = $this->normalizeRole($_SESSION['user_role'] ?? '');
@@ -54,6 +56,41 @@ class StudentReschedule {
 
         try {
             $this->conn->beginTransaction();
+
+            if ($sessionCount > 1 && count($preferenceIds) === $sessionCount) {
+                $startTimestamp = strtotime((string)($newSchedule['time'] ?? ''));
+                $endTimestamp = strtotime((string)($newSchedule['endTime'] ?? ''));
+                if ($startTimestamp === false || $endTimestamp === false || $endTimestamp - $startTimestamp !== $sessionCount * 3600) {
+                    $this->conn->rollBack();
+                    return ['status' => 'error', 'message' => "The merged meeting must remain exactly {$sessionCount} hours."];
+                }
+
+                $placeholders = implode(',', array_fill(0, count($preferenceIds), '?'));
+                $verify = $this->conn->prepare("SELECT preference_id FROM enrollment_preferred_schedule WHERE enrollment_details_id = ? AND date = ? AND preference_id IN ({$placeholders}) ORDER BY start_time ASC");
+                $verify->execute(array_merge([$enrollmentDetailsId, $originalDate], $preferenceIds));
+                $verifiedIds = array_map('intval', $verify->fetchAll(PDO::FETCH_COLUMN));
+                if (count($verifiedIds) !== $sessionCount) {
+                    $this->conn->rollBack();
+                    return ['status' => 'error', 'message' => 'One or more sessions in this merged meeting could not be found.'];
+                }
+
+                $update = $this->conn->prepare("UPDATE enrollment_preferred_schedule
+                    SET date = ?, day = ?, start_time = ?, end_time = ?, reschedule_reason = ?, status = 'pending'
+                    WHERE preference_id = ?");
+                foreach ($verifiedIds as $index => $preferenceId) {
+                    $sessionStart = $startTimestamp + ($index * 3600);
+                    $sessionEnd = $sessionStart + 3600;
+                    $update->execute([
+                        $newSchedule['date'], $newSchedule['day'], date('H:i:s', $sessionStart), date('H:i:s', $sessionEnd),
+                        $reason, $preferenceId
+                    ]);
+                }
+
+                $this->conn->commit();
+                $actorLabel = $studentId ? ($scheduleInfo['student_name'] ?? 'The student') : 'An administrator';
+                $this->notifyReschedule($scheduleInfo, $newSchedule, $reason, $actorLabel);
+                return ['status' => 'success', 'message' => 'Merged session rescheduled successfully'];
+            }
 
             $sql = "UPDATE enrollment_preferred_schedule
                     SET date = :new_date,

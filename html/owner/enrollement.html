@@ -18,7 +18,7 @@
     <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="../../js/utilities/paging.js"></script>
-    <script type="module" src="../../js/index.js?v=20260814-enrollment-branch-filter"></script>
+    <script type="module" src="../../js/index.js?v=20260823-grade-level-crud"></script>
 
 </head>
 <body>
@@ -92,7 +92,7 @@
             <div class="card stat-card enrollment-summary-card" data-enrollment-filter="pending" role="button" tabindex="0" aria-pressed="false">
                 <div class="stat-info">
                     <h4 class="mb-0 fw-bold" id="pending_applications"></h4>
-                    <small class="text-muted">Pending Application</small>
+                    <small class="text-muted">Pending</small>
                 </div>
                 <div class="stat-icon">
                     <i class="bi bi-clock-history fs-1 text-dark"></i>
@@ -110,7 +110,7 @@
                     </div>
                 </div>
     <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
-        <h6 class="fw-bold fs-5 mb-0">Student Enrollment List</h6>
+        <h6 class="fw-bold fs-5 mb-0">Student Enrollment &amp; Application List</h6>
         <button type="button" class="btn btn-outline-secondary shadow-sm" id="export-enrollment-table">
             <i class="bi bi-download me-2"></i>Export
         </button>
@@ -126,7 +126,7 @@
                                 <th style="background-color:#ea9aa6;">Student Name</th>
                                 <th style="background-color:#ea9aa6;">Subject</th>
                                 <th style="background-color:#ea9aa6;">Tutor</th>
-                                <th style="background-color:#ea9aa6;">Enrollment Date</th>
+                                <th style="background-color:#ea9aa6;">Submitted / Enrollment Date</th>
                                 <th style="background-color:#ea9aa6;">Status</th>
                                 <th style="background-color:#ea9aa6;">Actions</th>
                             </tr>
