@@ -1555,7 +1555,7 @@ class EnrollmentAPI {
     public function getEnrollmentStats() {
         try {
             $type = isset($_GET['type']) ? $_GET['type'] : null;
-            $includeApplications = !empty($_GET['include_applications']) && $type === 'tutorial';
+            $includeApplications = !empty($_GET['include_applications']) && in_array($type, ['tutorial', 'preschool'], true);
             $branchId = $this->getBranchAdminBranchId();
             $conditions = [$this->getProgramTypeCondition($type)];
             $params = [];
@@ -1671,7 +1671,7 @@ class EnrollmentAPI {
             $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 10;
             $offset = ($page - 1) * $limit;
             $type = isset($_GET['type']) ? $_GET['type'] : null;
-            $includeApplications = !empty($_GET['include_applications']) && $type === 'tutorial';
+            $includeApplications = !empty($_GET['include_applications']) && in_array($type, ['tutorial', 'preschool'], true);
             $summaryFilter = isset($_GET['summary_filter']) ? strtolower(trim($_GET['summary_filter'])) : 'total';
             $search = isset($_GET['search']) ? trim($_GET['search']) : '';
             $status = isset($_GET['status']) ? trim($_GET['status']) : '';
@@ -2217,7 +2217,7 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
                                gl.grade_level,
                                CONCAT(e.first_name, ' ', e.last_name) as teacher_name,
                                CONCAT(sec_e.first_name, ' ', sec_e.last_name) as section_teacher_name,
-                               b.branch_name,
+                               eh.branch_id, b.branch_name,
                                COALESCE(sec.section_name, '') as section_name,
                                COALESCE(ed.class_id, sec.class_id) as class_id_from_section,
                                COALESCE(cls.program_id, p.program_id) as class_program_id
@@ -2243,7 +2243,7 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
                                gl.grade_level,
                                CONCAT(e.first_name, ' ', e.last_name) as teacher_name,
                                CONCAT(sec_e.first_name, ' ', sec_e.last_name) as section_teacher_name,
-                               b.branch_name,
+                               eh.branch_id, b.branch_name,
                                COALESCE(sec.section_name, '') as section_name,
                                COALESCE(sec.class_id, cls.class_id) as class_id_from_section,
                                COALESCE(cls.program_id, p.program_id) as class_program_id

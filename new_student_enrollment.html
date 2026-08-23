@@ -6,7 +6,7 @@
     <title>New Student Enrollment | CDO Tutor</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="css/new_student_enrollment.css?v=20260823-billing-table">
+    <link rel="stylesheet" href="css/new_student_enrollment.css?v=20260823-centered-application-intro">
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script src="js/vendor/sweetalert2.all.min.js"></script>
 </head>
@@ -99,37 +99,11 @@
                         <div class="col-12"><label class="form-label" for="addressNote">Address notes</label><input class="form-control" id="addressNote" placeholder="Landmark or additional directions"></div>
                     </div>
 
-                    <h3 class="form-group-title">Student portal account</h3>
-                    <div class="row g-3">
-                        <div class="col-md-4"><label class="form-label" for="username">Username *</label><input class="form-control" id="username" autocomplete="username" minlength="4" maxlength="50" pattern="[A-Za-z0-9._-]{4,50}" required><div class="form-text">Use 4–50 letters, numbers, periods, underscores, or hyphens.</div></div>
-                        <div class="col-md-4">
-                            <label class="form-label" for="password">Password *</label>
-                            <div class="input-group password-input-group">
-                                <input type="password" class="form-control" id="password" autocomplete="new-password" minlength="8" aria-describedby="passwordStrengthLabel passwordRequirements" required>
-                                <button type="button" class="btn password-toggle" data-password-toggle="password" aria-label="Show password" aria-pressed="false"><i class="bi bi-eye"></i></button>
-                            </div>
-                            <div class="password-strength" role="progressbar" aria-label="Password strength" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0">
-                                <span id="passwordStrengthBar"></span>
-                            </div>
-                            <div class="password-strength-label" id="passwordStrengthLabel">Enter a password</div>
-                            <ul class="password-requirements d-none" id="passwordRequirements" aria-live="polite">
-                                <li data-password-rule="length"><i class="bi bi-circle"></i> At least 8 characters</li>
-                                <li data-password-rule="uppercase"><i class="bi bi-circle"></i> One uppercase letter</li>
-                                <li data-password-rule="lowercase"><i class="bi bi-circle"></i> One lowercase letter</li>
-                                <li data-password-rule="number"><i class="bi bi-circle"></i> One number</li>
-                                <li data-password-rule="special"><i class="bi bi-circle"></i> One special character</li>
-                            </ul>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label" for="confirmPassword">Confirm password *</label>
-                            <div class="input-group password-input-group">
-                                <input type="password" class="form-control" id="confirmPassword" autocomplete="new-password" minlength="8" required>
-                                <button type="button" class="btn password-toggle" data-password-toggle="confirmPassword" aria-label="Show confirmed password" aria-pressed="false"><i class="bi bi-eye"></i></button>
-                            </div>
-                            <div class="password-match-hint" id="passwordMatchHint" aria-live="polite"></div>
-                        </div>
+                    <h3 class="form-group-title">Student portal access</h3>
+                    <div class="application-notice">
+                        <i class="bi bi-shield-check"></i>
+                        <span>The system will create the student portal account only after the application is fully enrolled. The username and temporary password will be sent to the verified parent or guardian email.</span>
                     </div>
-
                     <div class="form-actions"><a href="index.html" class="btn btn-light">Cancel</a><button type="button" class="btn btn-primary" id="continueToVerification">Check &amp; Continue <i class="bi bi-arrow-right ms-2"></i></button></div>
                 </section>
 
@@ -201,6 +175,6 @@
     </main>
 
     <footer class="application-footer"><span>CDO Tutor and Learning Center</span><span>Need help? Contact your preferred center.</span></footer>
-    <script src="js/new_student_enrollment.js?v=20260823-grade-level-crud" defer></script>
+    <script src="js/new_student_enrollment.js?v=20260823-tutorial-billing-overview" defer></script>
 </body>
 </html>

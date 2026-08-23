@@ -9,6 +9,7 @@ let editSchedules = [];
 let paginationManager;
 let currentEnrollmentDetails = null;
 let currentViewOnly = true;
+let currentApplicationPlacement = null;
 const PAYMENT_PAGE_REFRESH_MS = 15000;
 const enrollmentFilters = {
     search: '',
@@ -132,6 +133,10 @@ function getPrePlayListUrl(summaryFilter = 'total') {
         : getEnrollmentApiUrl('getEnrollments', '&type=preschool');
     const params = [];
 
+    if (window.location.pathname.includes('/owner/enrollement_pre_play.html')) {
+        params.push('include_applications=1');
+    }
+
     if (enrollmentFilters.summary && enrollmentFilters.summary !== 'total') {
         params.push(`summary_filter=${encodeURIComponent(enrollmentFilters.summary)}`);
     }
@@ -155,9 +160,13 @@ function getPrePlayListUrl(summaryFilter = 'total') {
 }
 
 function getPrePlayStatsUrl() {
+    const includeApplications = window.location.pathname.includes('/owner/enrollement_pre_play.html')
+        ? '&include_applications=1'
+        : '';
+
     return isStudentPrePlayPage()
         ? getEnrollmentApiUrl('getPrePlayEnrollmentStats')
-        : getEnrollmentApiUrl('getEnrollmentStats', '&type=preschool');
+        : getEnrollmentApiUrl('getEnrollmentStats', `&type=preschool${includeApplications}`);
 }
 
 // Function to determine if program is preschool and open appropriate billing modal
@@ -564,9 +573,16 @@ function renderEnrollments(enrollments) {
         const paymentStatus = enrollmentLifecycleStatus === 'incomplete'
             ? 'Incomplete'
             : (item.payment_status || 'Unpaid');
+        const applicationStatusLabels = {
+            pending_review: 'PENDING',
+            approved_for_payment: 'AWAITING CENTER PAYMENT',
+            ready_for_scheduling: 'READY FOR CLASS & SECTION'
+        };
+        const applicationStatus = String(item.application_status || '').toLowerCase();
+        const isPendingOnlineApplication = Boolean(item.application_id && applicationStatusLabels[applicationStatus]);
         const displayStatus = useOwnerPaymentStatus
             ? paymentStatus
-            : (item.status || '').toUpperCase();
+            : (applicationStatusLabels[applicationStatus] || (item.status || '').toUpperCase());
 
         let statusBadge;
         if (useOwnerPaymentStatus) {
@@ -578,6 +594,8 @@ function renderEnrollments(enrollments) {
                 'Incomplete': 'warning text-dark'
             };
             statusBadge = paymentStatusClasses[paymentStatus] || 'secondary';
+        } else if (isPendingOnlineApplication) {
+            statusBadge = applicationStatus === 'ready_for_scheduling' ? 'primary' : 'warning text-dark';
         } else {
             switch (enrollmentLifecycleStatus) {
                 case 'active':
@@ -629,7 +647,18 @@ function renderEnrollments(enrollments) {
         }
 
         if (!window.location.pathname.includes('payment.html') && !window.location.pathname.includes('payment_pre_play.html')) {
-            if (status === 'pending' && !isStudentPrePlayPage()) {
+            if (isPendingOnlineApplication) {
+                actionButtons = `
+                    <div class="dropdown" onclick="event.stopPropagation();">
+                        <button class="btn btn-sm btn-outline-secondary border-0" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Application actions">
+                            <i class="bi bi-three-dots-vertical"></i>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); window.viewNewStudentApplication(${Number(item.application_id)})"><i class="bi bi-clipboard-check me-2"></i>Check Application</a></li>
+                        </ul>
+                    </div>
+                `;
+            } else if (status === 'pending' && !isStudentPrePlayPage()) {
                 if (canApproveEnrollment) {
                     actionButtons += `
                         <div class="dropdown" onclick="event.stopPropagation();">
@@ -741,7 +770,20 @@ window.editPrePlayEnrollment = function(id) {
         return;
     }
 
-    window.viewPrePlayDetails(id, false);
+    window.viewPrePlayDetails(id, false, null);
+};
+
+window.openPrePlayApplicationPlacement = function(applicationId, enrollmentDetailsId) {
+    if (!applicationId || !enrollmentDetailsId) {
+        Swal.fire('Placement Unavailable', 'This application does not have a valid enrollment record.', 'error');
+        return;
+    }
+
+    Swal.close();
+    window.viewPrePlayDetails(enrollmentDetailsId, false, {
+        applicationId: Number(applicationId),
+        enrollmentDetailsId: Number(enrollmentDetailsId)
+    });
 };
 
 function canEditClassSection() {
@@ -897,7 +939,8 @@ function setupClassSectionControls(lookups, details) {
     const availableClasses = classes.filter(item => {
         const status = (item.status || '').toLowerCase();
         const matchesProgram = !programId || String(item.program_id) === programId;
-        return matchesProgram && (!status || status === 'open' || status === 'active');
+        const matchesBranch = !details.branch_id || String(item.branch_id) === String(details.branch_id);
+        return matchesProgram && matchesBranch && (!status || status === 'open' || status === 'active');
     });
 
     const renderSections = selectedClassId => {
@@ -970,13 +1013,14 @@ function updateSectionSchedulePreview(sectionId) {
 
 
 
-window.viewPrePlayDetails = function(id, viewOnly = true) {
+window.viewPrePlayDetails = function(id, viewOnly = true, applicationPlacement = null) {
     if (!guardEnrollmentPermission('view', 'You do not have permission to view the enrollment module.')) {
         return;
     }
 
     console.log('viewDetails called with id:', id);
     currentViewOnly = viewOnly !== false;
+    currentApplicationPlacement = applicationPlacement;
     restoreClassSectionReadOnlyFields();
 
     const detailsRequest = axios.get(getEnrollmentApiUrl('getEnrollmentDetails', `&id=${id}`));
@@ -990,6 +1034,13 @@ window.viewPrePlayDetails = function(id, viewOnly = true) {
         if (resDetails.data.status === 'success') {
             editSchedules = [];
             preparePrePlayEnrollmentView();
+
+            const modalTitle = document.querySelector('#viewEnrollmentModal .modal-title');
+            if (modalTitle) {
+                modalTitle.innerHTML = currentApplicationPlacement
+                    ? '<span class="preplay-modal-title-icon" aria-hidden="true"><i class="bi bi-diagram-3"></i></span>Assign Class &amp; Section'
+                    : '<span class="preplay-modal-title-icon" aria-hidden="true"><i class="bi bi-person"></i></span>Manage Enrollment';
+            }
 
             const teachers = resLookup.data.teachers || [];
             const d = resDetails.data.data.details;
@@ -1065,10 +1116,14 @@ window.viewPrePlayDetails = function(id, viewOnly = true) {
             }
 
             const saveButton = document.querySelector('#viewEnrollmentModal .modal-footer .btn-primary');
+            if (saveButton) {
+                saveButton.onclick = window.savePrePlayEnrollmentUpdates;
+            }
             if (saveButton && (currentViewOnly || isStudentPrePlayPage())) {
                 saveButton.style.display = 'none';
             } else if (saveButton) {
                 saveButton.style.display = '';
+                saveButton.textContent = currentApplicationPlacement ? 'Complete Enrollment' : 'Save Changes';
             }
 
             if (!currentViewOnly) {
@@ -1256,7 +1311,7 @@ function renderEditScheduleTable() {
 }
 
 // --- 6. SAVE CHANGES ---
-window.saveEnrollmentUpdates = function() {
+window.savePrePlayEnrollmentUpdates = function() {
     if (!guardEnrollmentPermission('edit', 'You do not have permission to update enrollment records.')) {
         return;
     }
@@ -1265,6 +1320,11 @@ window.saveEnrollmentUpdates = function() {
     const teacherSelect = document.getElementById('update_teacher');
     const classSelect = document.getElementById('update_class');
     const sectionSelect = document.getElementById('update_section');
+    const saveButton = document.querySelector('#viewEnrollmentModal .modal-footer .btn-primary');
+
+    if (saveButton?.dataset.submitting === 'true') {
+        return;
+    }
 
     const teacher = teacherSelect
         ? (teacherSelect.value || currentEnrollmentDetails?.preferred_teacher || null)
@@ -1278,6 +1338,10 @@ window.saveEnrollmentUpdates = function() {
 
     if (!id) {
         return Swal.fire("Error", "Enrollment ID is missing.", "error");
+    }
+
+    if (currentApplicationPlacement && (!classId || !sectionId)) {
+        return Swal.fire('Class and Section Required', 'Select both a class and a section to complete this preschool enrollment.', 'warning');
     }
     
     let summaryTime = editSchedules.length > 0 
@@ -1293,21 +1357,54 @@ window.saveEnrollmentUpdates = function() {
         preferences: editSchedules
     };
 
-    axios.post("../../api/admin/enrollment.php", {
-        operation: "updateEnrollment",
-        json: JSON.stringify(data)
-    }).then(res => {
+    const completingApplication = Boolean(currentApplicationPlacement);
+    const originalButtonHtml = saveButton?.innerHTML || (completingApplication ? 'Complete Enrollment' : 'Save Changes');
+    if (saveButton) {
+        saveButton.dataset.submitting = 'true';
+        saveButton.disabled = true;
+        saveButton.setAttribute('aria-busy', 'true');
+        saveButton.innerHTML = `<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>${completingApplication ? 'Completing Enrollment...' : 'Saving Changes...'}`;
+    }
+
+    const request = currentApplicationPlacement
+        ? (() => {
+            const body = new URLSearchParams();
+            body.set('operation', 'finalizePreschoolEnrollment');
+            body.set('json', JSON.stringify({
+                application_id: currentApplicationPlacement.applicationId,
+                enrollment_details_id: id,
+                class_id: classId,
+                section_id: sectionId
+            }));
+            return axios.post('../../api/enrollment_application.php', body);
+        })()
+        : axios.post("../../api/admin/enrollment.php", {
+            operation: "updateEnrollment",
+            json: JSON.stringify(data)
+        });
+
+    request.then(res => {
         if (res.data.status === 'success') {
-            Swal.fire("Updated", "Enrollment details updated.", "success");
+            const completedPlacement = completingApplication;
+            currentApplicationPlacement = null;
+            Swal.fire(completedPlacement ? 'Enrollment Completed' : 'Updated', res.data.message || (completedPlacement ? 'Class and section assigned.' : 'Enrollment details updated.'), 'success');
             
             const modalEl = document.getElementById('viewEnrollmentModal');
             const modalInstance = bootstrap.Modal.getInstance(modalEl);
             modalInstance.hide();
 
-            loadEnrollments(); 
+            loadEnrollments();
+            loadEnrollmentStats();
         } else {
             Swal.fire("Error", res.data.message, "error");
         }
+    }).catch(error => Swal.fire('Error', error.response?.data?.message || error.message, 'error'))
+    .finally(() => {
+        if (!saveButton) return;
+        delete saveButton.dataset.submitting;
+        saveButton.disabled = false;
+        saveButton.removeAttribute('aria-busy');
+        saveButton.innerHTML = originalButtonHtml;
     });
 };
 

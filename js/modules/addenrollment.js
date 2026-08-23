@@ -13,6 +13,7 @@ let pendingDownpaymentEnrollment = null;
 let pendingEnrollmentDetails = null;
 let currentStudentHealthNote = null; // Store health note for enrollment submission
 let isNewStudentEnrollment = true;
+let applicationDownpaymentContext = null;
 let preschoolServiceSelection = {
     include: false,
     serviceId: null,
@@ -228,6 +229,57 @@ function showEnrollmentValidationAlert(title, issues) {
             window.setTimeout(() => firstField.focus({ preventScroll: true }), 250);
         }
     });
+}
+
+function firstAvailableEnrollmentField(ids) {
+    const elements = ids.map(id => document.getElementById(id)).filter(Boolean);
+    return elements.find(element => element.offsetParent !== null) || elements[0] || null;
+}
+
+function showEnrollmentServerError(title, message, fallbackMessage = 'Please review the highlighted fields and try again.') {
+    const text = String(message || fallbackMessage).trim();
+    const normalized = text.toLowerCase();
+    const mappings = [
+        { patterns: ['email'], ids: ['email'], message: text },
+        { patterns: ['contact number', 'mobile number', 'guardian contact'], ids: ['guardianContact'], message: text },
+        { patterns: ['birthday', 'birthdate', 'invalid age', 'years old'], ids: ['birthday'], message: text },
+        { patterns: ['first name'], ids: ['firstName'], message: text },
+        { patterns: ['middle name'], ids: ['middleName'], message: text },
+        { patterns: ['last name'], ids: ['lastName'], message: text },
+        { patterns: ['guardian name'], ids: ['guardianName'], message: text },
+        { patterns: ['relationship'], ids: ['guardianRelationship'], message: text },
+        { patterns: ['province'], ids: ['adrProvince'], message: text },
+        { patterns: ['city', 'municipality'], ids: ['adrCity'], message: text },
+        { patterns: ['barangay'], ids: ['adrBarangay'], message: text },
+        { patterns: ['street', 'house'], ids: ['adrStreet'], message: text },
+        { patterns: ['grade level', 'grade'], ids: ['gradeLevelId'], message: text },
+        { patterns: ['subject'], ids: ['subjectId'], highlight: '.tutorial-subject-control', message: text },
+        { patterns: ['branch', 'center'], ids: ['preferredBranch'], message: text },
+        { patterns: ['teacher'], ids: ['preferredTeacher'], message: text },
+        { patterns: ['class'], ids: ['preschoolClass'], message: text },
+        { patterns: ['section'], ids: ['preschoolSection'], message: text },
+        { patterns: ['schedule', 'session', 'date', 'time'], ids: ['schedDateInput'], highlight: '.tutorial-schedule-table', message: text },
+        { patterns: ['program'], ids: ['programId', 'preschoolProgram', 'downpaymentProgramInput'], message: text }
+    ];
+    const issues = [];
+    const usedElements = new Set();
+
+    mappings.forEach(mapping => {
+        if (!mapping.patterns.some(pattern => normalized.includes(pattern))) return;
+        const element = firstAvailableEnrollmentField(mapping.ids);
+        if (!element || usedElements.has(element)) return;
+        usedElements.add(element);
+        issues.push({
+            element,
+            highlight: mapping.highlight ? document.querySelector(mapping.highlight) : null,
+            message: mapping.message
+        });
+    });
+
+    if (issues.length > 0) {
+        return showEnrollmentValidationAlert(title, issues);
+    }
+    return Swal.fire(title, text || fallbackMessage, 'error');
 }
 
 export function openEnrollmentModal() {
@@ -499,7 +551,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             if (window.studentPrePlayDirectEnrollmentActive) {
                 return;
             }
-            renderDownpaymentStep(enrollmentStudentName);
+            renderDownpaymentStep(applicationDownpaymentContext?.studentName || enrollmentStudentName);
+        });
+        downpaymentModalElement.addEventListener('hidden.bs.modal', () => {
+            applicationDownpaymentContext = null;
         });
     }
 
@@ -2231,7 +2286,11 @@ function showScheduleRequirementAlert(validation, title = 'Schedule Requirement'
         text += ` Remove ${differenceLabel} session unit(s) to match the program.`;
     }
 
-    Swal.fire(title, text, 'warning');
+    showEnrollmentValidationAlert(title, [{
+        element: document.getElementById('schedDateInput'),
+        highlight: document.querySelector('.tutorial-schedule-table'),
+        message: text
+    }]);
 }
 
 function updateProgramSchedulePreview() {
@@ -2384,11 +2443,15 @@ function handleSaveStudent() {
             const downpaymentModal = document.getElementById('downpaymentModal');
             switchModal(addEnrollmentModal, downpaymentModal);
         } else {
-            Swal.fire("Error", res.data.message, "error");
+            showEnrollmentServerError('Student Details Need Attention', res.data.message);
         }
     }).catch(err => {
         console.error('Student save error:', err);
-        Swal.fire('Error', 'Unable to save new student. Please try again.', 'error');
+        showEnrollmentServerError(
+            'Unable to Save Student',
+            err.response?.data?.message || err.message,
+            'Unable to save new student. Please review the highlighted fields and try again.'
+        );
     });
 }
 
@@ -2550,9 +2613,11 @@ function handleSavePreschoolEnrollment() {
     const validationIssues = [];
     if (!progId) {
         validationIssues.push({ element: document.getElementById('preschoolProgram'), message: 'Program is required.' });
-    } else if (!classId) {
+    }
+    if (!classId) {
         validationIssues.push({ element: document.getElementById('preschoolClass'), message: 'Class is required.' });
-    } else if (!sectionId) {
+    }
+    if (!sectionId) {
         validationIssues.push({ element: document.getElementById('preschoolSection'), message: 'Section is required.' });
     }
     if (validationIssues.length > 0) {
@@ -2676,11 +2741,15 @@ function submitEnrollment(payload) {
             }
         } else {
             console.log("Entering error branch");
-            Swal.fire("Error", res.data.message, "error");
+            showEnrollmentServerError('Enrollment Details Need Attention', res.data.message);
         }
     }).catch(err => {
         console.error("Axios error:", err);
-        Swal.fire("Error", "Network error occurred", "error");
+        showEnrollmentServerError(
+            'Unable to Save Enrollment',
+            err.response?.data?.message || err.message,
+            'A network error occurred. Please review the highlighted fields and try again.'
+        );
     });
 }
 
@@ -2699,6 +2768,12 @@ function getProgramDisplayName(program) {
     if (!program) return 'Program';
     const typeName = getProgramTypeName(program);
     return typeName ? `${program.name} (${typeName})` : program.name;
+}
+
+function isPreschoolProgramName(name) {
+    const normalized = String(name || '').toLowerCase();
+    return ['preschool', 'playschool', 'pre-school', 'play-school', 'pre school', 'play school']
+        .some(keyword => normalized.includes(keyword));
 }
 
 function escapeHtml(value) {
@@ -2842,6 +2917,15 @@ window.removeSelectedSubject = function(subjectId) {
 function getProgramServiceForSelection(programId) {
     if (!programId) return null;
 
+    if (applicationDownpaymentContext && String(applicationDownpaymentContext.application?.program_id) === String(programId)) {
+        const service = applicationDownpaymentContext.application?.financial?.available_service;
+        return service ? {
+            service_id: service.service_id,
+            service_name: service.service_name || 'Service',
+            amount: parseFloat(service.amount || 0)
+        } : null;
+    }
+
     const selectedProgram = (globalLookups.programs || []).find(p => String(p.program_id) === String(programId));
     if (!selectedProgram || !selectedProgram.service_id) return null;
 
@@ -2900,8 +2984,8 @@ function prepareDownpaymentModal(studentName) {
             <div class="downpayment-heading">
                 <span class="downpayment-heading-icon"><i class="bi bi-receipt-cutoff"></i></span>
                 <div class="downpayment-heading-copy">
-                    <h2 class="modal-title" id="downpaymentModalLabel">Step 2: Downpayment</h2>
-                    <p>Review the selected program, fees, and payment method before continuing.</p>
+                    <h2 class="modal-title" id="downpaymentModalLabel">${applicationDownpaymentContext ? 'Receive Center Downpayment' : 'Step 2: Downpayment'}</h2>
+                    <p>${applicationDownpaymentContext ? 'Review the application fees and record the required center payment.' : 'Review the selected program, fees, and payment method before continuing.'}</p>
                     <div class="downpayment-student-alert">
                         <i class="bi bi-info-circle"></i>
                         <span>Downpayment for <strong>${escapeHtml(studentName || 'Student')}</strong></span>
@@ -3214,11 +3298,17 @@ function renderDownpaymentStep(studentName) {
 
     const submitBtn = document.getElementById("submitDownpayment");
     if (!submitBtn) return;
-    submitBtn.innerHTML = '<i class="bi bi-lock"></i><span>Pay Downpayment &amp; Continue</span>';
-    submitBtn.onclick = handleSubmitDownpayment;
+    submitBtn.innerHTML = applicationDownpaymentContext
+        ? '<i class="bi bi-receipt"></i><span>Record Payment &amp; Issue Receipt</span>'
+        : '<i class="bi bi-lock"></i><span>Pay Downpayment &amp; Continue</span>';
+    submitBtn.onclick = applicationDownpaymentContext ? handleApplicationDownpayment : handleSubmitDownpayment;
     
     const categoryName = window.currentEnrollmentCategory === 'preschool' ? 'Pre-school / Play-school' : 'Tutorial';
+    const includeRegistrationFee = applicationDownpaymentContext ? true : isNewStudentEnrollment;
     const categoryPrograms = (globalLookups.programs || []).filter(p => {
+        if (applicationDownpaymentContext) {
+            return String(p.program_id) === String(applicationDownpaymentContext.application.program_id);
+        }
         if (window.currentEnrollmentCategory === 'preschool') {
             const name = (p.name || '').toLowerCase();
             return p.program_type == 3 ||
@@ -3240,7 +3330,7 @@ function renderDownpaymentStep(studentName) {
                 const paymentOptions = res.data.data.map(pm => 
                     `<option value="${pm.payment_method_id}">${pm.payment_method}</option>`
                 ).join('');
-                const feeColumnClass = isNewStudentEnrollment ? 'col-md-4' : 'col-md-6';
+                const feeColumnClass = includeRegistrationFee ? 'col-md-4' : 'col-md-6';
                 
                 let html = `
                     <section class="downpayment-section">
@@ -3255,7 +3345,7 @@ function renderDownpaymentStep(studentName) {
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="downpaymentProgramInput">Program</label>
-                            <select class="form-select" id="downpaymentProgramInput" required>
+                            <select class="form-select" id="downpaymentProgramInput" required ${applicationDownpaymentContext ? 'disabled' : ''}>
                                 <option value="">Select Program</option>
                                 ${categoryPrograms.map(p => `<option value="${p.program_id}" data-tuition="${p.tuition || 0}" data-registration-fee="${p.registration_fee || 0}" data-downpayment="${p.downpayment || 0}" data-program-type="${getProgramTypeName(p)}">${getProgramDisplayName(p)}</option>`).join('')}
                             </select>
@@ -3294,7 +3384,7 @@ function renderDownpaymentStep(studentName) {
                             </div>
                         </div>
                         ` : ''}
-                        ${isNewStudentEnrollment ? `
+                        ${includeRegistrationFee ? `
                         <div class="${feeColumnClass}">
                             <label class="form-label" for="registrationFeePreview">Registration Fee</label>
                             <input type="text" class="form-control" id="registrationFeePreview" value="&#8369; 0.00" disabled>
@@ -3318,7 +3408,7 @@ function renderDownpaymentStep(studentName) {
                             </div>
                             <small class="downpayment-help">
                                 <i class="bi bi-info-circle"></i>
-                                <span>${isNewStudentEnrollment ? "This uses the selected program's registration fee plus downpayment." : "Existing students pay the selected program's downpayment only."}</span>
+                                <span>${includeRegistrationFee ? "This uses the selected program's registration fee plus downpayment." : "Existing students pay the selected program's downpayment only."}</span>
                             </small>
                         </div>
                     </section>
@@ -3378,7 +3468,7 @@ function renderDownpaymentStep(studentName) {
                         const selectedOption = this.options[this.selectedIndex];
                         const selectedProgramId = this.value;
                         const tuition = parseFloat(selectedOption?.dataset?.tuition || 0);
-                        const registrationFee = isNewStudentEnrollment ? parseFloat(selectedOption?.dataset?.registrationFee || 0) : 0;
+                        const registrationFee = includeRegistrationFee ? parseFloat(selectedOption?.dataset?.registrationFee || 0) : 0;
                         const downpayment = parseFloat(selectedOption?.dataset?.downpayment || 0);
                         const dueNow = registrationFee + downpayment;
                         const feeInput = document.getElementById('downpaymentProgramFee');
@@ -3427,7 +3517,9 @@ function renderDownpaymentStep(studentName) {
                         }
                         loadProgramProductsPreview(this.value, 'downpaymentProgramProductsPreview');
                     });
-                    if (pendingDownpaymentEnrollment?.program_id) {
+                    if (applicationDownpaymentContext?.application?.program_id) {
+                        programSelect.value = applicationDownpaymentContext.application.program_id;
+                    } else if (pendingDownpaymentEnrollment?.program_id) {
                         programSelect.value = pendingDownpaymentEnrollment.program_id;
                     }
 
@@ -3444,6 +3536,122 @@ function renderDownpaymentStep(studentName) {
             console.error('Error loading payment methods:', err);
             form.innerHTML = '<div class="alert alert-danger">Error loading payment methods. Please refresh and try again.</div>';
         });
+}
+
+export async function openApplicationDownpaymentModal(application, options = {}) {
+    const modalElement = document.getElementById('downpaymentModal');
+    if (!modalElement) {
+        throw new Error('The shared downpayment modal is not available on this page.');
+    }
+    if (!application?.application_id || !application?.program_id) {
+        throw new Error('The application payment details are incomplete.');
+    }
+
+    const studentName = [application.first_name, application.middle_name, application.last_name, application.ext]
+        .filter(Boolean).join(' ');
+    applicationDownpaymentContext = {
+        application,
+        studentName: studentName || 'Student',
+        onSuccess: typeof options.onSuccess === 'function' ? options.onSuccess : null
+    };
+    window.currentEnrollmentCategory = isPreschoolProgramName(application.program_name) ? 'preschool' : 'tutorial';
+    preschoolServiceSelection = {
+        include: Boolean(application.financial?.service_id),
+        serviceId: application.financial?.service_id ? String(application.financial.service_id) : null,
+        serviceName: application.financial?.service_name || null,
+        serviceAmount: parseFloat(application.financial?.service_amount || 0),
+        programId: String(application.program_id)
+    };
+
+    await loadLookups();
+    if (!(globalLookups.programs || []).some(program => String(program.program_id) === String(application.program_id))) {
+        applicationDownpaymentContext = null;
+        throw new Error('The application program is no longer available in the enrollment lookup.');
+    }
+    Swal.close();
+    getBootstrapModal(modalElement)?.show();
+}
+
+async function handleApplicationDownpayment() {
+    const context = applicationDownpaymentContext;
+    if (!context) return;
+
+    const amountInput = document.getElementById('downpaymentAmountInput');
+    const methodInput = document.getElementById('paymentMethodInput');
+    const referenceInput = document.getElementById('transactionReferenceInput');
+    const programInput = document.getElementById('downpaymentProgramInput');
+    const amount = parseFloat(amountInput?.value || 0);
+    const methodId = methodInput?.value || '';
+    const methodName = methodInput?.options[methodInput.selectedIndex]?.text || 'Payment';
+    const referenceNo = referenceInput?.value?.trim() || null;
+    const includeService = window.currentEnrollmentCategory === 'preschool'
+        && preschoolServiceSelection.programId === String(context.application.program_id)
+        && preschoolServiceSelection.include;
+    const serviceId = includeService ? preschoolServiceSelection.serviceId : null;
+    const form = document.getElementById('downpaymentForm');
+    clearEnrollmentValidation(form || document);
+
+    const issues = [];
+    if (!programInput?.value) issues.push({ element: programInput, message: 'Program is required.' });
+    if (!amount || amount <= 0) issues.push({ element: amountInput, message: 'Enter a valid downpayment amount.' });
+    if (!methodId) issues.push({ element: methodInput, message: 'Payment method is required.' });
+    if (methodName.toLowerCase().includes('gcash') && !referenceNo) {
+        issues.push({ element: referenceInput, message: 'GCash reference number is required.' });
+    }
+    if (issues.length) {
+        showEnrollmentValidationAlert('Payment Details Need Attention', issues);
+        return;
+    }
+
+    const submitButton = document.getElementById('submitDownpayment');
+    if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Recording Payment...';
+    }
+
+    try {
+        const body = new URLSearchParams();
+        body.set('operation', 'collectDownpayment');
+        body.set('json', JSON.stringify({
+            application_id: context.application.application_id,
+            payment_method_id: methodId,
+            reference_no: referenceNo,
+            amount,
+            include_service: includeService,
+            service_id: serviceId
+        }));
+        const response = await axios.post('../../api/enrollment_application.php', body);
+        if (response.data.status !== 'success') {
+            throw new Error(response.data.message || 'Unable to record the application downpayment.');
+        }
+
+        const result = response.data;
+        getBootstrapModal(document.getElementById('downpaymentModal'))?.hide();
+        await showPaymentReceipt({
+            enrollmentId: result.enrollment_details_id,
+            studentName: result.student_name || context.studentName,
+            programName: result.program_name || context.application.program_name,
+            service: 'Initial Enrollment Payment',
+            paymentType: 'Downpayment',
+            paymentFor: 'Registration Fee and Downpayment',
+            paymentMethod: result.payment_method || methodName,
+            referenceNo: result.reference_no,
+            receiptNo: result.receipt_id,
+            amountPaid: result.amount_paid,
+            balance: result.balance,
+            totalAmount: result.amount_paid,
+            lineItems: result.line_items || [],
+            paymentDate: new Date()
+        });
+        await context.onSuccess?.(result);
+    } catch (error) {
+        Swal.fire('Payment Failed', error.response?.data?.message || error.message, 'error');
+    } finally {
+        if (submitButton?.isConnected) {
+            submitButton.disabled = false;
+            submitButton.innerHTML = '<i class="bi bi-receipt"></i><span>Record Payment &amp; Issue Receipt</span>';
+        }
+    }
 }
 
 async function handleSubmitDownpayment() {
@@ -3597,13 +3805,26 @@ window.addSchedule = function() {
     const endTimeInput = document.getElementById("schedEndTime").value;
 
     if (!dateInput || !timeInput || !endTimeInput) {
-        Swal.fire("Missing Info", "Please select a date, start time, and end time.", "warning");
+        const issues = [];
+        if (!dateInput) {
+            issues.push({ element: document.getElementById('schedDateInput'), message: 'Schedule date is required.' });
+        }
+        if (!timeInput) {
+            issues.push({ element: document.getElementById('schedTime'), message: 'Start time is required.' });
+        }
+        if (!endTimeInput) {
+            issues.push({ element: document.getElementById('schedEndTime'), message: 'End time is required.' });
+        }
+        showEnrollmentValidationAlert('Schedule Details Need Attention', issues);
         return;
     }
 
     // Validate end time after start time
     if (endTimeInput <= timeInput) {
-        Swal.fire("Invalid Time", "End time must be after start time.", "warning");
+        showEnrollmentValidationAlert('Invalid Time', [{
+            element: document.getElementById('schedEndTime'),
+            message: 'End time must be after start time.'
+        }]);
         return;
     }
 
@@ -3612,12 +3833,10 @@ window.addSchedule = function() {
     if (teacherId) {
         const available = window.teacherAvailableSlotsPerDate[dateInput];
         if (!available) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'Date Not Available',
-                text: 'This date is not available for the selected teacher.',
-                timer: 3000
-            });
+            showEnrollmentValidationAlert('Date Not Available', [{
+                element: document.getElementById('schedDateInput'),
+                message: 'This date is not available for the selected teacher.'
+            }]);
             return;
         }
         const start = parseTimeToMinutes(timeInput);
@@ -3628,12 +3847,11 @@ window.addSchedule = function() {
             return start < aEnd && end > aStart;
         });
         if (!overlaps) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'Time Not Available',
-                text: 'The selected time is not within the available slots for this teacher on this date.',
-                timer: 3000
-            });
+            const message = 'The selected time is not within the available slots for this teacher on this date.';
+            showEnrollmentValidationAlert('Time Not Available', [
+                { element: document.getElementById('schedTime'), message },
+                { element: document.getElementById('schedEndTime'), message }
+            ]);
             return;
         }
     }
@@ -3641,7 +3859,12 @@ window.addSchedule = function() {
     // Check for duplicate schedule
     const isDuplicate = preferredSchedules.some(s => s.date === dateInput && s.time === timeInput && s.endTime === endTimeInput);
     if (isDuplicate) {
-        Swal.fire("Duplicate Schedule", "This schedule has already been added. Please choose a different date or time.", "warning");
+        const message = 'This schedule has already been added. Please choose a different date or time.';
+        showEnrollmentValidationAlert('Duplicate Schedule', [
+            { element: document.getElementById('schedDateInput'), message },
+            { element: document.getElementById('schedTime'), message },
+            { element: document.getElementById('schedEndTime'), message }
+        ]);
         return;
     }
 

@@ -17,7 +17,7 @@ import { initServicesPage, setupAddServiceModal } from "./modules/services.js";
 import { initPaymentMethodsPage, setupAddPaymentMethodModal } from "./modules/payment_method.js?v=20260812-payment-methods";
 import { loadSchoolYears, setupAddSchoolYearModal, setupEditSchoolYearStatusModal } from "./modules/school_year.js?v=20260814-schedule-details";
 import { initCardManagementPage, initCardManagementEditorPage } from "./modules/card_mangpre.js?v=20260814-school-year-curriculum";
-import "./modules/view_enrollment_pre_play.js?v=20260814-auditor-filters";
+import "./modules/view_enrollment_pre_play.js?v=20260823-placement-submit-lock";
 import "./modules/view_enrollment.js?v=20260823-unified-pending-status";
 import "./modules/edit_enrollment.js?v=20260823-grade-level-crud";
 import "./modules/employee.js";
@@ -29,8 +29,8 @@ import { initSectionAttendancePage } from "./modules/section_attendance.js";
 import { initSectionReportCardsPage } from "./modules/preschool_report_card.js?v=20260814-school-year-curriculum";
 import { openAddSectionModal } from "./modules/section.js";
 import { initProductPage, openAddProductModal, openAddCategoryModal } from "./modules/product.js?v=20260814-product-search";
-import { resetEnrollmentState, openEnrollmentModal } from "./modules/addenrollment.js?v=20260814-branch-teacher-filter";
-import { initNewStudentApplications } from "./modules/enrollment_applications.js?v=20260823-unified-pending-status";
+import { resetEnrollmentState, openEnrollmentModal, openApplicationDownpaymentModal } from "./modules/addenrollment.js?v=20260823-admin-field-validation";
+import { initNewStudentApplications } from "./modules/enrollment_applications.js?v=20260823-shared-downpayment-modal";
 import { initLandingPage } from "./modules/landingpage.js?v=20260823-public-applications";
 import { initLandingPageManager } from "./modules/landing_page_manager.js";
 import { SessionManager } from './studentmodule/session.js?v=20260823-meeting-numbers';
@@ -49,6 +49,7 @@ window.handleLogin = handleLogin;
 window.handleEmployeeSignup = handleEmployeeSignup;
 window.handleSignup = handleSignup;
 window.initProductPage = initProductPage;
+window.openApplicationDownpaymentModal = openApplicationDownpaymentModal;
 
 document.addEventListener("DOMContentLoaded", async () => {
     const canInitializePage = await initializeAuthGuard();
@@ -56,8 +57,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     initLoginPage();
     await initRbacPermissions();
-    if (document.getElementById('dynamic-header')) createHeader();
-    createSidebar();
+    const hasDynamicHeader = Boolean(document.getElementById('dynamic-header'));
+    const hasApplicationShell = hasDynamicHeader || Boolean(document.querySelector('.main-content'));
+    if (hasDynamicHeader) createHeader();
+    if (hasApplicationShell) createSidebar();
 
     const pathname = window.location.pathname;
 

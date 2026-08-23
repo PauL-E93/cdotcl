@@ -167,6 +167,18 @@ class EnrollmentApplicationAPI
             }
         }
 
+        $credentials = '';
+        if (!empty($options['credentials']) && is_array($options['credentials'])) {
+            $credentialRows = '';
+            foreach ($options['credentials'] as $label => $value) {
+                if ($value === null || trim((string)$value) === '') continue;
+                $credentialRows .= "<tr><td class='credential-label'>" . $this->emailEscape($label) . "</td><td class='credential-value'>" . $this->emailEscape($value) . '</td></tr>';
+            }
+            if ($credentialRows !== '') {
+                $credentials = "<div class='credentials-title'>Your student portal credentials</div><table class='credentials' role='presentation' cellpadding='0' cellspacing='0' width='100%'>{$credentialRows}</table>";
+            }
+        }
+
         $button = '';
         $buttonUrl = trim((string)($options['button_url'] ?? ''));
         if ($buttonUrl !== '' && !empty($options['button_label'])) {
@@ -209,6 +221,12 @@ class EnrollmentApplicationAPI
         .details tr:last-child td { border-bottom:0; }
         .detail-label { width:40%; color:#64748b; }
         .detail-value { color:#172033; font-weight:700; text-align:right; }
+        .credentials-title { margin:23px 0 9px; color:#172033; font-size:15px; font-weight:700; }
+        .credentials { margin:0 0 20px; border:1px solid #f3c5ce; border-radius:9px; background:#fff7f9; }
+        .credentials td { padding:12px 14px; border-bottom:1px solid #f3c5ce; font-size:14px; line-height:1.4; }
+        .credentials tr:last-child td { border-bottom:0; }
+        .credential-label { width:40%; color:#7f3443; }
+        .credential-value { color:#172033; font-family:Consolas, Monaco, monospace; font-size:16px !important; font-weight:700; text-align:right; overflow-wrap:anywhere; }
         .button-wrap { margin:25px 0 8px; text-align:center; }
         .button { display:inline-block; padding:13px 25px; border-radius:8px; background:#ea9aa6; color:#ffffff !important; font-size:15px; font-weight:700; text-decoration:none; }
         .security { margin-top:22px; padding-top:18px; border-top:1px solid #e2e8f0; color:#64748b; font-size:12px; line-height:1.6; }
@@ -232,7 +250,7 @@ class EnrollmentApplicationAPI
             <div class='header'><div class='eyebrow'>{$eyebrow}</div><h1>{$title}</h1><p>{$subtitle}</p></div>
             <div class='content'>
                 <p class='greeting'>{$greeting}</p>
-                {$messages}{$notice}{$featuredValue}{$details}{$button}{$security}
+                {$messages}{$notice}{$featuredValue}{$details}{$credentials}{$button}{$security}
             </div>
             <div class='footer'>This is an automated message from CDO Tutorial Center.<br>Please contact your selected center if you need assistance.</div>
         </div>
@@ -338,7 +356,7 @@ class EnrollmentApplicationAPI
     public function checkStudent(array $data): void
     {
         $match = $this->findExactStudent($data);
-        $this->respond('success', $match ? 'This student already has an account.' : 'No matching student account was found.', [
+        $this->respond('success', $match ? 'This student already has a record or application.' : 'No matching student record was found.', [
             'existing_student' => (bool)$match,
             'student_id_number' => $match['student_id_number'] ?? null,
             'username' => $match['username'] ?? null
@@ -353,7 +371,7 @@ class EnrollmentApplicationAPI
                 throw new InvalidArgumentException('Please enter a valid parent or guardian email address.');
             }
             if ($this->findExactStudent($data)) {
-                $this->respond('error', 'A student with this email, full name, and birthdate already exists. Please log in or contact the center.', ['existing_student' => true], 409);
+                $this->respond('error', 'A student with this email, full name, and birthdate already has a record or application. Please track the existing application, log in if already enrolled, or contact the center.', ['existing_student' => true], 409);
                 return;
             }
 
@@ -494,13 +512,13 @@ class EnrollmentApplicationAPI
                 throw new RuntimeException('Email verification is required before submitting the application.');
             }
             if ($this->findExactStudent($data)) {
-                $this->respond('error', 'A student with this email, full name, and birthdate already exists.', ['existing_student' => true], 409);
+                $this->respond('error', 'A student with this email, full name, and birthdate already has a record or application.', ['existing_student' => true], 409);
                 return;
             }
 
             $required = [
                 'first_name' => 'First name', 'last_name' => 'Last name', 'birthday' => 'Birthdate',
-                'gender_id' => 'Gender', 'username' => 'Username', 'password' => 'Password', 'guardian_name' => 'Guardian name',
+                'gender_id' => 'Gender', 'guardian_name' => 'Guardian name',
                 'guardian_contact' => 'Guardian contact number', 'guardian_relationship' => 'Guardian relationship',
                 'adr_street' => 'House/street', 'adr_barangay' => 'Barangay', 'adr_city' => 'City/municipality',
                 'adr_province' => 'Province',
@@ -522,24 +540,6 @@ class EnrollmentApplicationAPI
             if (!preg_match('/^\+639\d{9}$/', $guardianContact)) {
                 throw new InvalidArgumentException('Guardian contact number must be a valid Philippine mobile number in +639XXXXXXXXX format.');
             }
-            $password = (string)$data['password'];
-            if (strlen($password) < 8 || !preg_match('/[A-Z]/', $password) || !preg_match('/[a-z]/', $password)
-                || !preg_match('/\d/', $password) || !preg_match('/[^A-Za-z0-9\s]/', $password)) {
-                throw new InvalidArgumentException('Password must have at least 8 characters, including uppercase and lowercase letters, a number, and a special character.');
-            }
-            if (($data['password'] ?? '') !== ($data['confirm_password'] ?? '')) {
-                throw new InvalidArgumentException('Passwords do not match.');
-            }
-            $username = trim((string)$data['username']);
-            if (!preg_match('/^[A-Za-z0-9._-]{4,50}$/', $username)) {
-                throw new InvalidArgumentException('Username must be 4–50 characters and use only letters, numbers, periods, underscores, or hyphens.');
-            }
-            $usernameCheck = $this->conn->prepare('SELECT 1 FROM student WHERE LOWER(TRIM(username)) = LOWER(TRIM(?)) LIMIT 1');
-            $usernameCheck->execute([$username]);
-            if ($usernameCheck->fetchColumn()) {
-                throw new RuntimeException('That username is already used. Please choose another username.');
-            }
-
             $programId = (int)$data['program_id'];
             $branchId = (int)$data['branch_id'];
             $genderId = (int)$data['gender_id'];
@@ -587,14 +587,6 @@ class EnrollmentApplicationAPI
             $schoolYearLock = $this->conn->prepare('SELECT school_year_id FROM school_years WHERE school_year_id = ? FOR UPDATE');
             $schoolYearLock->execute([(int)$schoolYear['school_year_id']]);
 
-            // Recheck the username after acquiring the transaction lock. The
-            // reservation table supplies uniqueness for this workflow even
-            // though legacy student rows currently contain duplicates.
-            $usernameCheck->execute([$username]);
-            if ($usernameCheck->fetchColumn()) {
-                throw new RuntimeException('That username was just used by another account. Please choose another username.');
-            }
-
             $guardian = $this->conn->prepare('INSERT INTO guardian (name, contact_number, relationship) VALUES (?, ?, ?)');
             $guardian->execute([
                 trim((string)$data['guardian_name']), $guardianContact, trim((string)$data['guardian_relationship'])
@@ -606,9 +598,9 @@ class EnrollmentApplicationAPI
                 (student_id_number, username, password_hash, email, first_name, middle_name, last_name, ext, nickname,
                  birthday, gender_id, guardian_id, adr_street, adr_barangay, adr_city, adr_province, adr_note,
                  role_id, employee_id, status, date_created, health_note)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, 'active', NOW(), ?)");
+                 VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, 'inactive', NOW(), ?)");
             $student->execute([
-                $studentNumber, $username, password_hash((string)$data['password'], PASSWORD_DEFAULT), $email,
+                $studentNumber, $email,
                 trim((string)$data['first_name']), trim((string)($data['middle_name'] ?? '')) ?: null,
                 trim((string)$data['last_name']), trim((string)($data['ext'] ?? '')),
                 trim((string)($data['nickname'] ?? '')) ?: null, $data['birthday'],
@@ -618,9 +610,6 @@ class EnrollmentApplicationAPI
                 trim((string)($data['adr_note'] ?? '')) ?: null, trim((string)($data['health_note'] ?? '')) ?: null
             ]);
             $studentId = (int)$this->conn->lastInsertId();
-            $this->conn->prepare('INSERT INTO enrollment_application_usernames (username_key, student_id) VALUES (?, ?)')
-                ->execute([$this->normalizeText($username), $studentId]);
-
             $applicationNumber = $this->uniqueApplicationNumber();
             $trackingToken = bin2hex(random_bytes(32));
             $app = $this->conn->prepare("INSERT INTO enrollment_applications
@@ -718,7 +707,11 @@ class EnrollmentApplicationAPI
         $availability->execute([$id]);
         $row['subjects'] = $subjects->fetchAll(PDO::FETCH_ASSOC);
         $row['availability'] = $availability->fetchAll(PDO::FETCH_ASSOC);
-        $row['financial'] = $this->financialSnapshot((int)$row['program_id']);
+        $selectedServiceId = null;
+        if (!empty($row['enrollment_details_id'])) {
+            $selectedServiceId = $this->selectedServiceIdForEnrollment((int)$row['enrollment_details_id']);
+        }
+        $row['financial'] = $this->financialSnapshot((int)$row['program_id'], $selectedServiceId, (int)$row['branch_id']);
         if (!empty($row['enrollment_details_id'])) {
             $row['billing'] = $this->billingData((int)$row['enrollment_details_id']);
         }
@@ -870,21 +863,69 @@ class EnrollmentApplicationAPI
             || str_contains($name, 'playschool') || str_contains($name, 'play school') || str_contains($name, 'play-school');
     }
 
-    private function financialSnapshot(int $programId): array
+    private function selectedServiceIdForEnrollment(int $detailsId): ?int
     {
-        $stmt = $this->conn->prepare('SELECT * FROM program WHERE program_id = ? LIMIT 1');
+        if ($detailsId <= 0) return null;
+        $stmt = $this->conn->prepare("SELECT s.service_id
+            FROM enrollment_details ed
+            JOIN service s ON s.service_name = ed.services
+            WHERE ed.enrollment_details_id = ?
+            LIMIT 1");
+        $stmt->execute([$detailsId]);
+        $serviceId = (int)$stmt->fetchColumn();
+        return $serviceId > 0 ? $serviceId : null;
+    }
+
+    private function financialSnapshot(int $programId, ?int $requestedServiceId = null, ?int $branchId = null): array
+    {
+        $stmt = $this->conn->prepare('SELECT p.*, s.service_name AS default_service_name,
+                s.amount AS default_service_amount, s.status AS default_service_status
+            FROM program p
+            LEFT JOIN service s ON s.service_id = p.service_id
+            WHERE p.program_id = ? LIMIT 1');
         $stmt->execute([$programId]);
         $program = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$program) throw new RuntimeException('Program was not found.');
         $tuition = max(0, (float)$program['tuition']);
         $units = max(1, (int)$program['total_units']);
         $misc = 0.0;
-        $tuitionSubtotal = $this->isPreschool($program) ? $tuition * $units : $tuition;
-        if ($this->isPreschool($program)) {
-            $miscStmt = $this->conn->prepare('SELECT COALESCE(SUM(pr.price), 0) FROM program_products pp JOIN product pr ON pr.product_id = pp.product_id WHERE pp.program_id = ?');
+        $isPreschool = $this->isPreschool($program);
+        $tuitionOnlySubtotal = $isPreschool ? $tuition * $units : $tuition;
+        $products = [];
+        if ($isPreschool) {
+            $miscStmt = $this->conn->prepare('SELECT pr.product_id, pr.name AS product_name, pr.price
+                FROM program_products pp
+                JOIN product pr ON pr.product_id = pp.product_id
+                WHERE pp.program_id = ? ORDER BY pr.name');
             $miscStmt->execute([$programId]);
-            $misc = (float)$miscStmt->fetchColumn();
+            $products = $miscStmt->fetchAll(PDO::FETCH_ASSOC);
+            $misc = array_reduce($products, fn($sum, $product) => $sum + max(0, (float)$product['price']), 0.0);
         }
+
+        $availableService = null;
+        $programServiceId = (int)($program['service_id'] ?? 0);
+        if ($isPreschool && $programServiceId > 0 && strtolower((string)($program['default_service_status'] ?? '')) === 'active') {
+            $offeredAtBranch = true;
+            if (($branchId ?? 0) > 0) {
+                $branchService = $this->conn->prepare('SELECT 1 FROM branch_services WHERE branch_id = ? AND service_id = ? LIMIT 1');
+                $branchService->execute([$branchId, $programServiceId]);
+                $offeredAtBranch = (bool)$branchService->fetchColumn();
+            }
+            if ($offeredAtBranch) {
+                $availableService = [
+                    'service_id' => $programServiceId,
+                    'service_name' => (string)$program['default_service_name'],
+                    'amount' => max(0, (float)$program['default_service_amount'])
+                ];
+            }
+        }
+        if (($requestedServiceId ?? 0) > 0 && (!$availableService || (int)$availableService['service_id'] !== $requestedServiceId)) {
+            throw new InvalidArgumentException('The selected service is not active or is not offered for this program and center.');
+        }
+        $selectedService = ($requestedServiceId ?? 0) > 0 ? $availableService : null;
+        $serviceMonthlyAmount = max(0, (float)($selectedService['amount'] ?? 0));
+        $serviceTotal = $isPreschool ? $serviceMonthlyAmount * $units : 0.0;
+        $tuitionSubtotal = $tuitionOnlySubtotal + $serviceTotal;
         $discountAmount = 0.0;
         $discountName = null;
         $discountId = !empty($program['default_discount_id']) ? (int)$program['default_discount_id'] : null;
@@ -907,7 +948,11 @@ class EnrollmentApplicationAPI
         $grandTotal = $totalAfterDiscount + $registration;
         $initial = min($grandTotal, $registration + $downpayment);
         return [
-            'program' => $program, 'tuition_subtotal' => $tuitionSubtotal, 'misc_amount' => $misc,
+            'program' => $program, 'tuition_amount' => $tuition, 'tuition_subtotal' => $tuitionSubtotal,
+            'tuition_only_subtotal' => $tuitionOnlySubtotal, 'misc_amount' => $misc, 'other_fees' => $products,
+            'available_service' => $availableService, 'service_id' => $selectedService['service_id'] ?? null,
+            'service_name' => $selectedService['service_name'] ?? null, 'service_amount' => $serviceMonthlyAmount,
+            'service_total' => $serviceTotal, 'total_units' => $units,
             'discount_id' => $discountId, 'discount_name' => $discountName, 'discount_amount' => $discountAmount,
             'registration_fee' => $registration, 'downpayment_amount' => $downpayment,
             'total_after_discount' => $totalAfterDiscount, 'grand_total' => $grandTotal,
@@ -920,7 +965,9 @@ class EnrollmentApplicationAPI
         try {
             $programId = (int)($data['program_id'] ?? 0);
             if ($programId <= 0) throw new InvalidArgumentException('Select a program to view its billing details.');
-            $this->respond('success', '', ['data' => $this->financialSnapshot($programId)]);
+            $serviceId = !empty($data['include_service']) ? (int)($data['service_id'] ?? 0) : null;
+            $branchId = (int)($data['branch_id'] ?? 0) ?: null;
+            $this->respond('success', '', ['data' => $this->financialSnapshot($programId, $serviceId, $branchId)]);
         } catch (Throwable $e) {
             $this->respond('error', $e->getMessage(), [], 422);
         }
@@ -960,7 +1007,11 @@ class EnrollmentApplicationAPI
             if ($application['status'] !== 'approved_for_payment' || !empty($application['enrollment_details_id'])) {
                 throw new RuntimeException('This application is not awaiting downpayment.');
             }
-            $snapshot = $this->financialSnapshot((int)$application['program_id']);
+            $requestedServiceId = !empty($data['include_service']) ? (int)($data['service_id'] ?? 0) : null;
+            if (!empty($data['include_service']) && ($requestedServiceId ?? 0) <= 0) {
+                throw new InvalidArgumentException('Select a valid service or choose not to include it.');
+            }
+            $snapshot = $this->financialSnapshot((int)$application['program_id'], $requestedServiceId, (int)$application['branch_id']);
             $expected = round((float)$snapshot['initial_payment'], 2);
             if (abs($amount - $expected) > 0.01) {
                 throw new InvalidArgumentException('Payment must equal the required registration fee and downpayment of PHP ' . number_format($expected, 2) . '.');
@@ -980,12 +1031,13 @@ class EnrollmentApplicationAPI
             $primarySubject = (int)($application['subjects'][0]['subject_id'] ?? 0) ?: null;
             $details = $this->conn->prepare("INSERT INTO enrollment_details
                 (enrollment_header_id, program_id, grade_level_id, subject_id, preferred_teacher, goal, preferred_time_day,
-                 discount_id, discount_name, discount_amount, registration_fee, downpayment_amount, status)
-                VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'pending')");
+                 discount_id, discount_name, discount_amount, registration_fee, downpayment_amount, services, status)
+                VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')");
             $details->execute([
                 $headerId, (int)$application['program_id'], $application['grade_level_id'] ?: null, $primarySubject,
                 $application['goal'] ?: null, $preferred, $snapshot['discount_id'], $snapshot['discount_name'],
-                $snapshot['discount_amount'], $snapshot['registration_fee'], $snapshot['downpayment_amount']
+                $snapshot['discount_amount'], $snapshot['registration_fee'], $snapshot['downpayment_amount'],
+                $snapshot['service_name']
             ]);
             $detailsId = (int)$this->conn->lastInsertId();
             if ($application['subjects']) {
@@ -1021,11 +1073,15 @@ class EnrollmentApplicationAPI
                 ->execute([$detailsId, $applicationId]);
             $this->conn->commit();
 
-            $this->respond('success', 'Downpayment recorded. Continue to teacher assignment and schedule plotting.', [
+            $nextStep = $this->isPreschool($snapshot['program'])
+                ? 'Continue to class and section assignment.'
+                : 'Continue to teacher assignment and schedule plotting.';
+            $this->respond('success', 'Downpayment recorded. ' . $nextStep, [
                 'enrollment_details_id' => $detailsId, 'receipt_id' => $receiptId, 'amount_paid' => $amount,
                 'balance' => $balance, 'payment_method' => $methodName, 'reference_no' => $reference,
                 'student_name' => trim($application['first_name'] . ' ' . $application['last_name']),
-                'program_name' => $application['program_name'], 'line_items' => $lineItems
+                'program_name' => $application['program_name'], 'line_items' => $lineItems,
+                'financial' => $snapshot
             ]);
         } catch (Throwable $e) {
             if ($this->conn->inTransaction()) $this->conn->rollBack();
@@ -1321,6 +1377,46 @@ class EnrollmentApplicationAPI
         if ($final > 0) $this->insertBill($detailsId, 'Final', $final, $finalDate);
     }
 
+    private function activateStudentPortalAccount(array $application): array
+    {
+        $studentId = (int)($application['student_id'] ?? 0);
+        if ($studentId <= 0) throw new RuntimeException('The application student record was not found.');
+
+        // Match the credential convention used by manual admin enrollment.
+        $firstName = trim((string)($application['first_name'] ?? ''));
+        $lastName = trim((string)($application['last_name'] ?? ''));
+        $baseUsername = strtolower((string)preg_replace('/[^A-Za-z0-9._-]/', '', $firstName . $lastName));
+        if ($baseUsername === '') $baseUsername = 'student' . $studentId;
+        $passwordName = (string)preg_replace('/\s+/', '', $firstName);
+        if ($passwordName === '') $passwordName = 'Student';
+        $temporaryPassword = $passwordName . '@123';
+
+        $this->conn->prepare('DELETE FROM enrollment_application_usernames WHERE student_id = ?')->execute([$studentId]);
+        $studentUsernameCheck = $this->conn->prepare('SELECT 1 FROM student WHERE LOWER(TRIM(username)) = LOWER(TRIM(?)) AND student_id <> ? LIMIT 1');
+        $username = '';
+        for ($suffix = 1; $suffix <= 9999; $suffix++) {
+            $suffixText = $suffix === 1 ? '' : (string)$suffix;
+            $candidate = substr($baseUsername, 0, max(1, 100 - strlen($suffixText))) . $suffixText;
+            $studentUsernameCheck->execute([$candidate, $studentId]);
+            if ($studentUsernameCheck->fetchColumn()) continue;
+
+            try {
+                $this->conn->prepare('INSERT INTO enrollment_application_usernames (username_key, student_id) VALUES (?, ?)')
+                    ->execute([$this->normalizeText($candidate), $studentId]);
+                $username = $candidate;
+                break;
+            } catch (PDOException $e) {
+                if (($e->errorInfo[0] ?? '') !== '23000') throw $e;
+            }
+        }
+        if ($username === '') throw new RuntimeException('A unique student username could not be generated.');
+
+        $this->conn->prepare("UPDATE student SET username = ?, password_hash = ?, status = 'active' WHERE student_id = ?")
+            ->execute([$username, password_hash($temporaryPassword, PASSWORD_DEFAULT), $studentId]);
+
+        return ['username' => $username, 'password' => $temporaryPassword];
+    }
+
     public function finalizeEnrollment(array $data): void
     {
         try {
@@ -1369,8 +1465,13 @@ class EnrollmentApplicationAPI
             }
             $this->conn->prepare("UPDATE enrollment_details SET preferred_teacher = ?, status = 'enrolled' WHERE enrollment_details_id = ?")->execute([$teacherId, $detailsId]);
             $this->conn->prepare("UPDATE enrollment_header eh JOIN enrollment_details ed ON ed.enrollment_header_id = eh.enrollment_header_id SET eh.status = 'enrolled' WHERE ed.enrollment_details_id = ?")->execute([$detailsId]);
-            $snapshot = $this->financialSnapshot((int)$application['program_id']);
+            $snapshot = $this->financialSnapshot(
+                (int)$application['program_id'],
+                $this->selectedServiceIdForEnrollment($detailsId),
+                (int)$application['branch_id']
+            );
             $this->generateRemainingBills($detailsId, $application, $snapshot, $schedule);
+            $portalCredentials = $this->activateStudentPortalAccount($application);
             if ($manualOverride) {
                 $auditNote = 'Manual teacher override used during schedule plotting: ' . $selectedTeacher['teacher_name'] . '.';
                 $this->conn->prepare("UPDATE enrollment_applications
@@ -1390,30 +1491,182 @@ class EnrollmentApplicationAPI
                 'greeting' => 'Congratulations, ' . trim((string)$application['first_name']) . '!',
                 'messages' => [
                     'Your teacher and exact sessions have been confirmed. Your enrollment is now complete.',
-                    'You may sign in using the username created during your online application to view the schedule, sessions, and billing statement.'
+                    'The system has created the student portal account. Use the temporary credentials below to view the schedule, sessions, and billing statement.'
                 ],
                 'notice' => 'You are officially enrolled in ' . $application['program_name'] . '.',
                 'details' => [
                     'Student ID' => $application['student_id_number'],
-                    'Username' => $application['username'],
                     'Program' => $application['program_name'],
                     'Center' => $application['branch_name'],
                     'Teacher' => $selectedTeacher['teacher_name'],
                     'Status' => 'Enrolled'
                 ],
+                'credentials' => [
+                    'Username' => $portalCredentials['username'],
+                    'Temporary Password' => $portalCredentials['password']
+                ],
                 'button_label' => 'Log in to your account',
                 'button_url' => $loginUrl,
-                'security' => 'Use the password created during your application. Never share your password or verification codes.'
+                'security' => 'The temporary password is case-sensitive. Sign in and change it as soon as possible. Never share your credentials or verification codes.'
             ]);
             $completedPlainText = "Congratulations, {$application['first_name']}! Your enrollment is complete. " .
-                "Teacher: {$selectedTeacher['teacher_name']}. You may log in using username {$application['username']} to view your schedule and billing statement.";
-            $this->sendEmail(
+                "Teacher: {$selectedTeacher['teacher_name']}. Username: {$portalCredentials['username']}. " .
+                "Temporary password: {$portalCredentials['password']}. Please change this password after signing in.";
+            $emailSent = $this->sendEmail(
                 $application['email'],
                 "Enrollment {$application['application_number']} completed",
                 $completedEmail,
                 $completedPlainText
             );
-            $this->respond('success', 'Enrollment completed and billing statement generated.', ['enrollment_details_id' => $detailsId, 'billing' => $billing]);
+            $message = $emailSent
+                ? 'Enrollment completed. Student portal credentials were emailed successfully.'
+                : 'Enrollment completed, but the student portal credential email could not be sent.';
+            $this->respond('success', $message, ['enrollment_details_id' => $detailsId, 'billing' => $billing, 'email_sent' => $emailSent]);
+        } catch (Throwable $e) {
+            if ($this->conn->inTransaction()) $this->conn->rollBack();
+            $this->respond('error', $e->getMessage(), [], 422);
+        }
+    }
+
+    public function finalizePreschoolEnrollment(array $data): void
+    {
+        try {
+            $admin = $this->requireOperator();
+            $applicationId = (int)($data['application_id'] ?? 0);
+            $detailsId = (int)($data['enrollment_details_id'] ?? 0);
+            $classId = (int)($data['class_id'] ?? 0);
+            $sectionId = (int)($data['section_id'] ?? 0);
+            if ($applicationId <= 0 || $detailsId <= 0 || $classId <= 0 || $sectionId <= 0) {
+                throw new InvalidArgumentException('Application, enrollment, class, and section are required.');
+            }
+
+            $this->conn->beginTransaction();
+            $application = $this->adminApplication($applicationId, $admin, true);
+            if ($application['status'] !== 'ready_for_scheduling'
+                || (int)($application['enrollment_details_id'] ?? 0) !== $detailsId) {
+                throw new RuntimeException('This application is not ready for class and section assignment.');
+            }
+
+            $snapshot = $this->financialSnapshot(
+                (int)$application['program_id'],
+                $this->selectedServiceIdForEnrollment($detailsId),
+                (int)$application['branch_id']
+            );
+            if (!$this->isPreschool($snapshot['program'])) {
+                throw new RuntimeException('Class and section assignment is only available for Pre and Play School applications.');
+            }
+
+            $sectionStmt = $this->conn->prepare("SELECT sec.section_id, sec.class_id, sec.employee_id, sec.section_name,
+                    sec.status AS section_status, sec.`max` AS max_capacity,
+                    c.program_id, c.branch_id, c.status AS class_status,
+                    TRIM(CONCAT_WS(' ', e.first_name, e.last_name)) AS teacher_name,
+                    (SELECT GROUP_CONCAT(CONCAT(ss.day_of_week, ' ', TIME_FORMAT(ss.start_time, '%h:%i %p'), ' - ', TIME_FORMAT(ss.end_time, '%h:%i %p')) ORDER BY FIELD(ss.day_of_week, 'Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday') SEPARATOR ', ')
+                     FROM section_schedules ss WHERE ss.section_id = sec.section_id) AS section_schedule
+                FROM sections sec
+                JOIN class c ON c.class_id = sec.class_id
+                LEFT JOIN employee e ON e.employee_id = sec.employee_id
+                WHERE sec.section_id = ?
+                LIMIT 1 FOR UPDATE");
+            $sectionStmt->execute([$sectionId]);
+            $section = $sectionStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$section) throw new RuntimeException('The selected section was not found.');
+            if ((int)$section['class_id'] !== $classId) {
+                throw new RuntimeException('The selected section does not belong to the selected class.');
+            }
+            if ((int)$section['program_id'] !== (int)$application['program_id']) {
+                throw new RuntimeException('The selected class is not for this preschool program.');
+            }
+            if ((int)$section['branch_id'] !== (int)$application['branch_id']) {
+                throw new RuntimeException('The selected class is not assigned to the application center.');
+            }
+            if (!in_array(strtolower(trim((string)$section['class_status'])), ['', 'open', 'active'], true)
+                || !in_array(strtolower(trim((string)$section['section_status'])), ['', 'open', 'active'], true)) {
+                throw new RuntimeException('The selected class or section is not open for enrollment.');
+            }
+
+            $countStmt = $this->conn->prepare("SELECT COUNT(*)
+                FROM enrollment_details ed
+                JOIN enrollment_header eh ON eh.enrollment_header_id = ed.enrollment_header_id
+                WHERE ed.section_id = ? AND COALESCE(NULLIF(eh.status, ''), ed.status) = 'enrolled'");
+            $countStmt->execute([$sectionId]);
+            $currentCount = (int)$countStmt->fetchColumn();
+            $maxCapacity = (int)($section['max_capacity'] ?? 0);
+            if ($maxCapacity > 0 && $currentCount >= $maxCapacity) {
+                throw new RuntimeException('The selected section is already full. Choose another section.');
+            }
+
+            // This schema derives the class through sections.class_id; enrollment_details
+            // stores only the selected section.
+            $this->conn->prepare("UPDATE enrollment_details
+                    SET section_id = ?, preferred_teacher = ?, preferred_time_day = ?, status = 'enrolled'
+                    WHERE enrollment_details_id = ?")
+                ->execute([$sectionId, $section['employee_id'] ?: null, $section['section_schedule'] ?: null, $detailsId]);
+            $this->conn->prepare("UPDATE enrollment_header eh
+                    JOIN enrollment_details ed ON ed.enrollment_header_id = eh.enrollment_header_id
+                    SET eh.status = 'enrolled'
+                    WHERE ed.enrollment_details_id = ?")
+                ->execute([$detailsId]);
+
+            $this->generateRemainingBills($detailsId, $application, $snapshot, []);
+            $portalCredentials = $this->activateStudentPortalAccount($application);
+            $this->conn->prepare("UPDATE enrollment_applications SET status = 'enrolled' WHERE application_id = ?")
+                ->execute([$applicationId]);
+
+            $newCount = $currentCount + 1;
+            if ($maxCapacity > 0 && $newCount >= $maxCapacity) {
+                $this->conn->prepare("UPDATE sections SET status = 'full' WHERE section_id = ?")->execute([$sectionId]);
+            }
+
+            $this->conn->commit();
+
+            $loginUrl = $this->applicationUrl('login.html');
+            $completedEmail = $this->buildApplicationEmail([
+                'preheader' => "Enrollment {$application['application_number']} is complete.",
+                'eyebrow' => 'ENROLLMENT CONFIRMED',
+                'title' => 'Your enrollment is complete',
+                'subtitle' => "Application {$application['application_number']}",
+                'greeting' => 'Congratulations, ' . trim((string)$application['first_name']) . '!',
+                'messages' => [
+                    'Your class and section have been confirmed. Your Pre and Play School enrollment is now complete.',
+                    'The system has created the student portal account. Use the temporary credentials below to view the enrollment and billing statement.'
+                ],
+                'notice' => 'You are officially enrolled in ' . $application['program_name'] . '.',
+                'details' => [
+                    'Student ID' => $application['student_id_number'],
+                    'Program' => $application['program_name'],
+                    'Center' => $application['branch_name'],
+                    'Class' => 'Class ' . $classId,
+                    'Section' => $section['section_name'],
+                    'Section Teacher' => $section['teacher_name'] ?: 'To be announced',
+                    'Section Schedule' => $section['section_schedule'] ?: 'To be announced',
+                    'Status' => 'Enrolled'
+                ],
+                'credentials' => [
+                    'Username' => $portalCredentials['username'],
+                    'Temporary Password' => $portalCredentials['password']
+                ],
+                'button_label' => 'Log in to your account',
+                'button_url' => $loginUrl,
+                'security' => 'The temporary password is case-sensitive. Sign in and change it as soon as possible. Never share your credentials or verification codes.'
+            ]);
+            $completedPlainText = "Congratulations, {$application['first_name']}! Your Pre and Play School enrollment is complete. " .
+                "Section: {$section['section_name']}. Username: {$portalCredentials['username']}. " .
+                "Temporary password: {$portalCredentials['password']}. Please change this password after signing in.";
+            $emailSent = $this->sendEmail(
+                $application['email'],
+                "Enrollment {$application['application_number']} completed",
+                $completedEmail,
+                $completedPlainText
+            );
+
+            $message = $emailSent
+                ? 'Class and section assigned. Student portal credentials were emailed successfully.'
+                : 'Preschool enrollment completed, but the student portal credential email could not be sent.';
+            $this->respond('success', $message, [
+                'enrollment_details_id' => $detailsId,
+                'billing' => $this->billingData($detailsId),
+                'email_sent' => $emailSent
+            ]);
         } catch (Throwable $e) {
             if ($this->conn->inTransaction()) $this->conn->rollBack();
             $this->respond('error', $e->getMessage(), [], 422);
@@ -1476,5 +1729,6 @@ switch ($operation) {
     case 'getManualTeachers': $api->getManualTeachers($data); break;
     case 'getScheduleSuggestions': $api->getScheduleSuggestions($data); break;
     case 'finalizeEnrollment': $api->finalizeEnrollment($data); break;
+    case 'finalizePreschoolEnrollment': $api->finalizePreschoolEnrollment($data); break;
     default: $api->respond('error', 'Invalid operation.', [], 400); break;
 }

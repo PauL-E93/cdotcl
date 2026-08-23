@@ -252,6 +252,12 @@ const applicationTime = value => {
     return new Date(2000, 0, 1, hours, minutes || 0).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' });
 };
 
+const isPreschoolApplication = item => {
+    const programName = String(item?.program_name || '').toLowerCase();
+    return ['preschool', 'playschool', 'pre-school', 'play-school', 'pre school', 'play school']
+        .some(keyword => programName.includes(keyword));
+};
+
 async function applicationApi(operation, data = {}) {
     const body = new URLSearchParams();
     body.set('operation', operation);
@@ -269,8 +275,11 @@ const statusLabels = {
     cancelled: ['Cancelled', 'secondary']
 };
 
-function applicationStatusBadge(status) {
-    const [label, tone] = statusLabels[status] || [status, 'secondary'];
+function applicationStatusBadge(status, item = null) {
+    const [defaultLabel, tone] = statusLabels[status] || [status, 'secondary'];
+    const label = status === 'ready_for_scheduling' && isPreschoolApplication(item)
+        ? 'Ready for Class & Section'
+        : defaultLabel;
     return `<span class="badge text-bg-${tone}">${applicationEscape(label)}</span>`;
 }
 
@@ -285,7 +294,7 @@ function applicationListRows(items) {
         <td>${applicationEscape([item.first_name, item.middle_name, item.last_name, item.ext].filter(Boolean).join(' '))}<small class="d-block text-muted">${applicationEscape(item.student_id_number)}</small></td>
         <td>${applicationEscape(item.program_name)}</td>
         <td>${applicationEscape(item.branch_name)}</td>
-        <td>${applicationStatusBadge(item.status)}</td>
+        <td>${applicationStatusBadge(item.status, item)}</td>
         <td>${applicationEscape(item.email)}</td>
         <td><button type="button" class="application-inline-button application-inline-button--outline" data-view-application="${item.application_id}">Open</button></td>
     </tr>`).join('');
@@ -328,16 +337,18 @@ function applicationDetailHtml(item) {
         : item.status === 'approved_for_payment'
             ? `<button class="application-inline-button application-inline-button--primary" id="receiveApplicationPayment"><i class="bi bi-cash-coin me-2"></i>Receive Downpayment</button>`
             : item.status === 'ready_for_scheduling'
-                ? `<button class="application-inline-button application-inline-button--primary" id="scheduleApplication"><i class="bi bi-calendar2-check me-2"></i>Assign Teacher &amp; Plot Schedule</button>`
+                ? (isPreschoolApplication(item)
+                    ? `<button class="application-inline-button application-inline-button--primary" id="placePrePlayApplication"><i class="bi bi-diagram-3 me-2"></i>Assign Class &amp; Section</button>`
+                    : `<button class="application-inline-button application-inline-button--primary" id="scheduleApplication"><i class="bi bi-calendar2-check me-2"></i>Assign Teacher &amp; Plot Schedule</button>`)
                 : item.status === 'enrolled'
                     ? `<button class="application-inline-button application-inline-button--outline" id="showApplicationBilling"><i class="bi bi-receipt me-2"></i>Billing Statement</button>` : '';
     return `<div class="text-start">
         <div class="application-summary-card">
-            <div class="application-summary-head"><div class="application-student-identity"><span class="application-avatar"><i class="bi bi-person-fill"></i></span><div><span class="application-eyebrow">Student</span><span class="application-student-name">${applicationEscape(fullName)}</span></div></div><div class="text-end"><span class="application-eyebrow">Application</span><span class="application-number-pill">${applicationEscape(item.application_number)}</span><div class="mt-2">${applicationStatusBadge(item.status)}</div></div></div>
+            <div class="application-summary-head"><div class="application-student-identity"><span class="application-avatar"><i class="bi bi-person-fill"></i></span><div><span class="application-eyebrow">Student</span><span class="application-student-name">${applicationEscape(fullName)}</span></div></div><div class="text-end"><span class="application-eyebrow">Application</span><span class="application-number-pill">${applicationEscape(item.application_number)}</span><div class="mt-2">${applicationStatusBadge(item.status, item)}</div></div></div>
             <div class="application-meta-grid"><div><span class="application-meta-label">Program</span><span class="application-meta-value">${applicationEscape(item.program_name)}</span></div><div><span class="application-meta-label">Center</span><span class="application-meta-value">${applicationEscape(item.branch_name)}</span></div><div><span class="application-meta-label">Submitted</span><span class="application-meta-value">${new Date(item.created_at).toLocaleString()}</span></div></div>
         </div>
         <div class="application-detail-grid">
-            <section class="application-section-card"><h3 class="application-section-title"><i class="bi bi-person-vcard"></i>Student Information</h3><div class="application-detail-line"><span>Birthdate</span><strong>${applicationEscape(item.birthday)}</strong></div><div class="application-detail-line"><span>Email</span><strong>${applicationEscape(item.email)}</strong></div><div class="application-detail-line"><span>Student ID</span><strong>${applicationEscape(item.student_id_number)}</strong></div><div class="application-detail-line"><span>Username</span><strong>${applicationEscape(item.username)}</strong></div></section>
+            <section class="application-section-card"><h3 class="application-section-title"><i class="bi bi-person-vcard"></i>Student Information</h3><div class="application-detail-line"><span>Birthdate</span><strong>${applicationEscape(item.birthday)}</strong></div><div class="application-detail-line"><span>Email</span><strong>${applicationEscape(item.email)}</strong></div><div class="application-detail-line"><span>Student ID</span><strong>${applicationEscape(item.student_id_number)}</strong></div><div class="application-detail-line"><span>Portal account</span><strong>${applicationEscape(item.username || 'Created after enrollment')}</strong></div></section>
             <section class="application-section-card"><h3 class="application-section-title"><i class="bi bi-people"></i>Parent / Guardian</h3><div class="application-detail-line"><span>Name</span><strong>${applicationEscape(item.guardian_name)}</strong></div><div class="application-detail-line"><span>Relationship</span><strong>${applicationEscape(item.guardian_relationship)}</strong></div><div class="application-detail-line"><span>Contact</span><strong>${applicationEscape(item.guardian_contact)}</strong></div><div class="application-detail-line"><span>Address</span><strong>${applicationEscape([item.adr_street, item.adr_barangay, item.adr_city, item.adr_province].filter(Boolean).join(', ') || 'No address provided')}</strong></div></section>
             <section class="application-section-card application-section-card--wide"><h3 class="application-section-title"><i class="bi bi-mortarboard"></i>Learning Preferences</h3><div class="application-meta-grid"><div><span class="application-meta-label">Grade level</span><span class="application-meta-value">${applicationEscape(item.grade_level || 'Not selected')}</span></div><div class="application-meta-item--wide"><span class="application-meta-label">Selected subjects</span><div class="application-chip-list">${subjects}</div></div>${item.goal ? `<div class="application-meta-item--wide"><span class="application-meta-label">Learning goal</span><span>${applicationEscape(item.goal)}</span></div>` : ''}<div class="application-meta-item--wide"><span class="application-meta-label">Student's weekly availability</span><div class="application-chip-list">${availability || '<span class="text-muted">No availability recorded.</span>'}</div></div></div></section>
             <div class="application-section-card application-section-card--wide"><div class="application-flow-callout"><i class="bi bi-wallet2"></i><div><strong>Required center payment: ${applicationMoney(item.financial?.initial_payment)}</strong><div class="text-muted small mt-1">Registration ${applicationMoney(item.financial?.registration_fee)} + Downpayment ${applicationMoney(item.financial?.downpayment_amount)}</div>${item.review_notes ? `<div class="mt-2"><strong>Review notes:</strong> ${applicationEscape(item.review_notes)}</div>` : ''}</div></div></div>
@@ -362,6 +373,13 @@ export async function viewNewStudentApplication(applicationId) {
                 popup.querySelector('#rejectApplication')?.addEventListener('click', () => reviewNewStudentApplication(applicationId, 'reject'));
                 popup.querySelector('#receiveApplicationPayment')?.addEventListener('click', () => receiveApplicationDownpayment(item));
                 popup.querySelector('#scheduleApplication')?.addEventListener('click', () => scheduleNewStudentApplication(item));
+                popup.querySelector('#placePrePlayApplication')?.addEventListener('click', () => {
+                    if (typeof window.openPrePlayApplicationPlacement !== 'function') {
+                        Swal.fire('Placement Unavailable', 'The Pre and Play School class placement form is not available on this page.', 'error');
+                        return;
+                    }
+                    window.openPrePlayApplicationPlacement(item.application_id, item.enrollment_details_id);
+                });
                 popup.querySelector('#showApplicationBilling')?.addEventListener('click', () => openApplicationBilling(item));
             }
         });
@@ -399,45 +417,16 @@ async function reviewNewStudentApplication(applicationId, decision) {
 }
 
 async function receiveApplicationDownpayment(item) {
-    ensureEnrollmentApplicationStyles();
     try {
-        const methodsResult = await applicationApi('getPaymentMethods');
-        if (methodsResult.status !== 'success') throw new Error(methodsResult.message);
-        const methods = methodsResult.data || [];
-        const answer = await Swal.fire({
-            title: applicationModalTitle('bi-cash-coin', 'Receive Center Downpayment'),
-            width: 'min(700px, 96vw)',
-            html: `<div class="text-start"><div class="application-flow-callout mb-4"><i class="bi bi-wallet2"></i><div><span class="application-meta-label">Student</span><strong>${applicationEscape(item.first_name)} ${applicationEscape(item.last_name)}</strong><div class="mt-2">Required payment: <strong>${applicationMoney(item.financial.initial_payment)}</strong></div></div></div><div class="application-flow-field"><label for="applicationPaymentMethod">Payment method</label><select id="applicationPaymentMethod" class="form-select"><option value="">Select method</option>${methods.map(method => `<option value="${method.payment_method_id}" data-name="${applicationEscape(method.payment_method)}">${applicationEscape(method.payment_method)}</option>`).join('')}</select></div><div id="applicationReferenceWrap" class="application-flow-field mt-3 d-none"><label for="applicationPaymentReference">GCash reference number</label><input id="applicationPaymentReference" class="form-control" placeholder="Enter reference number"></div><div class="application-flow-field mt-3"><label for="applicationPaymentAmount">Amount received</label><input id="applicationPaymentAmount" class="form-control" type="number" step="0.01" value="${Number(item.financial.initial_payment).toFixed(2)}" readonly></div></div>`,
-            showCancelButton: true, showCloseButton: true, reverseButtons: true,
-            confirmButtonText: '<i class="bi bi-receipt me-2"></i>Record Payment & Issue Receipt',
-            customClass: applicationModalClasses(), buttonsStyling: false,
-            didOpen: popup => popup.querySelector('#applicationPaymentMethod').addEventListener('change', event => popup.querySelector('#applicationReferenceWrap').classList.toggle('d-none', !event.target.options[event.target.selectedIndex]?.dataset.name?.toLowerCase().includes('gcash'))),
-            preConfirm: () => {
-                const select = document.getElementById('applicationPaymentMethod');
-                const methodId = select.value;
-                const methodName = select.options[select.selectedIndex]?.dataset.name || '';
-                const reference = document.getElementById('applicationPaymentReference').value.trim();
-                if (!methodId) { Swal.showValidationMessage('Select a payment method.'); return false; }
-                if (methodName.toLowerCase().includes('gcash') && !reference) { Swal.showValidationMessage('Enter the GCash reference number.'); return false; }
-                return { payment_method_id: methodId, payment_method: methodName, reference_no: reference || null, amount: Number(item.financial.initial_payment) };
+        if (typeof window.openApplicationDownpaymentModal !== 'function') {
+            throw new Error('The shared downpayment modal is not available on this page.');
+        }
+        await window.openApplicationDownpaymentModal(item, {
+            onSuccess: async () => {
+                window.loadEnrollments?.();
+                await viewNewStudentApplication(item.application_id);
             }
         });
-        if (!answer.isConfirmed) return;
-        Swal.fire({ title: 'Recording payment…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-        const result = await applicationApi('collectDownpayment', { application_id: item.application_id, ...answer.value });
-        if (result.status !== 'success') throw new Error(result.message);
-        await Swal.fire('Payment Recorded', result.message, 'success');
-        if (typeof window.showPaymentReceipt === 'function' && result.receipt_id) {
-            await window.showPaymentReceipt({
-                enrollmentId: result.enrollment_details_id, studentName: result.student_name, programName: result.program_name,
-                service: 'Initial Enrollment Payment', paymentType: 'Downpayment', paymentFor: 'Registration Fee and Downpayment',
-                paymentMethod: result.payment_method, referenceNo: result.reference_no, receiptNo: result.receipt_id,
-                amountPaid: result.amount_paid, balance: result.balance, totalAmount: result.amount_paid,
-                lineItems: result.line_items || [], paymentDate: new Date()
-            });
-        }
-        window.loadEnrollments?.();
-        viewNewStudentApplication(item.application_id);
     } catch (error) {
         Swal.fire('Payment Failed', error.response?.data?.message || error.message, 'error');
     }

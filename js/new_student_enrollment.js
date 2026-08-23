@@ -139,56 +139,6 @@
         return digits ? `+63${digits}` : '';
     }
 
-    function passwordRuleResults(password) {
-        return {
-            length: password.length >= 8,
-            uppercase: /[A-Z]/.test(password),
-            lowercase: /[a-z]/.test(password),
-            number: /\d/.test(password),
-            special: /[^A-Za-z0-9\s]/.test(password)
-        };
-    }
-
-    function updatePasswordFeedback() {
-        const password = $('password').value;
-        const results = passwordRuleResults(password);
-        const score = Object.values(results).filter(Boolean).length;
-        const strong = score === 5;
-        const strengthBar = $('passwordStrengthBar');
-        const strengthContainer = strengthBar.parentElement;
-        const strengthLabel = $('passwordStrengthLabel');
-        const strengthLevel = !password ? '' : score <= 2 ? 'weak' : score === 3 ? 'fair' : score === 4 ? 'good' : 'strong';
-        const strengthText = !password ? 'Enter a password' : score <= 2 ? 'Weak password' : score === 3 ? 'Fair password' : score === 4 ? 'Almost strong' : 'Strong password';
-
-        strengthBar.style.width = `${score * 20}%`;
-        strengthBar.className = strengthLevel;
-        strengthLabel.className = `password-strength-label${strengthLevel ? ` ${strengthLevel}` : ''}`;
-        strengthLabel.textContent = strengthText;
-        strengthContainer.setAttribute('aria-valuenow', String(score));
-        $('passwordRequirements').classList.toggle('d-none', !password || strong);
-
-        document.querySelectorAll('[data-password-rule]').forEach(item => {
-            const passed = results[item.dataset.passwordRule];
-            item.classList.toggle('passed', passed);
-            item.classList.toggle('failed', password.length > 0 && !passed);
-            const icon = item.querySelector('i');
-            icon.className = `bi ${passed ? 'bi-check-circle-fill' : 'bi-circle'}`;
-        });
-
-        const confirm = $('confirmPassword').value;
-        const hint = $('passwordMatchHint');
-        hint.className = 'password-match-hint';
-        if (!confirm) {
-            hint.textContent = '';
-        } else if (confirm === password) {
-            hint.classList.add('matched');
-            hint.innerHTML = '<i class="bi bi-check-circle-fill"></i> Passwords match';
-        } else {
-            hint.classList.add('unmatched');
-            hint.innerHTML = '<i class="bi bi-x-circle-fill"></i> Passwords do not match';
-        }
-    }
-
     function clearFieldError(element) {
         if (!element) return;
         element.classList.remove('enrollment-field-error');
@@ -221,10 +171,7 @@
     function showServerFieldError(title, message) {
         const normalized = String(message || '').toLowerCase();
         const fieldRules = [
-            [['username'], 'username'],
             [['contact number', 'guardian contact'], 'guardianContact'],
-            [['passwords do not match'], 'confirmPassword'],
-            [['password'], 'password'],
             [['email'], 'email'],
             [['birthdate', 'birthday'], 'birthday'],
             [['gender'], 'gender'],
@@ -298,10 +245,7 @@
             adr_barangay: $('barangay').value.trim(),
             adr_city: $('city').value.trim(),
             adr_province: $('province').value.trim(),
-            adr_note: $('addressNote').value.trim(),
-            username: $('username').value.trim(),
-            password: $('password').value,
-            confirm_password: $('confirmPassword').value
+            adr_note: $('addressNote').value.trim()
         };
     }
 
@@ -319,10 +263,7 @@
             province: 'Province is required.',
             city: 'City/municipality is required.',
             barangay: 'Barangay is required.',
-            street: 'House/street is required.',
-            username: 'Username is required.',
-            password: 'Password is required.',
-            confirmPassword: 'Please confirm the password.'
+            street: 'House/street is required.'
         };
 
         Object.entries(required).forEach(([id, message]) => {
@@ -344,17 +285,6 @@
         if ($('guardianContact').value && !/^\+639\d{9}$/.test(formatPhilippineMobile($('guardianContact').value))) {
             addOnce($('guardianContact'), 'Contact number must contain 10 digits beginning with 9.');
         }
-        if ($('username').value && !/^[A-Za-z0-9._-]{4,50}$/.test($('username').value.trim())) {
-            addOnce($('username'), 'Username must be 4–50 characters using only letters, numbers, periods, underscores, or hyphens.');
-        }
-        const passwordResults = passwordRuleResults($('password').value);
-        if ($('password').value && !Object.values(passwordResults).every(Boolean)) {
-            addOnce($('password'), 'Password must meet all five strength requirements.');
-        }
-        if ($('confirmPassword').value && $('password').value !== $('confirmPassword').value) {
-            addOnce($('confirmPassword'), 'Passwords do not match.');
-        }
-
         if (errors.length) {
             if (state.step !== 1) showStep(1);
             showValidationErrors(errors, 'Student Information Needs Attention');
@@ -370,6 +300,15 @@
     function isTutorialProgram(program = selectedProgram()) {
         if (!program) return false;
         return `${program.name || ''} ${program.program_type || ''}`.toLowerCase().includes('tutorial');
+    }
+
+    function isPreschoolProgram(program) {
+        const descriptor = typeof program === 'string'
+            ? program
+            : `${program?.name || ''} ${program?.program_type || ''}`;
+        const normalized = descriptor.toLowerCase();
+        return ['preschool', 'playschool', 'pre-school', 'play-school', 'pre school', 'play school']
+            .some(keyword => normalized.includes(keyword));
     }
 
     function closeSubjectDropdown() {
@@ -435,8 +374,8 @@
                 await Swal.fire({
                     icon: 'info',
                     title: 'Existing Student Found',
-                    html: `This student already has an account${result.student_id_number ? ` (${escapeHtml(result.student_id_number)})` : ''}. Please use the existing student login or contact the center.`,
-                    confirmButtonText: 'Go to Login',
+                    html: `This student already has a record or application${result.student_id_number ? ` (${escapeHtml(result.student_id_number)})` : ''}. Track the existing application, use Student Login if already enrolled, or contact the center.`,
+                    confirmButtonText: 'Student Login',
                     showCancelButton: true
                 }).then(answer => { if (answer.isConfirmed) window.location.href = 'login.html'; });
                 return;
@@ -566,28 +505,63 @@
         return true;
     }
 
-    function renderFinancialPreview(financial) {
+    function renderFinancialPreview(financial, billing = null, application = null) {
         if (!financial) return '<div class="alert alert-info">Billing details are not available yet.</div>';
         const grandTotal = Number(financial.grand_total || 0);
         const initialPayment = Math.min(grandTotal, Number(financial.initial_payment || 0));
         const registrationFee = Math.min(grandTotal, Number(financial.registration_fee || 0));
         const downpayment = Math.max(0, initialPayment - registrationFee);
-        const remainingBalance = Math.max(0, grandTotal - initialPayment);
+        const fullTuitionFee = Math.max(0, Number(
+            financial.tuition_only_subtotal
+            ?? financial.program?.tuition
+            ?? financial.tuition_subtotal
+            ?? 0
+        ));
         const student = personalPayload();
-        const studentName = [student.first_name, student.middle_name, student.last_name, student.ext].filter(Boolean).join(' ') || 'New Student';
+        const trackedStudentName = [application?.first_name, application?.middle_name, application?.last_name, application?.ext].filter(Boolean).join(' ');
+        const studentName = billing?.student_name || trackedStudentName || [student.first_name, student.middle_name, student.last_name, student.ext].filter(Boolean).join(' ') || 'New Student';
         const programName = financial.program?.name || selectedProgram()?.name || 'Selected program';
+        const preschool = isPreschoolProgram(financial.program || programName);
+        const billingSchedule = Array.isArray(billing?.schedule) ? billing.schedule : [];
+        const findBill = label => billingSchedule.find(item => String(item.billing_type || '').trim().toLowerCase() === label.toLowerCase());
+        const paymentRow = (label, due, amount) => {
+            const bill = findBill(label);
+            const paid = Number(bill?.paid_amount || 0);
+            const balance = bill ? Number(bill.balance || 0) : amount;
+            const status = String(bill?.status || (balance <= 0 ? 'paid' : 'unpaid')).toLowerCase();
+            return `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(bill?.due_date || due)}</td><td>${money(amount)}</td><td>${money(paid)}</td><td>${money(balance)}</td><td><span class="billing-status billing-status--${escapeHtml(status)}">${escapeHtml(status)}</span></td></tr>`;
+        };
+
+        if (preschool) {
+            const configuredMonthlyFee = Number(financial.program?.tuition || 0);
+            const months = Math.max(1, Number(financial.program?.total_units || 1));
+            const monthlyFee = configuredMonthlyFee || Math.max(0, Number(financial.tuition_subtotal || 0) / months);
+            const centerPaymentTotal = registrationFee + downpayment;
+            const rows = [
+                ...(registrationFee > 0 ? [paymentRow('Registration Fee', 'After approval', registrationFee)] : []),
+                ...(downpayment > 0 ? [paymentRow('Downpayment', 'After approval', downpayment)] : []),
+                `<tr><td>Monthly Fee <small class="text-muted">(1-month estimate)</small></td><td>After enrollment</td><td>${money(monthlyFee)}</td><td>&mdash;</td><td>&mdash;</td><td><span class="billing-status text-muted">estimate</span></td></tr>`
+            ];
+            return `<section class="billing-statement">
+                <header><div><small>BILLING STATEMENT</small><h3>${escapeHtml(studentName)}</h3></div><div class="billing-program"><small>Program</small><strong>${escapeHtml(programName)}</strong></div></header>
+                <div class="table-responsive"><table class="table billing-table"><thead><tr><th>Payment</th><th>Due date</th><th>Amount</th><th>Paid</th><th>Balance</th><th>Status</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
+                <div class="billing-totals"><span>Center payment total <strong>${money(centerPaymentTotal)}</strong></span></div>
+            </section><div class="billing-view-notice"><i class="bi bi-building" aria-hidden="true"></i><span>Pay the registration fee and downpayment at the selected center after the application is approved. The monthly fee shown is a one-month estimate and is not included in the center payment total.</span></div>`;
+        }
+
+        const centerPaymentTotal = registrationFee + downpayment;
         const rows = [
             ...(registrationFee > 0 ? [{ label: 'Registration Fee', due: 'After approval', amount: registrationFee }] : []),
             ...(downpayment > 0 ? [{ label: 'Downpayment', due: 'After approval', amount: downpayment }] : []),
-            ...(remainingBalance > 0 ? [{ label: 'Remaining Program Balance', due: 'To be scheduled', amount: remainingBalance }] : [])
+            ...(fullTuitionFee > 0 ? [{ label: 'Remaining Program Balance', due: 'To be scheduled', amount: fullTuitionFee }] : [])
         ];
         return `<section class="billing-statement">
             <header><div><small>BILLING STATEMENT</small><h3>${escapeHtml(studentName)}</h3></div><div class="billing-program"><small>Program</small><strong>${escapeHtml(programName)}</strong></div></header>
             <div class="table-responsive"><table class="table billing-table"><thead><tr><th>Payment</th><th>Due date</th><th>Amount</th><th>Paid</th><th>Balance</th><th>Status</th></tr></thead><tbody>
                 ${rows.map(item => `<tr><td>${escapeHtml(item.label)}</td><td>${escapeHtml(item.due)}</td><td>${money(item.amount)}</td><td>${money(0)}</td><td>${money(item.amount)}</td><td><span class="billing-status billing-status--unpaid">unpaid</span></td></tr>`).join('')}
             </tbody></table></div>
-            <div class="billing-totals"><span>Total paid <strong>${money(0)}</strong></span><span>Outstanding <strong>${money(grandTotal)}</strong></span></div>
-        </section><div class="billing-view-notice"><i class="bi bi-eye" aria-hidden="true"></i><span>This billing statement is view-only. Payment is collected by the selected center after it reviews the application.</span></div>`;
+            <div class="billing-totals"><span>Center payment total <strong>${money(centerPaymentTotal)}</strong></span></div>
+        </section><div class="billing-view-notice"><i class="bi bi-building" aria-hidden="true"></i><span>Pay the registration fee and downpayment at the selected center after the application is approved. The remaining program balance shows the full tuition fee before any downpayment deduction and will be scheduled after enrollment.</span></div>`;
     }
 
     function configureBillingActions(trackedApplication = false) {
@@ -599,9 +573,13 @@
 
     function renderApplicationBilling(item, trackedApplication = false) {
         state.currentApplication = item || null;
-        $('applicationBillingPanel').innerHTML = item?.billing?.schedule?.length
+        const financial = item?.financial || item;
+        const preschool = isPreschoolProgram(financial?.program || item?.program_name || '');
+        $('applicationBillingPanel').innerHTML = preschool
+            ? renderFinancialPreview(financial, item?.billing, item)
+            : item?.billing?.schedule?.length
             ? `${renderBilling(item.billing)}<div class="billing-view-notice"><i class="bi bi-eye" aria-hidden="true"></i><span>This billing statement is view-only on the application tracker.</span></div>`
-            : renderFinancialPreview(item?.financial || item);
+            : renderFinancialPreview(financial, null, item);
         configureBillingActions(trackedApplication);
     }
 
@@ -652,12 +630,16 @@
         }
     }
 
-    function statusPresentation(status) {
+    function statusPresentation(status, item = null) {
+        const preschool = isPreschoolProgram(item?.program_name || '');
+        if (status === 'ready_for_scheduling' && preschool) {
+            return ['Ready for Class & Section', 'bi-diagram-3', 'Your payment was received and a receipt was issued.', 'The center will assign the student to an available class and section.'];
+        }
         return ({
             pending_review: ['Pending', 'bi-hourglass-split', 'Complete your enrollment at your selected center.', 'Please visit the center so it can review the application and collect the required registration fee and downpayment.'],
             approved_for_payment: ['Approved for Payment', 'bi-building-check', 'Your application is ready for center payment.', 'To complete enrollment, please pay the required registration fee and downpayment at the selected center.'],
             ready_for_scheduling: ['Ready for Scheduling', 'bi-calendar2-check', 'Your payment was received and a receipt was issued.', 'The center will match the preferred availability with a qualified teacher and plot the actual sessions.'],
-            enrolled: ['Enrolled', 'bi-check2-circle', 'Enrollment is complete.', 'Use the student username and password created in this application to access the student portal.'],
+            enrolled: ['Enrolled', 'bi-check2-circle', 'Enrollment is complete.', 'The system created the student portal account. Check the verified parent or guardian email for the username and temporary password, or contact the center if the message was not received.'],
             rejected: ['Application Not Approved', 'bi-x-circle', 'The center could not approve this application.', 'Review the administrator’s notes below or contact the selected center.'],
             cancelled: ['Cancelled', 'bi-slash-circle', 'This application was cancelled.', 'Contact the center if you would like to submit another application.']
         })[status] || ['Application Updated', 'bi-info-circle', 'Your application has been updated.', 'Contact the center if you need assistance.'];
@@ -679,7 +661,7 @@
             state.applicationSubmitted = true;
             state.availableSteps = preserveFormSteps ? new Set([1, 2, 3, 4, 5]) : new Set([4, 5]);
             renderApplicationBilling(item, true);
-            const [label, icon, summary, next] = statusPresentation(item.status);
+            const [label, icon, summary, next] = statusPresentation(item.status, item);
             $('applicationStatusPanel').innerHTML = `<div class="status-hero"><div class="status-icon"><i class="bi ${icon}"></i></div><span class="application-eyebrow">APPLICATION ${escapeHtml(item.application_number)}</span><h2>${escapeHtml(summary)}</h2><span class="status-badge ${item.status}"><i class="bi ${icon}"></i>${escapeHtml(label.toUpperCase())}</span><div class="status-details"><div class="status-detail"><small>Student</small><strong>${escapeHtml([item.first_name, item.middle_name, item.last_name, item.ext].filter(Boolean).join(' '))}</strong></div><div class="status-detail"><small>Student ID</small><strong>${escapeHtml(item.student_id_number)}</strong></div><div class="status-detail"><small>Program</small><strong>${escapeHtml(item.program_name)}</strong></div><div class="status-detail"><small>Center</small><strong>${escapeHtml(item.branch_name)}</strong></div></div><div class="next-step-card"><strong><i class="bi bi-arrow-right-circle me-2"></i>Next step</strong><p class="mb-0 mt-2">${escapeHtml(next)}</p>${item.review_notes ? `<p class="mb-0 mt-2"><strong>Center notes:</strong> ${escapeHtml(item.review_notes)}</p>` : ''}</div><div class="d-flex justify-content-center gap-2 mt-4"><button type="button" class="btn btn-outline-secondary" id="refreshApplicationStatus"><i class="bi bi-arrow-clockwise me-2"></i>Refresh Status</button>${item.status === 'enrolled' ? '<a class="btn btn-primary" href="login.html">Student Login</a>' : ''}<button type="button" class="btn btn-light" id="startAnotherApplication">Apply for Another Child</button></div></div>`;
             unlockAndShowStep(5);
             $('refreshApplicationStatus').onclick = () => showApplicationStatus(tracking, preserveFormSteps);
@@ -769,8 +751,6 @@
             event.target.value = localMobileDigits(event.target.value);
             clearFieldError(event.target);
         });
-        $('password').addEventListener('input', updatePasswordFeedback);
-        $('confirmPassword').addEventListener('input', updatePasswordFeedback);
         $('subjectDropdownToggle').addEventListener('click', () => {
             const opening = $('subjectPicker').classList.contains('d-none');
             $('subjectPicker').classList.toggle('d-none', !opening);
@@ -787,17 +767,6 @@
         document.addEventListener('keydown', event => {
             if (event.key === 'Escape') closeSubjectDropdown();
         });
-        document.querySelectorAll('[data-password-toggle]').forEach(button => {
-            button.addEventListener('click', () => {
-                const input = $(button.dataset.passwordToggle);
-                const showPassword = input.type === 'password';
-                input.type = showPassword ? 'text' : 'password';
-                button.setAttribute('aria-pressed', String(showPassword));
-                button.setAttribute('aria-label', showPassword ? 'Hide password' : 'Show password');
-                button.querySelector('i').className = `bi ${showPassword ? 'bi-eye-slash' : 'bi-eye'}`;
-                input.focus();
-            });
-        });
         document.querySelectorAll('#newStudentApplicationForm input, #newStudentApplicationForm select, #newStudentApplicationForm textarea').forEach(element => {
             const eventName = element.type === 'checkbox' || element.tagName === 'SELECT' ? 'change' : 'input';
             element.addEventListener(eventName, () => clearFieldError(element));
@@ -808,7 +777,6 @@
         bindEvents();
         showStep(1);
         renderAvailability();
-        updatePasswordFeedback();
         const today = new Date();
         $('birthday').max = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
         try {
