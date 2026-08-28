@@ -11,6 +11,7 @@ header("Access-Control-Allow-Headers: Content-Type");
 
 require_once __DIR__ . '/../notification_helper.php';
 require_once __DIR__ . '/../grade_level_helper.php';
+require_once __DIR__ . '/../billing_assessment_helper.php';
 
 class EnrollmentAPI {
 
@@ -21,6 +22,7 @@ class EnrollmentAPI {
         include "connection-pdo.php"; 
         $this->conn = $conn;
         ensureGradeLevelSchema($this->conn);
+        ensureBillingAssessmentSchema($this->conn);
         $this->notifications = new NotificationService($this->conn);
     }
 
@@ -113,7 +115,7 @@ class EnrollmentAPI {
     }
 
     private function getProgramTypeCondition($type, $alias = 'p') {
-        $name = "LOWER(COALESCE($alias.name, ''))";
+        $name = "LOWER(CONCAT_WS(' ', COALESCE($alias.name, ''), COALESCE((SELECT pt_filter.type FROM program_type pt_filter WHERE pt_filter.program_type_id = $alias.program_type LIMIT 1), '')))";
         if ($type === 'tutorial') {
             return "$name NOT LIKE '%preschool%' AND $name NOT LIKE '%playschool%' AND $name NOT LIKE '%pre-school%' AND $name NOT LIKE '%play-school%' AND $name NOT LIKE '%pre school%' AND $name NOT LIKE '%play school%'";
         }
@@ -903,6 +905,7 @@ class EnrollmentAPI {
             $stmt = $this->conn->prepare("INSERT INTO enrollment_details (" . implode(", ", $detailColumns) . ") VALUES (" . implode(", ", $detailPlaceholders) . ")");
             $stmt->execute($detailValues);
             $detailsId = $this->conn->lastInsertId();
+            ensureEnrollmentBundleOrdersForProgram($this->conn, (int)$detailsId, $programId, null, (int)$employeeId);
 
             $paymentMethodName = $this->getPaymentMethodName($methodId);
             $paymentStatus = (strtolower($paymentMethodName) === 'cash') ? 'Received' : 'Pending';
@@ -1134,6 +1137,7 @@ class EnrollmentAPI {
             $stmtUpdateDetails = $this->conn->prepare("UPDATE enrollment_details SET " . implode(", ", $updateFields) . " WHERE enrollment_details_id = ?");
             $stmtUpdateDetails->execute($updateValues);
             $this->saveEnrollmentSubjects($detailsId, $subjectIds);
+            ensureEnrollmentBundleOrdersForProgram($this->conn, $detailsId, $programId, null, (int)($_SESSION['employee_id'] ?? 0) ?: null);
 
             if ($this->columnExists('student', 'health_note') && isset($data['health_note']) && trim((string)$data['health_note']) !== "") {
                 $stmtHealth = $this->conn->prepare("UPDATE student SET health_note = ? WHERE student_id = ?");
@@ -1329,6 +1333,7 @@ class EnrollmentAPI {
             $stmt->execute($detailValues);
             $details_id = $this->conn->lastInsertId();
             $this->saveEnrollmentSubjects($details_id, $subjectIds);
+            ensureEnrollmentBundleOrdersForProgram($this->conn, (int)$details_id, (int)$data['program_id'], null, (int)$employee_id);
 
             if ($hasStudentHealthNote && isset($data['health_note']) && trim((string)$data['health_note']) !== "") {
                 $healthNote = trim((string)$data['health_note']);
@@ -1675,6 +1680,15 @@ class EnrollmentAPI {
             $summaryFilter = isset($_GET['summary_filter']) ? strtolower(trim($_GET['summary_filter'])) : 'total';
             $search = isset($_GET['search']) ? trim($_GET['search']) : '';
             $status = isset($_GET['status']) ? trim($_GET['status']) : '';
+            $applicationStatusMap = [
+                'application_pending_review' => 'pending_review',
+                'application_approved_for_payment' => 'approved_for_payment',
+                'application_ready_for_scheduling' => 'ready_for_scheduling',
+                'application_enrolled' => 'enrolled',
+                'application_rejected' => 'rejected',
+                'application_cancelled' => 'cancelled'
+            ];
+            $applicationStatus = $applicationStatusMap[strtolower($status)] ?? null;
             if ($status === 'pending_application') {
                 $status = 'pending';
             }
@@ -1701,7 +1715,11 @@ class EnrollmentAPI {
                     : " AND $statusExpression = 'incomplete'";
             }
 
-            if (strtolower($status) === 'pending') {
+            if ($applicationStatus !== null) {
+                $whereClause .= $includeApplications
+                    ? ' AND ea.status = :application_status'
+                    : ' AND 1=0';
+            } elseif (strtolower($status) === 'pending') {
                 $whereClause .= $includeApplications
                     ? " AND ($statusExpression = 'pending' OR ea.status IN ('pending_review', 'approved_for_payment', 'ready_for_scheduling'))"
                     : " AND LOWER($statusExpression) = 'pending'";
@@ -1733,7 +1751,11 @@ class EnrollmentAPI {
                 "JOIN program p ON ed.program_id = p.program_id " .
                 "WHERE 1=1" . $whereClause;
             $countStmt = $this->conn->prepare($countSql);
-            if ($status !== '' && strtolower($status) !== 'pending') {
+            if ($applicationStatus !== null) {
+                if ($includeApplications) {
+                    $countStmt->bindValue(':application_status', $applicationStatus, PDO::PARAM_STR);
+                }
+            } elseif ($status !== '' && strtolower($status) !== 'pending') {
                 $countStmt->bindValue(':status', $status, PDO::PARAM_STR);
             }
             if ($search !== '') {
@@ -1772,7 +1794,11 @@ class EnrollmentAPI {
                 "LEFT JOIN (SELECT bs.enrollment_details_id, SUM(CASE WHEN pay.payment_status = 'Received' THEN pay.amount_paid ELSE 0 END) AS total_paid, SUM(CASE WHEN pay.payment_status = 'Pending' THEN 1 ELSE 0 END) AS pending_payment_count FROM billing_schedule bs LEFT JOIN payment pay ON bs.billing_schedule_id = pay.billing_schedule_id GROUP BY bs.enrollment_details_id) pt ON ed.enrollment_details_id = pt.enrollment_details_id " .
                 "WHERE 1=1" . $whereClause . " ORDER BY eh.date_created DESC" . ($includeApplications ? '' : " LIMIT :limit OFFSET :offset");
             $stmt = $this->conn->prepare($sql);
-            if ($status !== '' && strtolower($status) !== 'pending') {
+            if ($applicationStatus !== null) {
+                if ($includeApplications) {
+                    $stmt->bindValue(':application_status', $applicationStatus, PDO::PARAM_STR);
+                }
+            } elseif ($status !== '' && strtolower($status) !== 'pending') {
                 $stmt->bindValue(':status', $status, PDO::PARAM_STR);
             }
             if ($search !== '') {
@@ -1797,16 +1823,25 @@ class EnrollmentAPI {
             if ($includeApplications) {
                 $applicationWhere = [
                     "ea.enrollment_details_id IS NULL",
-                    "ea.status IN ('pending_review', 'approved_for_payment')",
                     $this->getProgramTypeCondition($type)
                 ];
                 $applicationParams = [];
+                if ($applicationStatus !== null) {
+                    $applicationWhere[] = 'ea.status = :application_filter_status';
+                    $applicationParams[':application_filter_status'] = $applicationStatus;
+                } else {
+                    $applicationWhere[] = "ea.status IN ('pending_review', 'approved_for_payment')";
+                }
                 if ($summaryFilter === 'new') {
                     $applicationWhere[] = 'ea.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)';
+                } elseif ($summaryFilter === 'pending'
+                    && $applicationStatus !== null
+                    && !in_array($applicationStatus, ['pending_review', 'approved_for_payment', 'ready_for_scheduling'], true)) {
+                    $applicationWhere[] = '1=0';
                 } elseif ($summaryFilter === 'incomplete') {
                     $applicationWhere[] = '1=0';
                 }
-                if ($status !== '' && strtolower($status) !== 'pending') {
+                if ($applicationStatus === null && $status !== '' && strtolower($status) !== 'pending') {
                     $applicationWhere[] = '1=0';
                 }
                 if ($search !== '') {
@@ -1832,11 +1867,16 @@ class EnrollmentAPI {
                         NULL AS teacher_name, b.branch_id, b.branch_name,
                         DATE_FORMAT(ea.created_at, '%M %d, %Y') AS enrollment_date,
                         ea.created_at AS sort_date, ea.status, ea.application_id,
-                        ea.status AS application_status, 'Unpaid' AS payment_status
+                        ea.status AS application_status, 'Unpaid' AS payment_status,
+                        pm.payment_method AS application_payment_method,
+                        eap.amount AS application_payment_amount,
+                        eap.payment_status AS application_payment_review_status
                     FROM enrollment_applications ea
                     JOIN student st ON ea.student_id = st.student_id
                     JOIN program p ON ea.program_id = p.program_id
                     LEFT JOIN branch b ON ea.branch_id = b.branch_id
+                    LEFT JOIN enrollment_application_payments eap ON eap.application_id = ea.application_id
+                    LEFT JOIN payment_method pm ON pm.payment_method_id = eap.payment_method_id
                     LEFT JOIN (
                         SELECT eas.application_id, GROUP_CONCAT(s.subject_name ORDER BY s.subject_name SEPARATOR ', ') AS subject_names
                         FROM enrollment_application_subjects eas
@@ -2455,36 +2495,6 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
         }
     }
 
-    // --- RELEASE PRODUCTS ---
-    public function releaseProducts($json) {
-        $data = json_decode($json, true);
-        try {
-            $this->conn->beginTransaction();
-            
-            $enrollment_id = $data['enrollment_id'] ?? null;
-            $product_ids = $data['product_ids'] ?? [];
-
-            if (!$enrollment_id || empty($product_ids)) {
-                echo json_encode(["status" => "error", "message" => "Invalid enrollment or product IDs"]);
-                return;
-            }
-            $this->assertEnrollmentAccessibleToCurrentUser($enrollment_id);
-
-            // Decrement quantity for each product
-            $stmt = $this->conn->prepare("UPDATE product SET quantity = quantity - 1 WHERE product_id = ? AND quantity > 0");
-            
-            foreach ($product_ids as $product_id) {
-                $stmt->execute([$product_id]);
-            }
-
-            $this->conn->commit();
-            echo json_encode(["status" => "success", "message" => "Products released and stock updated successfully"]);
-        } catch (Exception $e) {
-            $this->conn->rollBack();
-            echo json_encode(["status" => "error", "message" => $e->getMessage()]);
-        }
-    }
-
     // --- CHECK TEACHER AVAILABILITY FOR RESCHEDULE ---
     public function checkTeacherAvailability() {
         $teacher_id = $_GET['teacher_id'] ?? null;
@@ -2677,7 +2687,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET') {
         case "getReleaseStudents": $api->getReleaseStudents(); break;
         case "getEnrollmentDetails": $api->getEnrollmentDetails(); break;
         case "updateEnrollment": $api->updateEnrollment($json); break;
-        case "releaseProducts": $api->releaseProducts($json); break;
         case "deleteEnrollment": $api->deleteEnrollment($json); break;
         case "checkTeacherAvailability": $api->checkTeacherAvailability(); break;
         case "updateEnrollmentStatus": $api->updateEnrollmentStatus($json); break;

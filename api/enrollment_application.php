@@ -6,6 +6,7 @@ require_once __DIR__ . '/PHPMailer/src/Exception.php';
 require_once __DIR__ . '/PHPMailer/src/PHPMailer.php';
 require_once __DIR__ . '/PHPMailer/src/SMTP.php';
 require_once __DIR__ . '/grade_level_helper.php';
+require_once __DIR__ . '/billing_assessment_helper.php';
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -30,6 +31,74 @@ class EnrollmentApplicationAPI
         include __DIR__ . '/admin/connection-pdo.php';
         $this->conn = $conn;
         ensureGradeLevelSchema($this->conn);
+        $this->ensureApplicationPaymentSchema();
+        ensureBillingAssessmentSchema($this->conn);
+    }
+
+    private function ensureApplicationPaymentSchema(): void
+    {
+        if (!$this->columnExists('enrollment_applications', 'requested_service_id')) {
+            $this->conn->exec('ALTER TABLE enrollment_applications ADD COLUMN requested_service_id INT(11) DEFAULT NULL AFTER grade_level_id');
+            $this->conn->exec('ALTER TABLE enrollment_applications ADD INDEX idx_enrollment_application_service (requested_service_id)');
+        }
+        $this->conn->exec("CREATE TABLE IF NOT EXISTS enrollment_application_payments (
+            application_payment_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            application_id BIGINT UNSIGNED NOT NULL,
+            payment_method_id INT(11) NOT NULL,
+            amount DECIMAL(10,2) NOT NULL,
+            reference_no VARCHAR(100) DEFAULT NULL,
+            proof_pic VARCHAR(255) DEFAULT NULL,
+            payment_status ENUM('awaiting_cash','pending_review','received','declined') NOT NULL,
+            reviewed_by INT(11) DEFAULT NULL,
+            reviewed_at DATETIME DEFAULT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (application_payment_id),
+            UNIQUE KEY uq_application_payment_application (application_id),
+            KEY idx_application_payment_method (payment_method_id),
+            KEY idx_application_payment_status (payment_status),
+            CONSTRAINT fk_application_payment_application FOREIGN KEY (application_id) REFERENCES enrollment_applications (application_id) ON DELETE CASCADE,
+            CONSTRAINT fk_application_payment_method FOREIGN KEY (payment_method_id) REFERENCES payment_method (payment_method_id),
+            CONSTRAINT fk_application_payment_reviewer FOREIGN KEY (reviewed_by) REFERENCES employee (employee_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    }
+
+    private function columnExists(string $table, string $column): bool
+    {
+        $stmt = $this->conn->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?");
+        $stmt->execute([$table, $column]);
+        return (bool)$stmt->fetchColumn();
+    }
+
+    private function storeApplicationPaymentProof(array $uploadedFile, int $applicationId): string
+    {
+        if (($uploadedFile['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || !is_uploaded_file($uploadedFile['tmp_name'] ?? '')) {
+            throw new InvalidArgumentException('Upload the GCash receipt screenshot before submitting.');
+        }
+        if (($uploadedFile['size'] ?? 0) > 10 * 1024 * 1024) {
+            throw new InvalidArgumentException('The GCash receipt screenshot must not exceed 10MB.');
+        }
+        $mime = (new finfo(FILEINFO_MIME_TYPE))->file($uploadedFile['tmp_name']);
+        $allowed = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp', 'image/bmp' => 'bmp'];
+        if (!isset($allowed[$mime])) {
+            throw new InvalidArgumentException('The GCash receipt must be a JPG, PNG, WEBP, or BMP image.');
+        }
+        $directory = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'payment_screenshots';
+        if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
+            throw new RuntimeException('Unable to create the payment screenshot directory.');
+        }
+        $fileName = 'application_' . $applicationId . '_' . bin2hex(random_bytes(6)) . '.' . $allowed[$mime];
+        if (!move_uploaded_file($uploadedFile['tmp_name'], $directory . DIRECTORY_SEPARATOR . $fileName)) {
+            throw new RuntimeException('Unable to save the GCash receipt screenshot.');
+        }
+        return 'uploads/payment_screenshots/' . $fileName;
+    }
+
+    private function removeStoredPaymentProof(?string $relativePath): void
+    {
+        if (!$relativePath || !str_starts_with($relativePath, 'uploads/payment_screenshots/')) return;
+        $path = dirname(__DIR__) . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
+        if (is_file($path)) @unlink($path);
     }
 
     public function respond(string $status, string $message = '', array $extra = [], int $httpStatus = 200): void
@@ -345,8 +414,12 @@ class EnrollmentApplicationAPI
             $grades = $this->conn->query("SELECT grade_level_id, grade_level FROM grade_level WHERE status = 'active' ORDER BY grade_level_id")->fetchAll(PDO::FETCH_ASSOC);
             $subjects = $this->conn->query("SELECT subject_id, subject_name FROM subject ORDER BY subject_name")->fetchAll(PDO::FETCH_ASSOC);
             $genders = $this->conn->query("SELECT gender_id, gender FROM gender ORDER BY gender_id")->fetchAll(PDO::FETCH_ASSOC);
+            $paymentMethods = $this->conn->query("SELECT payment_method_id, payment_method, account_name, account_number, qr_code
+                FROM payment_method
+                WHERE LOWER(payment_method) IN ('cash', 'gcash')
+                ORDER BY FIELD(LOWER(payment_method), 'cash', 'gcash'), payment_method_id")->fetchAll(PDO::FETCH_ASSOC);
             $this->respond('success', '', [
-                'data' => compact('programs', 'branches', 'grades', 'subjects', 'genders', 'schoolYear')
+                'data' => compact('programs', 'branches', 'grades', 'subjects', 'genders', 'paymentMethods', 'schoolYear')
             ]);
         } catch (Throwable $e) {
             $this->respond('error', $e->getMessage(), [], 500);
@@ -499,6 +572,7 @@ class EnrollmentApplicationAPI
 
     public function submitApplication(array $data): void
     {
+        $storedProofPath = null;
         try {
             $email = $this->normalizeEmail($data['email'] ?? '');
             $verificationId = (int)($data['verification_id'] ?? 0);
@@ -580,6 +654,35 @@ class EnrollmentApplicationAPI
             $availability = $isTutorial ? $this->validateAvailability((array)($data['availability'] ?? [])) : [];
             $goal = $isTutorial ? (trim((string)($data['goal'] ?? '')) ?: null) : null;
             $schoolYear = $this->activeSchoolYear();
+            $requestedServiceId = !empty($data['include_service']) ? (int)($data['service_id'] ?? 0) : null;
+            if (!empty($data['include_service']) && ($requestedServiceId ?? 0) <= 0) {
+                throw new InvalidArgumentException('Select a valid service or choose not to include it.');
+            }
+            $snapshot = $this->financialSnapshot($programId, $requestedServiceId, $branchId);
+            $expectedInitialPayment = round((float)$snapshot['initial_payment'], 2);
+            $paymentMethodId = (int)($data['payment_method_id'] ?? 0);
+            $paymentMethodStmt = $this->conn->prepare('SELECT payment_method FROM payment_method WHERE payment_method_id = ? LIMIT 1');
+            $paymentMethodStmt->execute([$paymentMethodId]);
+            $paymentMethodName = trim((string)$paymentMethodStmt->fetchColumn());
+            $normalizedPaymentMethod = strtolower($paymentMethodName);
+            $isCashPayment = $normalizedPaymentMethod === 'cash';
+            $isGcashPayment = $normalizedPaymentMethod === 'gcash';
+            if (!$isCashPayment && !$isGcashPayment) {
+                throw new InvalidArgumentException('Choose Cash or GCash as the enrollment payment method.');
+            }
+            $paymentAmount = round((float)($data['payment_amount'] ?? $expectedInitialPayment), 2);
+            $paymentReference = trim((string)($data['payment_reference_no'] ?? '')) ?: null;
+            if ($isGcashPayment) {
+                if (abs($paymentAmount - $expectedInitialPayment) > 0.01) {
+                    throw new InvalidArgumentException('The GCash receipt amount must equal the registration fee and downpayment total of PHP ' . number_format($expectedInitialPayment, 2) . '.');
+                }
+                if (!preg_match('/^\d{13}$/', (string)$paymentReference)) {
+                    throw new InvalidArgumentException('The GCash reference number must contain exactly 13 digits.');
+                }
+                if (empty($_FILES['payment_screenshot'])) {
+                    throw new InvalidArgumentException('Upload the GCash receipt screenshot before submitting.');
+                }
+            }
 
             $this->conn->beginTransaction();
 
@@ -614,13 +717,29 @@ class EnrollmentApplicationAPI
             $trackingToken = bin2hex(random_bytes(32));
             $app = $this->conn->prepare("INSERT INTO enrollment_applications
                 (application_number, tracking_token_hash, student_id, program_id, branch_id, school_year_id,
-                 grade_level_id, goal, status, email_verified_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', ?)");
+                 grade_level_id, requested_service_id, goal, status, email_verified_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', ?)");
             $app->execute([
                 $applicationNumber, hash('sha256', $trackingToken), $studentId, $programId, $branchId,
-                (int)$schoolYear['school_year_id'], $gradeId, $goal, $verifiedAt
+                (int)$schoolYear['school_year_id'], $gradeId, $requestedServiceId, $goal, $verifiedAt
             ]);
             $applicationId = (int)$this->conn->lastInsertId();
+            saveApplicationFinancialSnapshot($this->conn, $applicationId, $snapshot);
+
+            if ($isGcashPayment) {
+                $storedProofPath = $this->storeApplicationPaymentProof($_FILES['payment_screenshot'], $applicationId);
+            }
+            $applicationPayment = $this->conn->prepare("INSERT INTO enrollment_application_payments
+                (application_id, payment_method_id, amount, reference_no, proof_pic, payment_status)
+                VALUES (?, ?, ?, ?, ?, ?)");
+            $applicationPayment->execute([
+                $applicationId,
+                $paymentMethodId,
+                $expectedInitialPayment,
+                $isGcashPayment ? $paymentReference : null,
+                $storedProofPath,
+                $isGcashPayment ? 'pending_review' : 'awaiting_cash'
+            ]);
 
             if ($subjectIds) {
                 $subjectInsert = $this->conn->prepare('INSERT INTO enrollment_application_subjects (application_id, subject_id) VALUES (?, ?)');
@@ -644,7 +763,9 @@ class EnrollmentApplicationAPI
                 'greeting' => 'Hello ' . trim((string)$data['first_name']) . ',',
                 'messages' => [
                     'Your new-student online application has been submitted successfully and is now waiting for the center’s review.',
-                    'After the application is accepted, please visit your selected center to pay the required downpayment and continue the enrollment process.'
+                    $isGcashPayment
+                        ? 'Your GCash receipt was recorded with the application. Once the center approves it, teacher or class assignment can begin.'
+                        : 'Please visit your selected center after approval to pay the registration fee and downpayment in cash.'
                 ],
                 'notice' => 'Current status: Pending',
                 'featured_label' => 'Private tracking token',
@@ -654,27 +775,39 @@ class EnrollmentApplicationAPI
                     'Student ID' => $studentNumber,
                     'Program' => $program['name'],
                     'Center' => $branch['branch_name'],
+                    'Payment method' => $paymentMethodName,
+                    'Monthly service' => $snapshot['service_name'] ?: 'Not included',
+                    'Initial payment' => 'PHP ' . number_format($expectedInitialPayment, 2),
                     'School year' => $schoolYear['school_year']
                 ],
                 'button_label' => 'Track your application',
                 'button_url' => $trackingUrl,
                 'security' => 'Keep the tracking token private. You will need it together with the application number when checking the application online.'
             ]);
+            $paymentNextStep = $isGcashPayment
+                ? 'Your GCash receipt was recorded and will be confirmed when the center approves the application.'
+                : 'After approval, visit the selected center to pay the registration fee and downpayment in cash.';
             $receivedPlainText = "Hello {$data['first_name']},\n\nYour new-student application {$applicationNumber} is pending review. " .
-                "After it is accepted, visit the selected center to pay the required downpayment and continue enrollment.\n\n" .
+                $paymentNextStep . "\n\n" .
                 "Tracking token: {$trackingToken}\n\nKeep this token private.";
             $this->sendEmail($email, "Enrollment application {$applicationNumber} received", $receivedEmail, $receivedPlainText);
 
-            $this->respond('success', 'Application submitted. Please visit the center after approval to pay the downpayment and complete enrollment.', [
+            $successMessage = $isGcashPayment
+                ? 'Application and GCash receipt submitted. The center can approve it and continue directly to teacher or class assignment.'
+                : 'Application submitted. Please visit the center after approval to pay the registration fee and downpayment in cash.';
+            $this->respond('success', $successMessage, [
                 'application_number' => $applicationNumber,
                 'tracking_token' => $trackingToken,
                 'student_id_number' => $studentNumber,
+                'payment_method' => $paymentMethodName,
+                'payment_status' => $isGcashPayment ? 'pending_review' : 'awaiting_cash',
                 'status_code' => 'pending_review'
             ]);
         } catch (Throwable $e) {
             if ($this->conn->inTransaction()) {
                 $this->conn->rollBack();
             }
+            $this->removeStoredPaymentProof($storedProofPath);
             $this->respond('error', $e->getMessage(), [], $e instanceof InvalidArgumentException ? 422 : 500);
         }
     }
@@ -685,13 +818,14 @@ class EnrollmentApplicationAPI
                 s.nickname, s.birthday, s.gender_id, s.adr_street, s.adr_barangay, s.adr_city, s.adr_province,
                 s.adr_note, s.health_note, g.name AS guardian_name, g.contact_number AS guardian_contact,
                 g.relationship AS guardian_relationship, p.name AS program_name, p.tuition, p.total_units,
-                p.unit_type, p.registration_fee AS program_registration_fee, p.downpayment AS program_downpayment,
+                p.unit_type, pt.type AS program_type, p.registration_fee AS program_registration_fee, p.downpayment AS program_downpayment,
                 b.branch_name, b.branch_location, sy.school_year, gl.grade_level,
                 TRIM(CONCAT_WS(' ', reviewer.first_name, reviewer.last_name)) AS reviewer_name
             FROM enrollment_applications ea
             JOIN student s ON s.student_id = ea.student_id
             LEFT JOIN guardian g ON g.guardian_id = s.guardian_id
             JOIN program p ON p.program_id = ea.program_id
+            LEFT JOIN program_type pt ON pt.program_type_id = p.program_type
             JOIN branch b ON b.branch_id = ea.branch_id
             JOIN school_years sy ON sy.school_year_id = ea.school_year_id
             LEFT JOIN grade_level gl ON gl.grade_level_id = ea.grade_level_id
@@ -707,11 +841,20 @@ class EnrollmentApplicationAPI
         $availability->execute([$id]);
         $row['subjects'] = $subjects->fetchAll(PDO::FETCH_ASSOC);
         $row['availability'] = $availability->fetchAll(PDO::FETCH_ASSOC);
-        $selectedServiceId = null;
+        $payment = $this->conn->prepare("SELECT eap.application_payment_id, eap.payment_method_id, eap.amount,
+                eap.reference_no, eap.proof_pic, eap.payment_status, eap.created_at,
+                pm.payment_method, pm.account_name, pm.account_number, pm.qr_code
+            FROM enrollment_application_payments eap
+            JOIN payment_method pm ON pm.payment_method_id = eap.payment_method_id
+            WHERE eap.application_id = ? LIMIT 1");
+        $payment->execute([$id]);
+        $row['application_payment'] = $payment->fetch(PDO::FETCH_ASSOC) ?: null;
+        $selectedServiceId = !empty($row['requested_service_id']) ? (int)$row['requested_service_id'] : null;
         if (!empty($row['enrollment_details_id'])) {
             $selectedServiceId = $this->selectedServiceIdForEnrollment((int)$row['enrollment_details_id']);
         }
-        $row['financial'] = $this->financialSnapshot((int)$row['program_id'], $selectedServiceId, (int)$row['branch_id']);
+        $row['financial'] = loadApplicationFinancialSnapshot($this->conn, $id, (int)$row['program_id'])
+            ?: $this->financialSnapshot((int)$row['program_id'], $selectedServiceId, (int)$row['branch_id']);
         if (!empty($row['enrollment_details_id'])) {
             $row['billing'] = $this->billingData((int)$row['enrollment_details_id']);
         }
@@ -733,6 +876,9 @@ class EnrollmentApplicationAPI
                 throw new RuntimeException('Application was not found.');
             }
             $row = $this->hydrateApplication($row);
+            if (!empty($row['enrollment_details_id'])) {
+                $row['payment_receipt'] = $this->publicPaymentReceipt((int)$row['enrollment_details_id']);
+            }
             unset($row['tracking_token_hash'], $row['password_hash']);
             $this->respond('success', '', ['data' => $row]);
         } catch (Throwable $e) {
@@ -814,10 +960,45 @@ class EnrollmentApplicationAPI
             if ($application['status'] !== 'pending_review') {
                 throw new RuntimeException('Only applications pending review can be reviewed.');
             }
-            $status = $decision === 'approve' ? 'approved_for_payment' : 'rejected';
             $notes = trim((string)($data['notes'] ?? '')) ?: null;
+            $applicationPayment = $application['application_payment'] ?? null;
+            $isSubmittedGcash = $applicationPayment
+                && strtolower(trim((string)($applicationPayment['payment_method'] ?? ''))) === 'gcash';
+            $status = $decision === 'approve'
+                ? ($isSubmittedGcash ? 'ready_for_scheduling' : 'approved_for_payment')
+                : 'rejected';
+
+            if ($decision === 'approve' && $isSubmittedGcash) {
+                if (($applicationPayment['payment_status'] ?? '') !== 'pending_review') {
+                    throw new RuntimeException('This GCash payment is not awaiting application review.');
+                }
+                $snapshot = $this->applicationFinancialSnapshot($application);
+                $created = $this->createPaidApplicationEnrollment(
+                    $application,
+                    $snapshot,
+                    (int)$applicationPayment['payment_method_id'],
+                    trim((string)($applicationPayment['reference_no'] ?? '')) ?: null,
+                    (float)$applicationPayment['amount'],
+                    $admin['employee_id'],
+                    trim((string)($applicationPayment['proof_pic'] ?? '')) ?: null
+                );
+                $application['enrollment_details_id'] = $created['enrollment_details_id'];
+                $this->conn->prepare("UPDATE enrollment_application_payments
+                    SET payment_status = 'received', reviewed_by = ?, reviewed_at = NOW()
+                    WHERE application_payment_id = ?")
+                    ->execute([$admin['employee_id'], (int)$applicationPayment['application_payment_id']]);
+            } elseif ($decision === 'reject' && $applicationPayment) {
+                $this->conn->prepare("UPDATE enrollment_application_payments
+                    SET payment_status = 'declined', reviewed_by = ?, reviewed_at = NOW()
+                    WHERE application_payment_id = ?")
+                    ->execute([$admin['employee_id'], (int)$applicationPayment['application_payment_id']]);
+            }
             $stmt = $this->conn->prepare('UPDATE enrollment_applications SET status = ?, reviewed_by = ?, reviewed_at = NOW(), review_notes = ? WHERE application_id = ?');
             $stmt->execute([$status, $admin['employee_id'], $notes, $applicationId]);
+            if ($decision === 'approve' && $isSubmittedGcash) {
+                $this->conn->prepare('UPDATE enrollment_applications SET enrollment_details_id = ? WHERE application_id = ?')
+                    ->execute([(int)$application['enrollment_details_id'], $applicationId]);
+            }
             $this->conn->commit();
 
             if ($decision === 'reject') {
@@ -849,7 +1030,16 @@ class EnrollmentApplicationAPI
                     $rejectionPlainText
                 );
             }
-            $this->respond('success', $decision === 'approve' ? 'Application approved for center payment.' : 'Application rejected.', ['status_code' => $status]);
+            $message = $decision === 'reject'
+                ? 'Application rejected.'
+                : ($isSubmittedGcash
+                    ? 'Application and GCash payment approved. Continue to teacher or class assignment.'
+                    : 'Application approved for center cash payment.');
+            $this->respond('success', $message, [
+                'status_code' => $status,
+                'payment_confirmed' => $decision === 'approve' && $isSubmittedGcash,
+                'enrollment_details_id' => $application['enrollment_details_id'] ?? null
+            ]);
         } catch (Throwable $e) {
             if ($this->conn->inTransaction()) $this->conn->rollBack();
             $this->respond('error', $e->getMessage(), [], 422);
@@ -858,7 +1048,11 @@ class EnrollmentApplicationAPI
 
     private function isPreschool(array $program): bool
     {
-        $name = strtolower((string)($program['name'] ?? ''));
+        $name = strtolower(trim(
+            (string)($program['name'] ?? $program['program_name'] ?? '') . ' ' .
+            (string)($program['program_type_name'] ?? '') . ' ' .
+            (!is_numeric($program['program_type'] ?? null) ? (string)($program['program_type'] ?? '') : '')
+        ));
         return str_contains($name, 'preschool') || str_contains($name, 'pre school') || str_contains($name, 'pre-school')
             || str_contains($name, 'playschool') || str_contains($name, 'play school') || str_contains($name, 'play-school');
     }
@@ -878,9 +1072,10 @@ class EnrollmentApplicationAPI
 
     private function financialSnapshot(int $programId, ?int $requestedServiceId = null, ?int $branchId = null): array
     {
-        $stmt = $this->conn->prepare('SELECT p.*, s.service_name AS default_service_name,
+        $stmt = $this->conn->prepare('SELECT p.*, pt.type AS program_type_name, s.service_name AS default_service_name,
                 s.amount AS default_service_amount, s.status AS default_service_status
             FROM program p
+            LEFT JOIN program_type pt ON pt.program_type_id = p.program_type
             LEFT JOIN service s ON s.service_id = p.service_id
             WHERE p.program_id = ? LIMIT 1');
         $stmt->execute([$programId]);
@@ -960,6 +1155,25 @@ class EnrollmentApplicationAPI
         ];
     }
 
+    private function applicationFinancialSnapshot(array $application): array
+    {
+        $stored = loadApplicationFinancialSnapshot(
+            $this->conn,
+            (int)($application['application_id'] ?? 0),
+            (int)$application['program_id']
+        );
+        if ($stored) return $stored;
+        $snapshot = $this->financialSnapshot(
+            (int)$application['program_id'],
+            !empty($application['requested_service_id']) ? (int)$application['requested_service_id'] : null,
+            (int)($application['branch_id'] ?? 0) ?: null
+        );
+        if (!empty($application['application_id'])) {
+            saveApplicationFinancialSnapshot($this->conn, (int)$application['application_id'], $snapshot);
+        }
+        return $snapshot;
+    }
+
     public function getFinancialPreview(array $data): void
     {
         try {
@@ -992,6 +1206,97 @@ class EnrollmentApplicationAPI
         return (int)$this->conn->lastInsertId();
     }
 
+    private function createPaidApplicationEnrollment(
+        array $application,
+        array $snapshot,
+        int $methodId,
+        ?string $reference,
+        float $amount,
+        int $employeeId,
+        ?string $proofPath = null
+    ): array {
+        $expected = round((float)$snapshot['initial_payment'], 2);
+        if (abs($amount - $expected) > 0.01) {
+            throw new InvalidArgumentException('Payment must equal the required registration fee and downpayment of PHP ' . number_format($expected, 2) . '.');
+        }
+
+        $header = $this->conn->prepare("INSERT INTO enrollment_header (student_id, employee_id, branch_id, school_year_id, status, total_of_program, date_created) VALUES (?, ?, ?, ?, 'incomplete', ?, NOW())");
+        $header->execute([(int)$application['student_id'], $employeeId, (int)$application['branch_id'], (int)$application['school_year_id'], $snapshot['grand_total']]);
+        $headerId = (int)$this->conn->lastInsertId();
+        $preferred = implode(', ', array_map(fn($slot) => $slot['day'] . ' ' . $slot['start_time'] . '-' . $slot['end_time'], $application['availability']));
+        $primarySubject = (int)($application['subjects'][0]['subject_id'] ?? 0) ?: null;
+        $details = $this->conn->prepare("INSERT INTO enrollment_details
+            (enrollment_header_id, program_id, grade_level_id, subject_id, preferred_teacher, goal, preferred_time_day,
+             discount_id, discount_name, discount_amount, registration_fee, downpayment_amount, services, status)
+            VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')");
+        $details->execute([
+            $headerId, (int)$application['program_id'], $application['grade_level_id'] ?: null, $primarySubject,
+            $application['goal'] ?: null, $preferred, $snapshot['discount_id'], $snapshot['discount_name'],
+            $snapshot['discount_amount'], $snapshot['registration_fee'], $snapshot['downpayment_amount'],
+            $snapshot['service_name']
+        ]);
+        $detailsId = (int)$this->conn->lastInsertId();
+        ensureEnrollmentServiceSubscription($this->conn, $detailsId, $snapshot, $employeeId);
+        ensureEnrollmentBundleOrders(
+            $this->conn,
+            $detailsId,
+            !empty($application['application_id']) ? (int)$application['application_id'] : null,
+            $snapshot,
+            $employeeId
+        );
+        if ($application['subjects']) {
+            $subjectInsert = $this->conn->prepare('INSERT INTO enrollment_subjects (enrollment_details_id, subject_id) VALUES (?, ?)');
+            foreach ($application['subjects'] as $subject) {
+                $subjectInsert->execute([$detailsId, (int)$subject['subject_id']]);
+            }
+        }
+
+        $bills = [];
+        $registrationBillAmount = min((float)$snapshot['registration_fee'], (float)$snapshot['grand_total']);
+        $downpaymentBillAmount = min((float)$snapshot['downpayment_amount'], max(0, (float)$snapshot['grand_total'] - $registrationBillAmount));
+        if ($registrationBillAmount > 0) {
+            $billId = $this->insertBill($detailsId, 'Registration Fee', $registrationBillAmount, date('Y-m-d'));
+            insertBillingScheduleItem($this->conn, $billId, 'registration', null, 'Registration Fee', 1, $registrationBillAmount, $registrationBillAmount, false);
+            $bills[] = [$billId, 'Registration Fee', $registrationBillAmount];
+        }
+        if ($downpaymentBillAmount > 0) {
+            $billId = $this->insertBill($detailsId, 'Downpayment', $downpaymentBillAmount, date('Y-m-d'));
+            insertBillingScheduleItem($this->conn, $billId, 'downpayment', null, 'Downpayment', 1, $downpaymentBillAmount, $downpaymentBillAmount, false);
+            $bills[] = [$billId, 'Downpayment', $downpaymentBillAmount];
+        }
+
+        $receiptId = $expected > 0 ? $this->generateReceiptId() : null;
+        $remaining = $amount;
+        $balance = (float)$snapshot['grand_total'];
+        $lineItems = [];
+        $hasProofColumn = $this->columnExists('payment', 'proof_pic');
+        foreach ($bills as [$billId, $label, $due]) {
+            $paid = min($remaining, (float)$due);
+            if ($paid <= 0) continue;
+            $remaining -= $paid;
+            $balance = max(0, $balance - $paid);
+            $columns = ['payment_method_id', 'billing_schedule_id', 'employee_id', 'payment_date', 'amount_paid', 'penalty_paid', 'payment_type', 'reference_no', 'balance', 'payment_status', 'receipt_id'];
+            $values = [$methodId, $billId, $employeeId, $paid, $label, $reference, $balance, $receiptId];
+            $placeholders = ['?', '?', '?', 'CURDATE()', '?', '0', '?', '?', '?', "'Received'", '?'];
+            if ($hasProofColumn) {
+                $columns[] = 'proof_pic';
+                $placeholders[] = '?';
+                $values[] = $proofPath;
+            }
+            $this->conn->prepare('INSERT INTO payment (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')')->execute($values);
+            $this->conn->prepare("UPDATE billing_schedule SET status = 'paid' WHERE billing_schedule_id = ?")->execute([$billId]);
+            $lineItems[] = ['label' => $label, 'amount' => $paid];
+        }
+
+        return [
+            'enrollment_details_id' => $detailsId,
+            'receipt_id' => $receiptId,
+            'amount_paid' => $amount,
+            'balance' => $balance,
+            'line_items' => $lineItems
+        ];
+    }
+
     public function collectDownpayment(array $data): void
     {
         try {
@@ -1007,11 +1312,7 @@ class EnrollmentApplicationAPI
             if ($application['status'] !== 'approved_for_payment' || !empty($application['enrollment_details_id'])) {
                 throw new RuntimeException('This application is not awaiting downpayment.');
             }
-            $requestedServiceId = !empty($data['include_service']) ? (int)($data['service_id'] ?? 0) : null;
-            if (!empty($data['include_service']) && ($requestedServiceId ?? 0) <= 0) {
-                throw new InvalidArgumentException('Select a valid service or choose not to include it.');
-            }
-            $snapshot = $this->financialSnapshot((int)$application['program_id'], $requestedServiceId, (int)$application['branch_id']);
+            $snapshot = $this->applicationFinancialSnapshot($application);
             $expected = round((float)$snapshot['initial_payment'], 2);
             if (abs($amount - $expected) > 0.01) {
                 throw new InvalidArgumentException('Payment must equal the required registration fee and downpayment of PHP ' . number_format($expected, 2) . '.');
@@ -1024,51 +1325,19 @@ class EnrollmentApplicationAPI
                 throw new InvalidArgumentException('GCash reference number is required.');
             }
 
-            $header = $this->conn->prepare("INSERT INTO enrollment_header (student_id, employee_id, branch_id, school_year_id, status, total_of_program, date_created) VALUES (?, ?, ?, ?, 'incomplete', ?, NOW())");
-            $header->execute([(int)$application['student_id'], $admin['employee_id'], (int)$application['branch_id'], (int)$application['school_year_id'], $snapshot['grand_total']]);
-            $headerId = (int)$this->conn->lastInsertId();
-            $preferred = implode(', ', array_map(fn($slot) => $slot['day'] . ' ' . $slot['start_time'] . '-' . $slot['end_time'], $application['availability']));
-            $primarySubject = (int)($application['subjects'][0]['subject_id'] ?? 0) ?: null;
-            $details = $this->conn->prepare("INSERT INTO enrollment_details
-                (enrollment_header_id, program_id, grade_level_id, subject_id, preferred_teacher, goal, preferred_time_day,
-                 discount_id, discount_name, discount_amount, registration_fee, downpayment_amount, services, status)
-                VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')");
-            $details->execute([
-                $headerId, (int)$application['program_id'], $application['grade_level_id'] ?: null, $primarySubject,
-                $application['goal'] ?: null, $preferred, $snapshot['discount_id'], $snapshot['discount_name'],
-                $snapshot['discount_amount'], $snapshot['registration_fee'], $snapshot['downpayment_amount'],
-                $snapshot['service_name']
-            ]);
-            $detailsId = (int)$this->conn->lastInsertId();
-            if ($application['subjects']) {
-                $subjectInsert = $this->conn->prepare('INSERT INTO enrollment_subjects (enrollment_details_id, subject_id) VALUES (?, ?)');
-                foreach ($application['subjects'] as $subject) $subjectInsert->execute([$detailsId, (int)$subject['subject_id']]);
-            }
-
-            $bills = [];
-            $registrationBillAmount = min((float)$snapshot['registration_fee'], (float)$snapshot['grand_total']);
-            $downpaymentBillAmount = min((float)$snapshot['downpayment_amount'], max(0, (float)$snapshot['grand_total'] - $registrationBillAmount));
-            if ($registrationBillAmount > 0) $bills[] = [$this->insertBill($detailsId, 'Registration Fee', $registrationBillAmount, date('Y-m-d')), 'Registration Fee', $registrationBillAmount];
-            if ($downpaymentBillAmount > 0) $bills[] = [$this->insertBill($detailsId, 'Downpayment', $downpaymentBillAmount, date('Y-m-d')), 'Downpayment', $downpaymentBillAmount];
-
-            $receiptId = $expected > 0 ? $this->generateReceiptId() : null;
-            $remaining = $amount;
-            $balance = (float)$snapshot['grand_total'];
-            $lineItems = [];
-            foreach ($bills as [$billId, $label, $due]) {
-                $paid = min($remaining, (float)$due);
-                if ($paid <= 0) continue;
-                $remaining -= $paid;
-                $balance = max(0, $balance - $paid);
-                $this->conn->prepare("INSERT INTO payment
-                    (payment_method_id, billing_schedule_id, employee_id, payment_date, amount_paid, penalty_paid,
-                     payment_type, reference_no, balance, payment_status, receipt_id)
-                    VALUES (?, ?, ?, CURDATE(), ?, 0, ?, ?, ?, 'Received', ?)")
-                    ->execute([$methodId, $billId, $admin['employee_id'], $paid, $label, $reference, $balance, $receiptId]);
-                $this->conn->prepare("UPDATE billing_schedule SET status = 'paid' WHERE billing_schedule_id = ?")->execute([$billId]);
-                $lineItems[] = ['label' => $label, 'amount' => $paid];
-            }
-
+            $created = $this->createPaidApplicationEnrollment(
+                $application,
+                $snapshot,
+                $methodId,
+                $reference,
+                $amount,
+                $admin['employee_id']
+            );
+            $detailsId = $created['enrollment_details_id'];
+            $this->conn->prepare("UPDATE enrollment_application_payments
+                SET payment_method_id = ?, amount = ?, reference_no = ?, payment_status = 'received', reviewed_by = ?, reviewed_at = NOW()
+                WHERE application_id = ?")
+                ->execute([$methodId, $amount, $reference, $admin['employee_id'], $applicationId]);
             $this->conn->prepare("UPDATE enrollment_applications SET status = 'ready_for_scheduling', enrollment_details_id = ? WHERE application_id = ?")
                 ->execute([$detailsId, $applicationId]);
             $this->conn->commit();
@@ -1077,10 +1346,10 @@ class EnrollmentApplicationAPI
                 ? 'Continue to class and section assignment.'
                 : 'Continue to teacher assignment and schedule plotting.';
             $this->respond('success', 'Downpayment recorded. ' . $nextStep, [
-                'enrollment_details_id' => $detailsId, 'receipt_id' => $receiptId, 'amount_paid' => $amount,
-                'balance' => $balance, 'payment_method' => $methodName, 'reference_no' => $reference,
+                'enrollment_details_id' => $detailsId, 'receipt_id' => $created['receipt_id'], 'amount_paid' => $amount,
+                'balance' => $created['balance'], 'payment_method' => $methodName, 'reference_no' => $reference,
                 'student_name' => trim($application['first_name'] . ' ' . $application['last_name']),
-                'program_name' => $application['program_name'], 'line_items' => $lineItems,
+                'program_name' => $application['program_name'], 'line_items' => $created['line_items'],
                 'financial' => $snapshot
             ]);
         } catch (Throwable $e) {
@@ -1353,7 +1622,7 @@ class EnrollmentApplicationAPI
         $remaining = max(0, (float)$snapshot['grand_total'] - $paidBase);
         if ($remaining <= 0) return;
         if (strtolower((string)$application['unit_type']) === 'month' || $this->isPreschool($snapshot['program'])) {
-            $months = max(1, (int)$application['total_units']);
+            $months = max(1, (int)($snapshot['total_units'] ?? $application['total_units']));
             $base = floor(($remaining / $months) * 100) / 100;
             $allocated = 0.0;
             $firstDue = new DateTime('first day of next month');
@@ -1362,7 +1631,18 @@ class EnrollmentApplicationAPI
                 $amount = $month === $months ? round($remaining - $allocated, 2) : $base;
                 $due = clone $firstDue;
                 if ($month > 1) $due->modify('+' . ($month - 1) . ' months');
-                $this->insertBill($detailsId, 'Month ' . $month, $amount, $due->format('Y-m-d'));
+                $billId = $this->insertBill($detailsId, 'Month ' . $month, $amount, $due->format('Y-m-d'));
+                $servicePart = min($amount, max(0, (float)($snapshot['service_amount'] ?? 0)));
+                $basePart = max(0, $amount - $servicePart);
+                if ($basePart > 0) {
+                    insertBillingScheduleItem($this->conn, $billId, 'tuition_balance', null,
+                        'Tuition and enrollment balance', 1, $basePart, $basePart, true);
+                }
+                if ($servicePart > 0) {
+                    insertBillingScheduleItem($this->conn, $billId, 'service',
+                        !empty($snapshot['service_id']) ? (int)$snapshot['service_id'] : null,
+                        (string)($snapshot['service_name'] ?? 'Service'), 1, $servicePart, $servicePart, true);
+                }
                 $allocated += $amount;
             }
             return;
@@ -1373,8 +1653,14 @@ class EnrollmentApplicationAPI
         sort($dates);
         $midDate = $dates ? $dates[max(0, (int)floor((count($dates) - 1) / 2))] : null;
         $finalDate = $dates ? end($dates) : null;
-        if ($midterm > 0) $this->insertBill($detailsId, 'Midterm', $midterm, $midDate);
-        if ($final > 0) $this->insertBill($detailsId, 'Final', $final, $finalDate);
+        if ($midterm > 0) {
+            $billId = $this->insertBill($detailsId, 'Midterm', $midterm, $midDate);
+            insertBillingScheduleItem($this->conn, $billId, 'tuition', null, 'Midterm', 1, $midterm, $midterm, true);
+        }
+        if ($final > 0) {
+            $billId = $this->insertBill($detailsId, 'Final', $final, $finalDate);
+            insertBillingScheduleItem($this->conn, $billId, 'tuition', null, 'Final', 1, $final, $final, true);
+        }
     }
 
     private function activateStudentPortalAccount(array $application): array
@@ -1465,11 +1751,7 @@ class EnrollmentApplicationAPI
             }
             $this->conn->prepare("UPDATE enrollment_details SET preferred_teacher = ?, status = 'enrolled' WHERE enrollment_details_id = ?")->execute([$teacherId, $detailsId]);
             $this->conn->prepare("UPDATE enrollment_header eh JOIN enrollment_details ed ON ed.enrollment_header_id = eh.enrollment_header_id SET eh.status = 'enrolled' WHERE ed.enrollment_details_id = ?")->execute([$detailsId]);
-            $snapshot = $this->financialSnapshot(
-                (int)$application['program_id'],
-                $this->selectedServiceIdForEnrollment($detailsId),
-                (int)$application['branch_id']
-            );
+            $snapshot = $this->applicationFinancialSnapshot($application);
             $this->generateRemainingBills($detailsId, $application, $snapshot, $schedule);
             $portalCredentials = $this->activateStudentPortalAccount($application);
             if ($manualOverride) {
@@ -1547,11 +1829,7 @@ class EnrollmentApplicationAPI
                 throw new RuntimeException('This application is not ready for class and section assignment.');
             }
 
-            $snapshot = $this->financialSnapshot(
-                (int)$application['program_id'],
-                $this->selectedServiceIdForEnrollment($detailsId),
-                (int)$application['branch_id']
-            );
+            $snapshot = $this->applicationFinancialSnapshot($application);
             if (!$this->isPreschool($snapshot['program'])) {
                 throw new RuntimeException('Class and section assignment is only available for Pre and Play School applications.');
             }
@@ -1694,6 +1972,39 @@ class EnrollmentApplicationAPI
         $data['total_paid'] = array_sum(array_map(fn($bill) => (float)$bill['paid_amount'], $data['schedule']));
         $data['balance'] = max(0, (float)($data['total_of_program'] ?? 0) - $data['total_paid']);
         return $data;
+    }
+
+    private function publicPaymentReceipt(int $detailsId): ?array
+    {
+        $stmt = $this->conn->prepare("SELECT p.payment_id, p.receipt_id, p.payment_date, p.amount_paid, p.balance,
+                p.payment_type, p.reference_no, p.payment_status, p.or_no, pm.payment_method, bs.billing_type
+            FROM payment p
+            JOIN payment_method pm ON pm.payment_method_id = p.payment_method_id
+            JOIN billing_schedule bs ON bs.billing_schedule_id = p.billing_schedule_id
+            WHERE bs.enrollment_details_id = ? AND p.payment_status = 'Received' AND p.receipt_id IS NOT NULL
+            ORDER BY p.receipt_id DESC, p.payment_id ASC");
+        $stmt->execute([$detailsId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (!$rows) return null;
+
+        $receiptId = (string)$rows[0]['receipt_id'];
+        $receiptRows = array_values(array_filter($rows, fn($row) => (string)$row['receipt_id'] === $receiptId));
+        $amountPaid = array_sum(array_map(fn($row) => (float)$row['amount_paid'], $receiptRows));
+        $balances = array_map(fn($row) => (float)$row['balance'], $receiptRows);
+        return [
+            'receipt_id' => $receiptId,
+            'payment_date' => $receiptRows[0]['payment_date'],
+            'payment_method' => $receiptRows[0]['payment_method'],
+            'reference_no' => $receiptRows[0]['reference_no'],
+            'or_no' => $receiptRows[0]['or_no'],
+            'amount_paid' => $amountPaid,
+            'balance' => $balances ? min($balances) : 0,
+            'payment_status' => $receiptRows[0]['payment_status'],
+            'line_items' => array_map(fn($row) => [
+                'label' => $row['billing_type'] ?: ($row['payment_type'] ?: 'Payment'),
+                'amount' => (float)$row['amount_paid']
+            ], $receiptRows)
+        ];
     }
 
     public function getPaymentMethods(): void

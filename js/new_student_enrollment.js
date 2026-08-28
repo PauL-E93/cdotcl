@@ -11,6 +11,7 @@
         availability: [],
         availableSteps: new Set([1]),
         currentApplication: null,
+        financialPreview: null,
         applicationSubmitted: false,
         addressCache: { provinces: null, cities: {}, barangays: {} }
     };
@@ -51,6 +52,15 @@
         const body = new URLSearchParams();
         body.set('operation', operation);
         body.set('json', JSON.stringify(data));
+        const response = await axios.post(API_URL, body);
+        return response.data;
+    }
+
+    async function multipartApi(operation, data, file = null) {
+        const body = new FormData();
+        body.set('operation', operation);
+        body.set('json', JSON.stringify(data));
+        if (file) body.set('payment_screenshot', file);
         const response = await axios.post(API_URL, body);
         return response.data;
     }
@@ -511,57 +521,237 @@
         const initialPayment = Math.min(grandTotal, Number(financial.initial_payment || 0));
         const registrationFee = Math.min(grandTotal, Number(financial.registration_fee || 0));
         const downpayment = Math.max(0, initialPayment - registrationFee);
-        const fullTuitionFee = Math.max(0, Number(
-            financial.tuition_only_subtotal
-            ?? financial.program?.tuition
-            ?? financial.tuition_subtotal
-            ?? 0
-        ));
+        const tuition = Math.max(0, Number(financial.tuition_amount || 0));
+        const otherFees = Array.isArray(financial.other_fees) ? financial.other_fees : [];
+        const availableService = financial.available_service || null;
+        const discountAmount = Math.max(0, Number(financial.discount_amount || 0));
+        const discountName = String(financial.discount_name || '').trim();
         const student = personalPayload();
         const trackedStudentName = [application?.first_name, application?.middle_name, application?.last_name, application?.ext].filter(Boolean).join(' ');
         const studentName = billing?.student_name || trackedStudentName || [student.first_name, student.middle_name, student.last_name, student.ext].filter(Boolean).join(' ') || 'New Student';
         const programName = financial.program?.name || selectedProgram()?.name || 'Selected program';
-        const preschool = isPreschoolProgram(financial.program || programName);
+        const preschool = isPreschoolProgram(`${programName} ${financial.program?.program_type_name || ''}`);
+        const serviceSelected = Boolean(financial.service_id);
+        const allowServiceToggle = Boolean(availableService) && !application?.application_number && !state.applicationSubmitted;
         const billingSchedule = Array.isArray(billing?.schedule) ? billing.schedule : [];
         const findBill = label => billingSchedule.find(item => String(item.billing_type || '').trim().toLowerCase() === label.toLowerCase());
-        const paymentRow = (label, due, amount) => {
-            const bill = findBill(label);
-            const paid = Number(bill?.paid_amount || 0);
-            const balance = bill ? Number(bill.balance || 0) : amount;
-            const status = String(bill?.status || (balance <= 0 ? 'paid' : 'unpaid')).toLowerCase();
-            return `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(bill?.due_date || due)}</td><td>${money(amount)}</td><td>${money(paid)}</td><td>${money(balance)}</td><td><span class="billing-status billing-status--${escapeHtml(status)}">${escapeHtml(status)}</span></td></tr>`;
+        const feeCard = (label, note, amount, scheduleLabel = '') => {
+            const bill = scheduleLabel ? findBill(scheduleLabel) : null;
+            const status = String(bill?.status || '').trim().toLowerCase();
+            const statusText = status || (note === 'Required now' ? 'due now' : 'not due now');
+            const statusClass = status || (note === 'Required now' ? 'unpaid' : 'upcoming');
+            return `<article class="billing-fee-card">
+                <div><span>${escapeHtml(label)}</span><small>${escapeHtml(note)}</small></div>
+                <div class="billing-fee-value"><strong>${money(amount)}</strong><span class="billing-status billing-status--${escapeHtml(statusClass)}">${escapeHtml(statusText)}</span></div>
+            </article>`;
         };
+        const primaryFees = [
+            ...(registrationFee > 0 ? [feeCard('Registration Fee', 'Required now', registrationFee, 'Registration Fee')] : []),
+            ...(downpayment > 0 ? [feeCard('Program Downpayment', 'Required now', downpayment, 'Downpayment')] : []),
+            ...(preschool && tuition > 0
+                ? [feeCard('Month 1', 'After enrollment', tuition, 'Month 1')]
+                : (!preschool && tuition > 0 ? [feeCard('Tuition Fee', 'Remaining program balance', tuition)] : []))
+        ].join('');
+        const otherFeesMarkup = otherFees.length
+            ? otherFees.map(item => `<div class="billing-list-row"><span><i class="bi bi-journal-check"></i>${escapeHtml(item.product_name || 'Program item')}</span><strong>${money(item.price)}</strong></div>`).join('')
+            : '<div class="billing-empty-row"><i class="bi bi-check2-circle"></i>No books or other fees for this program.</div>';
+        const discountMarkup = discountAmount > 0
+            ? `<div class="billing-list-row billing-list-row--discount"><span><i class="bi bi-tags"></i>${escapeHtml(discountName || 'Program discount')}</span><strong>- ${money(discountAmount)}</strong></div>`
+            : '';
+        const serviceMarkup = availableService ? `<section class="billing-admin-section">
+            <h3 class="billing-admin-section-title"><span><i class="bi bi-bag-check-fill"></i></span>Services</h3>
+            <div class="billing-service-card ${serviceSelected ? 'billing-service-card--selected' : ''}">
+                <div class="billing-service-copy"><strong>${escapeHtml(availableService.service_name || 'Available service')}</strong><span>${money(availableService.amount)} monthly</span><small>${serviceSelected ? 'This service will be added to every monthly bill.' : 'Optional service. Turn it on if you want it added to every monthly bill.'}</small></div>
+                <label class="billing-service-toggle" for="billingServiceToggle">
+                    <input type="checkbox" id="billingServiceToggle" role="switch" ${serviceSelected ? 'checked' : ''} ${allowServiceToggle ? '' : 'disabled'}>
+                    <span aria-hidden="true"></span><strong>${serviceSelected ? 'Applied' : 'Not applied'}</strong>
+                </label>
+            </div>
+        </section>` : '';
+        return `<section class="billing-statement billing-admin-theme">
+            <header><div class="billing-heading"><span class="billing-heading-icon"><i class="bi bi-receipt-cutoff"></i></span><div><small>BILLING OVERVIEW</small><h3>${escapeHtml(studentName)}</h3></div></div><div class="billing-program"><small>Program</small><strong>${escapeHtml(programName)}</strong></div></header>
+            <div class="billing-admin-body">
+                <section class="billing-admin-section">
+                    <h3 class="billing-admin-section-title"><span><i class="bi bi-calculator-fill"></i></span>Fee Overview</h3>
+                    <div class="billing-fee-grid">${primaryFees}</div>
+                </section>
+                ${preschool || otherFees.length || discountAmount > 0 ? `<section class="billing-admin-section">
+                    <h3 class="billing-admin-section-title"><span><i class="bi bi-book-fill"></i></span>Books / Other Fees</h3>
+                    <div class="billing-list">${otherFeesMarkup}${discountMarkup}</div>
+                </section>` : ''}
+                ${serviceMarkup}
+            </div>
+            <div class="billing-totals">
+                <span>Estimated program total <strong>${money(grandTotal)}</strong></span>
+                <span class="billing-due-now">Amount due now <strong>${money(initialPayment)}</strong></span>
+                <small>Only the registration fee and downpayment are required now. Month 1, tuition, books, other fees, and selected services are billed after enrollment.</small>
+            </div>
+        </section>`;
+    }
 
-        if (preschool) {
-            const configuredMonthlyFee = Number(financial.program?.tuition || 0);
-            const months = Math.max(1, Number(financial.program?.total_units || 1));
-            const monthlyFee = configuredMonthlyFee || Math.max(0, Number(financial.tuition_subtotal || 0) / months);
-            const centerPaymentTotal = registrationFee + downpayment;
-            const rows = [
-                ...(registrationFee > 0 ? [paymentRow('Registration Fee', 'After approval', registrationFee)] : []),
-                ...(downpayment > 0 ? [paymentRow('Downpayment', 'After approval', downpayment)] : []),
-                `<tr><td>Monthly Fee <small class="text-muted">(1-month estimate)</small></td><td>After enrollment</td><td>${money(monthlyFee)}</td><td>&mdash;</td><td>&mdash;</td><td><span class="billing-status text-muted">estimate</span></td></tr>`
-            ];
-            return `<section class="billing-statement">
-                <header><div><small>BILLING STATEMENT</small><h3>${escapeHtml(studentName)}</h3></div><div class="billing-program"><small>Program</small><strong>${escapeHtml(programName)}</strong></div></header>
-                <div class="table-responsive"><table class="table billing-table"><thead><tr><th>Payment</th><th>Due date</th><th>Amount</th><th>Paid</th><th>Balance</th><th>Status</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
-                <div class="billing-totals"><span>Center payment total <strong>${money(centerPaymentTotal)}</strong></span></div>
-            </section><div class="billing-view-notice"><i class="bi bi-building" aria-hidden="true"></i><span>Pay the registration fee and downpayment at the selected center after the application is approved. The monthly fee shown is a one-month estimate and is not included in the center payment total.</span></div>`;
+    function bindBillingServiceToggle(trackedApplication = false, application = null) {
+        const toggle = $('billingServiceToggle');
+        if (!toggle || trackedApplication || application?.application_number) return;
+        toggle.addEventListener('change', async () => {
+            const includeService = toggle.checked;
+            const serviceId = state.financialPreview?.available_service?.service_id;
+            toggle.disabled = true;
+            toggle.closest('.billing-service-card')?.classList.add('billing-service-card--loading');
+            try {
+                const result = await api('getFinancialPreview', {
+                    program_id: $('program').value,
+                    branch_id: $('branch').value,
+                    include_service: includeService,
+                    service_id: includeService ? serviceId : null
+                });
+                if (result.status !== 'success') throw new Error(result.message);
+                state.financialPreview = result.data;
+                $('applicationBillingPanel').innerHTML = renderFinancialPreview(result.data, null, null);
+                bindBillingServiceToggle(false, null);
+            } catch (error) {
+                toggle.checked = !includeService;
+                toggle.disabled = false;
+                toggle.closest('.billing-service-card')?.classList.remove('billing-service-card--loading');
+                Swal.fire('Service Not Updated', error.response?.data?.message || error.message, 'error');
+            }
+        });
+    }
+
+    function selectedApplicationPaymentMethod() {
+        const methodId = document.querySelector('input[name="applicationPaymentMethod"]:checked')?.value || '';
+        return state.lookups?.paymentMethods?.find(method => String(method.payment_method_id) === methodId) || null;
+    }
+
+    function paymentMethodIs(method, name) {
+        return String(method?.payment_method || '').trim().toLowerCase() === name;
+    }
+
+    function resolvePublicAsset(path) {
+        const value = String(path || '').trim();
+        if (!value || /^(?:https?:|data:|blob:|\/)/i.test(value)) return value;
+        return value.replace(/^\.\//, '');
+    }
+
+    async function showPublicPaymentReceipt(application) {
+        const receipt = application?.payment_receipt;
+        if (!receipt) return;
+        if (typeof window.showPaymentReceipt !== 'function') {
+            await import(new URL('js/modules/receipt.js?v=20260825-public-application', window.location.href).href);
+        }
+        if (typeof window.showPaymentReceipt !== 'function') {
+            throw new Error('The payment receipt viewer is unavailable.');
+        }
+        const studentName = [application.first_name, application.middle_name, application.last_name, application.ext].filter(Boolean).join(' ');
+        await window.showPaymentReceipt({
+            enrollmentId: application.enrollment_details_id,
+            studentName,
+            programName: application.program_name,
+            receiptNo: receipt.receipt_id,
+            orNo: receipt.or_no || '',
+            paymentKind: 'Payment Received',
+            paymentType: 'Payment Received',
+            paymentFor: (receipt.line_items || []).map(item => item.label).join(', ') || 'Registration Fee and Downpayment',
+            paymentMethod: receipt.payment_method,
+            referenceNo: receipt.reference_no,
+            amountPaid: Number(receipt.amount_paid || 0),
+            totalAmount: Number(receipt.amount_paid || 0),
+            balance: Number(receipt.balance || 0),
+            lineItems: receipt.line_items || [],
+            paymentDate: receipt.payment_date,
+            copyLabels: ['CUSTOMER COPY']
+        });
+    }
+
+    function maybeShowNewPublicReceipt(application) {
+        const receiptId = application?.payment_receipt?.receipt_id;
+        if (!receiptId) return;
+        const key = `cdoTutorShownApplicationReceipt:${application.application_number}:${receiptId}`;
+        if (sessionStorage.getItem(key)) return;
+        sessionStorage.setItem(key, '1');
+        showPublicPaymentReceipt(application).catch(error => Swal.fire('Receipt Unavailable', error.message, 'error'));
+    }
+
+    function renderPaymentMethodDetail(financial) {
+        const target = $('applicationPaymentDetail');
+        if (!target) return;
+        const method = selectedApplicationPaymentMethod();
+        const expected = Number(financial?.initial_payment || 0);
+        if (!method) {
+            target.innerHTML = '<div class="alert alert-warning mb-0">Choose Cash or GCash to continue.</div>';
+            return;
+        }
+        if (paymentMethodIs(method, 'cash')) {
+            target.className = 'application-payment-detail application-payment-detail--cash';
+            target.innerHTML = '<div class="d-flex gap-2"><i class="bi bi-building"></i><div><strong>Please visit the center to pay in cash.</strong><div class="small mt-1">You may continue and submit the application now. Payment will be collected at your selected center after approval.</div></div></div>';
+            return;
         }
 
-        const centerPaymentTotal = registrationFee + downpayment;
-        const rows = [
-            ...(registrationFee > 0 ? [{ label: 'Registration Fee', due: 'After approval', amount: registrationFee }] : []),
-            ...(downpayment > 0 ? [{ label: 'Downpayment', due: 'After approval', amount: downpayment }] : []),
-            ...(fullTuitionFee > 0 ? [{ label: 'Remaining Program Balance', due: 'To be scheduled', amount: fullTuitionFee }] : [])
-        ];
-        return `<section class="billing-statement">
-            <header><div><small>BILLING STATEMENT</small><h3>${escapeHtml(studentName)}</h3></div><div class="billing-program"><small>Program</small><strong>${escapeHtml(programName)}</strong></div></header>
-            <div class="table-responsive"><table class="table billing-table"><thead><tr><th>Payment</th><th>Due date</th><th>Amount</th><th>Paid</th><th>Balance</th><th>Status</th></tr></thead><tbody>
-                ${rows.map(item => `<tr><td>${escapeHtml(item.label)}</td><td>${escapeHtml(item.due)}</td><td>${money(item.amount)}</td><td>${money(0)}</td><td>${money(item.amount)}</td><td><span class="billing-status billing-status--unpaid">unpaid</span></td></tr>`).join('')}
-            </tbody></table></div>
-            <div class="billing-totals"><span>Center payment total <strong>${money(centerPaymentTotal)}</strong></span></div>
-        </section><div class="billing-view-notice"><i class="bi bi-building" aria-hidden="true"></i><span>Pay the registration fee and downpayment at the selected center after the application is approved. The remaining program balance shows the full tuition fee before any downpayment deduction and will be scheduled after enrollment.</span></div>`;
+        const qrUrl = resolvePublicAsset(method.qr_code);
+        target.className = 'application-payment-detail';
+        target.innerHTML = `
+            <div class="application-gcash-account">
+                <div><small class="text-muted d-block">Send the exact amount to</small><strong>${escapeHtml(method.account_name || 'CDO Tutor GCash account')}</strong>${method.account_number ? `<div>${escapeHtml(method.account_number)}</div>` : ''}</div>
+                ${qrUrl ? `<img src="${escapeHtml(qrUrl)}" alt="GCash QR code" style="width:120px;height:120px;object-fit:contain">` : ''}
+            </div>
+            <div class="alert alert-info"><strong>Amount due: ${money(expected)}</strong><br><small>Upload the receipt after sending this exact registration fee and downpayment total.</small></div>
+            <label class="application-receipt-upload" for="applicationGcashScreenshot">
+                <strong><i class="bi bi-cloud-arrow-up me-2"></i>Upload GCash receipt</strong>
+                <input class="form-control mt-2" type="file" id="applicationGcashScreenshot" accept="image/jpeg,image/png,image/webp,image/bmp,.jpg,.jpeg,.png,.webp,.bmp">
+            </label>
+            <div class="d-flex justify-content-end mt-2"><button type="button" class="btn btn-outline-primary btn-sm" id="applicationRunOcr"><i class="bi bi-bounding-box me-1"></i>Read Receipt</button></div>
+            <small id="applicationOcrStatus" class="small text-muted d-block mt-2">The receipt reader will fill in the amount and reference number. Please verify them before submitting.</small>
+            <div id="applicationReceiptPreviewWrapper" class="application-receipt-preview d-none"><img id="applicationReceiptPreviewImage" class="img-fluid rounded" alt="GCash receipt preview"></div>
+            <div class="application-gcash-fields mt-3">
+                <div><label class="form-label" for="applicationPaymentAmount">Receipt amount *</label><input type="number" class="form-control" id="applicationPaymentAmount" step="0.01" min="0.01" placeholder="${expected.toFixed(2)}"></div>
+                <div><label class="form-label" for="applicationPaymentReference">GCash reference number *</label><input class="form-control" id="applicationPaymentReference" inputmode="numeric" maxlength="13" pattern="\d{13}" placeholder="13-digit reference number"></div>
+            </div>`;
+        window.attachGcashOcrAutoFill?.({
+            fileInputId: 'applicationGcashScreenshot',
+            actionButtonId: 'applicationRunOcr',
+            amountInputId: 'applicationPaymentAmount',
+            refInputId: 'applicationPaymentReference',
+            statusId: 'applicationOcrStatus',
+            previewWrapperId: 'applicationReceiptPreviewWrapper',
+            previewImageId: 'applicationReceiptPreviewImage'
+        });
+    }
+
+    function renderApplicationPaymentPanel(financial, application = null, trackedApplication = false) {
+        const payment = application?.application_payment;
+        if (trackedApplication) {
+            if (!payment) {
+                $('applicationPaymentPanel').innerHTML = '';
+                return;
+            }
+            const receiptAvailable = Boolean(application?.payment_receipt);
+            $('applicationPaymentPanel').innerHTML = `<section class="application-payment-panel"><h3>Payment</h3><div class="application-payment-detail mt-3"><strong>${escapeHtml(payment.payment_method)}</strong><div class="small mt-1">${money(payment.amount)} · ${escapeHtml(String(payment.payment_status || '').replaceAll('_', ' '))}</div>${payment.reference_no ? `<div class="small mt-1">Reference: ${escapeHtml(payment.reference_no)}</div>` : ''}${receiptAvailable ? '<button type="button" class="btn btn-primary btn-sm mt-3" id="viewPublicPaymentReceipt"><i class="bi bi-receipt me-1"></i>View Official Receipt</button>' : '<div class="small text-muted mt-2">The official receipt will be available here after the center approves the payment.</div>'}</div></section>`;
+            $('viewPublicPaymentReceipt')?.addEventListener('click', () => showPublicPaymentReceipt(application).catch(error => Swal.fire('Receipt Unavailable', error.message, 'error')));
+            return;
+        }
+        const methods = (state.lookups?.paymentMethods || []).filter(method => paymentMethodIs(method, 'cash') || paymentMethodIs(method, 'gcash'));
+        $('applicationPaymentPanel').innerHTML = `<section class="application-payment-panel"><h3>Payment Method</h3><p class="text-muted mb-0">Choose how to handle the registration fee and downpayment.</p><div class="application-payment-methods">${methods.map((method, index) => `<label class="application-payment-choice"><input type="radio" name="applicationPaymentMethod" value="${escapeHtml(method.payment_method_id)}" ${index === 0 ? 'checked' : ''}><span><strong>${escapeHtml(method.payment_method)}</strong><small>${paymentMethodIs(method, 'cash') ? 'Pay at the selected center after approval' : 'Pay now and upload the GCash receipt'}</small></span></label>`).join('')}</div><div id="applicationPaymentDetail"></div></section>`;
+        document.querySelectorAll('input[name="applicationPaymentMethod"]').forEach(input => input.addEventListener('change', () => renderPaymentMethodDetail(financial)));
+        renderPaymentMethodDetail(financial);
+    }
+
+    function validateApplicationPayment(financial) {
+        const method = selectedApplicationPaymentMethod();
+        if (!method) {
+            Swal.fire('Payment Method Required', 'Choose Cash or GCash before submitting.', 'warning');
+            return null;
+        }
+        const payment = { payment_method_id: method.payment_method_id, payment_amount: Number(financial?.initial_payment || 0), payment_reference_no: '', file: null };
+        if (paymentMethodIs(method, 'cash')) return payment;
+        payment.file = $('applicationGcashScreenshot')?.files?.[0] || null;
+        payment.payment_amount = Number($('applicationPaymentAmount')?.value || 0);
+        payment.payment_reference_no = $('applicationPaymentReference')?.value.trim() || '';
+        const expected = Number(financial?.initial_payment || 0);
+        if (!payment.file) return void Swal.fire('GCash Receipt Required', 'Upload the GCash receipt screenshot.', 'warning');
+        if (payment.file.size > 10 * 1024 * 1024) return void Swal.fire('Receipt Too Large', 'Choose an image no larger than 10MB.', 'warning');
+        if ($('applicationOcrStatus')?.dataset.ocrBusy === 'true') return void Swal.fire('Receipt Is Still Being Read', 'Please wait for OCR to finish.', 'info');
+        if (!payment.payment_amount || Math.abs(payment.payment_amount - expected) > 0.01) return void Swal.fire('Incorrect Receipt Amount', `The GCash receipt must show ${money(expected)}.`, 'warning');
+        if (!/^\d{13}$/.test(payment.payment_reference_no)) return void Swal.fire('Invalid Reference Number', 'The GCash reference number must contain exactly 13 digits.', 'warning');
+        return payment;
     }
 
     function configureBillingActions(trackedApplication = false) {
@@ -574,12 +764,10 @@
     function renderApplicationBilling(item, trackedApplication = false) {
         state.currentApplication = item || null;
         const financial = item?.financial || item;
-        const preschool = isPreschoolProgram(financial?.program || item?.program_name || '');
-        $('applicationBillingPanel').innerHTML = preschool
-            ? renderFinancialPreview(financial, item?.billing, item)
-            : item?.billing?.schedule?.length
-            ? `${renderBilling(item.billing)}<div class="billing-view-notice"><i class="bi bi-eye" aria-hidden="true"></i><span>This billing statement is view-only on the application tracker.</span></div>`
-            : renderFinancialPreview(financial, null, item);
+        state.financialPreview = financial;
+        $('applicationBillingPanel').innerHTML = renderFinancialPreview(financial, item?.billing || null, item);
+        bindBillingServiceToggle(trackedApplication, item);
+        renderApplicationPaymentPanel(financial, item, trackedApplication);
         configureBillingActions(trackedApplication);
     }
 
@@ -588,7 +776,7 @@
         const button = $('reviewBillingButton');
         setBusy(button, true, 'Loading billing…');
         try {
-            const result = await api('getFinancialPreview', { program_id: $('program').value });
+            const result = await api('getFinancialPreview', { program_id: $('program').value, branch_id: $('branch').value });
             if (result.status !== 'success') throw new Error(result.message);
             state.applicationSubmitted = false;
             renderApplicationBilling(result.data, false);
@@ -602,16 +790,29 @@
 
     async function submitApplication() {
         if (!validatePersonalStep() || !validateLearningPreferences()) return;
+        const payment = validateApplicationPayment(state.financialPreview);
+        if (!payment) return;
+        const method = selectedApplicationPaymentMethod();
+        const isGcash = paymentMethodIs(method, 'gcash');
         const confirmed = await Swal.fire({
             icon: 'question', title: 'Submit this application?',
-            text: 'No payment or class schedule will be created yet. The center will review the application first.',
+            text: isGcash
+                ? 'Your GCash receipt will be recorded with the application. After approval, the center can assign a teacher or class.'
+                : 'Please visit the selected center after approval to pay the registration fee and downpayment in cash.',
             showCancelButton: true, confirmButtonText: 'Submit Application'
         });
         if (!confirmed.isConfirmed) return;
         const button = $('submitApplicationButton');
         setBusy(button, true, 'Submitting…');
         try {
-            const result = await api('submitApplication', applicationPayload());
+            const result = await multipartApi('submitApplication', {
+                ...applicationPayload(),
+                include_service: Boolean(state.financialPreview?.service_id),
+                service_id: state.financialPreview?.service_id || null,
+                payment_method_id: payment.payment_method_id,
+                payment_amount: payment.payment_amount,
+                payment_reference_no: payment.payment_reference_no
+            }, payment.file);
             if (result.status !== 'success') throw new Error(result.message);
             const tracking = { application_number: result.application_number, tracking_token: result.tracking_token, student_name: `${personalPayload().first_name} ${personalPayload().last_name}` };
             saveTracking(tracking);
@@ -632,11 +833,15 @@
 
     function statusPresentation(status, item = null) {
         const preschool = isPreschoolProgram(item?.program_name || '');
+        const submittedGcash = String(item?.application_payment?.payment_method || '').toLowerCase() === 'gcash';
+        if (status === 'pending_review' && submittedGcash) {
+            return ['Pending Review', 'bi-hourglass-split', 'Your application and GCash receipt were submitted.', 'The center will review the application and payment proof. Once approved, teacher or class assignment can begin.'];
+        }
         if (status === 'ready_for_scheduling' && preschool) {
             return ['Ready for Class & Section', 'bi-diagram-3', 'Your payment was received and a receipt was issued.', 'The center will assign the student to an available class and section.'];
         }
         return ({
-            pending_review: ['Pending', 'bi-hourglass-split', 'Complete your enrollment at your selected center.', 'Please visit the center so it can review the application and collect the required registration fee and downpayment.'],
+            pending_review: ['Pending', 'bi-hourglass-split', 'Your application is waiting for center review.', 'After approval, please visit the selected center to pay the registration fee and downpayment in cash.'],
             approved_for_payment: ['Approved for Payment', 'bi-building-check', 'Your application is ready for center payment.', 'To complete enrollment, please pay the required registration fee and downpayment at the selected center.'],
             ready_for_scheduling: ['Ready for Scheduling', 'bi-calendar2-check', 'Your payment was received and a receipt was issued.', 'The center will match the preferred availability with a qualified teacher and plot the actual sessions.'],
             enrolled: ['Enrolled', 'bi-check2-circle', 'Enrollment is complete.', 'The system created the student portal account. Check the verified parent or guardian email for the username and temporary password, or contact the center if the message was not received.'],
@@ -666,6 +871,7 @@
             unlockAndShowStep(5);
             $('refreshApplicationStatus').onclick = () => showApplicationStatus(tracking, preserveFormSteps);
             $('startAnotherApplication').onclick = () => window.location.reload();
+            maybeShowNewPublicReceipt(item);
         } catch (error) {
             Swal.fire('Application Not Found', error.response?.data?.message || error.message, 'error');
         }

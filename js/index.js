@@ -7,6 +7,8 @@ import "./modules/receipt.js";
 import "./modules/receipt_mobile.js";
 import "./modules/orf.js";
 import "./modules/billing.js";
+import "./modules/payment_assessment.js?v=20260825-discount-tag";
+import "./utilities/gcash_ocr.js?v=20260825-ref-row-2";
 import { initProgramPage, setupAddProgramModal } from "./modules/program.js?v=20260814-program-filters";
 import { setupAddProgramTypeModal, loadProgramTypes } from "./modules/program_type.js";
 import { initSubjectPage, setupAddSubjectModal } from "./modules/subject.js";
@@ -17,8 +19,8 @@ import { initServicesPage, setupAddServiceModal } from "./modules/services.js";
 import { initPaymentMethodsPage, setupAddPaymentMethodModal } from "./modules/payment_method.js?v=20260812-payment-methods";
 import { loadSchoolYears, setupAddSchoolYearModal, setupEditSchoolYearStatusModal } from "./modules/school_year.js?v=20260814-schedule-details";
 import { initCardManagementPage, initCardManagementEditorPage } from "./modules/card_mangpre.js?v=20260814-school-year-curriculum";
-import "./modules/view_enrollment_pre_play.js?v=20260823-placement-submit-lock";
-import "./modules/view_enrollment.js?v=20260823-unified-pending-status";
+import "./modules/view_enrollment_pre_play.js?v=20260825-discount-tag";
+import "./modules/view_enrollment.js?v=20260825-discount-tag";
 import "./modules/edit_enrollment.js?v=20260823-grade-level-crud";
 import "./modules/employee.js";
 import "./modules/employee_rbac.js";
@@ -29,8 +31,9 @@ import { initSectionAttendancePage } from "./modules/section_attendance.js";
 import { initSectionReportCardsPage } from "./modules/preschool_report_card.js?v=20260814-school-year-curriculum";
 import { openAddSectionModal } from "./modules/section.js";
 import { initProductPage, openAddProductModal, openAddCategoryModal } from "./modules/product.js?v=20260814-product-search";
+import { initProductReleasePage } from "./modules/product_release.js?v=20260825-product-modal-focus";
 import { resetEnrollmentState, openEnrollmentModal, openApplicationDownpaymentModal } from "./modules/addenrollment.js?v=20260823-admin-field-validation";
-import { initNewStudentApplications } from "./modules/enrollment_applications.js?v=20260823-shared-downpayment-modal";
+import { initNewStudentApplications } from "./modules/enrollment_applications.js?v=20260825-preplay-gcash-admin";
 import { initLandingPage } from "./modules/landingpage.js?v=20260823-public-applications";
 import { initLandingPageManager } from "./modules/landing_page_manager.js";
 import { SessionManager } from './studentmodule/session.js?v=20260823-meeting-numbers';
@@ -69,9 +72,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     if (pathname.includes('/student/')) {
-        import("./studentmodule/billingPlayPre.js?v=20260812-student-payment-qr-modal");
+        import("./studentmodule/billingPlayPre.js?v=20260825-assessment-summary");
     } else {
-        import("./modules/billingPlayPre.js");
+        import("./modules/billingPlayPre.js?v=20260825-assessment-summary");
     }
 
     if (pathname.includes('schedule.html')) {
@@ -158,6 +161,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
 
         initProductPage();
+        initProductReleasePage();
     }
 
     else if (pathname.includes('/owner/card_management.html') || pathname.includes('/secretary/card_management.html')) {

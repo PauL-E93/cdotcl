@@ -274,7 +274,7 @@ class StudentPaymentAPI {
                             WHERE bs.enrollment_details_id = ?
                             GROUP BY bs.billing_schedule_id, bs.billing_type, bs.total_amount, bs.original_amount, bs.penalty_amount,
                                      pp.penalty_amount, pp.grace_period_days, bs.status, bs.due_date
-                            ORDER BY bs.billing_schedule_id ASC";
+                            ORDER BY (bs.due_date IS NULL), bs.due_date ASC, bs.billing_schedule_id ASC";
             $stmtSchedule = $this->conn->prepare($sqlSchedule);
             $stmtSchedule->execute([$enrollment_id]);
             $schedule = $stmtSchedule->fetchAll(PDO::FETCH_ASSOC);
@@ -293,9 +293,15 @@ class StudentPaymentAPI {
             $total_paid_global = floatval($stmtGlobal->fetchColumn() ?: 0);
 
             $total_penalty = array_reduce($schedule, function($sum, $item) {
+                if (strtolower((string)($item['status'] ?? '')) === 'cancelled') {
+                    return $sum;
+                }
                 return $sum + floatval($item['penalty_amount'] ?? 0);
             }, 0);
             $schedule_total = array_reduce($schedule, function($sum, $item) {
+                if (strtolower((string)($item['status'] ?? '')) === 'cancelled') {
+                    return $sum;
+                }
                 return $sum + floatval($item['amount'] ?? 0);
             }, 0);
             $total_amount = $schedule_total > 0 ? $schedule_total : floatval($enrollment['total_amount']);
@@ -726,11 +732,15 @@ class StudentPaymentAPI {
             if ($methodName === 'gcash' && (!$uploadedScreenshot || ($uploadedScreenshot['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE)) {
                 throw new Exception("GCash payment screenshot is required.");
             }
+            if ($methodName === 'gcash' && !preg_match('/^\d{13}$/', trim((string)$ref))) {
+                throw new Exception("GCash reference number must contain exactly 13 digits.");
+            }
 
             // --- VALIDATE PAYMENT AMOUNT ---
             $sqlBalance = "SELECT COALESCE((SELECT SUM(bs_total.total_amount)
                                              FROM billing_schedule bs_total
-                                             WHERE bs_total.enrollment_details_id = ed.enrollment_details_id), eh.total_of_program)
+                                             WHERE bs_total.enrollment_details_id = ed.enrollment_details_id
+                                               AND LOWER(COALESCE(bs_total.status, '')) != 'cancelled'), eh.total_of_program)
                                   - COALESCE(SUM(CASE WHEN p.payment_status != 'Declined' THEN p.amount_paid ELSE 0 END), 0) AS current_balance
                            FROM enrollment_details ed
                            JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id
@@ -758,15 +768,9 @@ class StudentPaymentAPI {
                             WHERE bs.enrollment_details_id = ? AND bs.status IN ('unpaid', 'partial')
                             GROUP BY bs.billing_schedule_id, bs.billing_type, bs.total_amount, bs.penalty_amount, bs.due_date
                             ORDER BY
-                                CASE
-                                    WHEN LOWER(bs.billing_type) = 'month 1' THEN 1
-                                    WHEN LOWER(bs.billing_type) = 'miscellaneous' THEN 2
-                                    WHEN bs.billing_type RLIKE '^Month [0-9]+' THEN 3
-                                    ELSE 4
-                                END ASC,
-                                CAST(REGEXP_REPLACE(bs.billing_type, '[^0-9]', '') AS UNSIGNED) ASC,
-                                (bs.due_date IS NULL),
-                                bs.due_date ASC";
+                                CASE WHEN LOWER(bs.billing_type) = 'registration fee' THEN 1
+                                     WHEN LOWER(bs.billing_type) = 'downpayment' THEN 2 ELSE 3 END,
+                                (bs.due_date IS NULL), bs.due_date ASC, bs.billing_schedule_id ASC";
 
             $stmtFind = $this->conn->prepare($sqlFindBills);
             $stmtFind->execute([$enrollment_id]);

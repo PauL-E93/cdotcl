@@ -178,7 +178,8 @@ class PaymentAPI {
             // --- VALIDATE PAYMENT AMOUNT ---
             $sqlBalance = "SELECT COALESCE((SELECT SUM(bs_total.total_amount)
                                              FROM billing_schedule bs_total
-                                             WHERE bs_total.enrollment_details_id = ed.enrollment_details_id), eh.total_of_program)
+                                             WHERE bs_total.enrollment_details_id = ed.enrollment_details_id
+                                               AND LOWER(COALESCE(bs_total.status, '')) != 'cancelled'), eh.total_of_program)
                                   - COALESCE(SUM(CASE WHEN p.payment_status != 'Declined' THEN p.amount_paid ELSE 0 END), 0) AS current_balance
                            FROM enrollment_details ed
                            JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id
@@ -202,17 +203,9 @@ class PaymentAPI {
                             WHERE bs.enrollment_details_id = ? AND bs.status IN ('unpaid', 'partial')
                             GROUP BY bs.billing_schedule_id, bs.billing_type, bs.total_amount, bs.penalty_amount, bs.due_date
                             ORDER BY
-                                CASE
-                                    WHEN LOWER(bs.billing_type) = 'registration fee' THEN 1
-                                    WHEN LOWER(bs.billing_type) = 'downpayment' THEN 2
-                                    WHEN LOWER(bs.billing_type) = 'month 1' THEN 3
-                                    WHEN LOWER(bs.billing_type) = 'miscellaneous' THEN 4
-                                    WHEN bs.billing_type RLIKE '^Month [0-9]+' THEN 5
-                                    ELSE 6
-                                END ASC,
-                                CAST(REGEXP_REPLACE(bs.billing_type, '[^0-9]', '') AS UNSIGNED) ASC,
-                                (bs.due_date IS NULL),
-                                bs.due_date ASC";
+                                CASE WHEN LOWER(bs.billing_type) = 'registration fee' THEN 1
+                                     WHEN LOWER(bs.billing_type) = 'downpayment' THEN 2 ELSE 3 END,
+                                (bs.due_date IS NULL), bs.due_date ASC, bs.billing_schedule_id ASC";
 
             $stmtFind = $this->conn->prepare($sqlFindBills);
             $stmtFind->execute([$enrollment_id]);

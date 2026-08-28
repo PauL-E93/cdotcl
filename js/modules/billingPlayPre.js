@@ -161,6 +161,7 @@ function downloadPrePlayBillingStatementPdf({
     itemizedMiscProducts,
     miscBilling,
     registrationBilling,
+    additionalProductBilling,
     totalTuition,
     otherFeeTotal,
     servicesTotal,
@@ -221,7 +222,8 @@ function downloadPrePlayBillingStatementPdf({
     } else {
         miscBilling.forEach(item => feeRows.push(['Program Item Fees', money(item.amount || item.total_amount)]));
     }
-    if (servicesTotal > 0) feeRows.push([data.services ? `Services (${data.services})` : 'Services', money(servicesTotal)]);
+    additionalProductBilling.forEach(item => feeRows.push([item.billing_type || 'Additional Product', money(item.amount || item.total_amount)]));
+    if (data.services && servicesTotal > 0) feeRows.push([`Services (${data.services})`, money(servicesTotal)]);
 
     if (feeRows.length) {
         pdf.autoTable({
@@ -343,6 +345,11 @@ window.exportPrePlayBillingStatement = async function(enrollmentId) {
             .sort((a, b) => (parseInt(a.billing_type.replace(/\D/g, '')) || 0) - (parseInt(b.billing_type.replace(/\D/g, '')) || 0));
         const miscBilling = allBillingItems.filter(item => String(item.billing_type || '').toLowerCase() === 'miscellaneous');
         const registrationBilling = allBillingItems.filter(item => String(item.billing_type || '').toLowerCase() === 'registration fee');
+        const downpaymentBilling = allBillingItems.filter(item => String(item.billing_type || '').toLowerCase() === 'downpayment');
+        const additionalProductBilling = allBillingItems.filter(item =>
+            String(item.billing_type || '').toLowerCase().startsWith('additional ')
+            && String(item.status || '').toLowerCase() !== 'cancelled'
+        );
         const getAmount = item => Number(item?.amount || item?.total_amount || 0);
         const getPaid = item => Number(item?.paid_amount || 0);
         const getRemaining = item => item?.remaining_amount != null
@@ -363,12 +370,18 @@ window.exportPrePlayBillingStatement = async function(enrollmentId) {
         const totalPenalty = Number(data.total_penalty || 0) || allBillingItems.reduce((sum, item) => sum + Number(item.penalty_amount || 0), 0);
         const discountAmount = Number(data.discount_amount || 0);
         const programTuition = Number(data.program_tuition || 0);
-        const totalTuition = programTuition > 0
+        const monthlyTuitionTotal = programTuition > 0
             ? programTuition * monthlyBilling.length
             : monthlyBilling.reduce((sum, item) => sum + getAmount(item), 0);
+        const downpaymentTotal = downpaymentBilling.reduce((sum, item) => sum + getAmount(item), 0);
+        const totalTuition = monthlyBilling.length > 0 ? monthlyTuitionTotal : downpaymentTotal;
         const registrationFeeTotal = registrationBilling.reduce((sum, item) => sum + getAmount(item), 0) || Number(data.registration_fee || 0);
-        const otherFeeTotal = Math.max(0, (miscTotalFromSchedule || miscProductsTotal) + registrationFeeTotal);
-        const servicesTotal = Math.max(0, grandTotal + discountAmount - totalTuition - otherFeeTotal - totalPenalty);
+        const additionalProductTotal = additionalProductBilling.reduce((sum, item) => sum + getAmount(item), 0);
+        const otherFeeTotal = Math.max(0, (miscTotalFromSchedule || miscProductsTotal) + registrationFeeTotal + additionalProductTotal);
+        const hasMonthlyService = Boolean(String(data.services || '').trim());
+        const servicesTotal = hasMonthlyService
+            ? Math.max(0, grandTotal + discountAmount - totalTuition - otherFeeTotal - totalPenalty)
+            : 0;
         const balance = Number(data.balance || 0) || allBillingItems
             .filter(item => ['unpaid', 'partial'].includes(String(item.status || '').toLowerCase()))
             .reduce((sum, item) => sum + getRemaining(item), 0);
@@ -384,6 +397,7 @@ window.exportPrePlayBillingStatement = async function(enrollmentId) {
                 itemizedMiscProducts,
                 miscBilling,
                 registrationBilling,
+                additionalProductBilling,
                 totalTuition,
                 otherFeeTotal,
                 servicesTotal,
@@ -402,7 +416,8 @@ window.exportPrePlayBillingStatement = async function(enrollmentId) {
             } else {
                 miscBilling.forEach(item => feeRows.push(['Program Item Fees', getAmount(item)]));
             }
-            if (servicesTotal > 0) feeRows.push([data.services ? `Services (${data.services})` : 'Services', servicesTotal]);
+            additionalProductBilling.forEach(item => feeRows.push([item.billing_type || 'Additional Product', getAmount(item)]));
+            if (hasMonthlyService && servicesTotal > 0) feeRows.push([`Services (${data.services})`, servicesTotal]);
             const recordedTotalPaid = Number(data.total_paid);
             const effectiveTotalPaid = Number.isFinite(recordedTotalPaid) ? recordedTotalPaid : totalPaymentsMade;
             const className = enrollmentDetails.class_id_from_section || enrollmentDetails.class_id;
@@ -487,6 +502,11 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
 
     const miscBilling = allBillingItems.filter(s => s.billing_type && s.billing_type.toLowerCase() === 'miscellaneous');
     const registrationBilling = allBillingItems.filter(s => s.billing_type && s.billing_type.toLowerCase() === 'registration fee');
+    const downpaymentBilling = allBillingItems.filter(item => String(item.billing_type || '').toLowerCase() === 'downpayment');
+    const additionalProductBilling = allBillingItems.filter(item =>
+        String(item.billing_type || '').toLowerCase().startsWith('additional ')
+        && String(item.status || '').toLowerCase() !== 'cancelled'
+    );
     const formatCurrency = amount => parseFloat(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const miscTotalFromSchedule = miscBilling.reduce((sum, item) => sum + parseFloat(item.amount || item.total_amount || 0), 0);
     const registrationTotal = registrationBilling.reduce((sum, item) => sum + parseFloat(item.amount || item.total_amount || 0), 0);
@@ -510,12 +530,18 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
         ? `${formatCurrency(discountValue).replace(/\.00$/, '')}%`
         : `₱${formatCurrency(discountValue || discountAmount)}`;
     const programTuition = parseFloat(data.program_tuition || 0);
-    const totalTuition = programTuition > 0
+    const monthlyTuitionTotal = programTuition > 0
         ? programTuition * monthlyBilling.length
         : monthlyTotal;
+    const downpaymentTotal = downpaymentBilling.reduce((sum, item) => sum + parseFloat(item.amount || item.total_amount || 0), 0);
+    const totalTuition = monthlyBilling.length > 0 ? monthlyTuitionTotal : downpaymentTotal;
     const registrationFeeTotal = registrationTotal || parseFloat(data.registration_fee || 0);
-    const otherFeeTotal = Math.max(0, miscTotalFromProducts + registrationFeeTotal);
-    const servicesTotal = Math.max(0, grandTotal + discountAmount - totalTuition - otherFeeTotal - totalPenalty);
+    const additionalProductTotal = additionalProductBilling.reduce((sum, item) => sum + parseFloat(item.amount || item.total_amount || 0), 0);
+    const otherFeeTotal = Math.max(0, miscTotalFromProducts + registrationFeeTotal + additionalProductTotal);
+    const hasMonthlyService = Boolean(String(data.services || '').trim());
+    const servicesTotal = hasMonthlyService
+        ? Math.max(0, grandTotal + discountAmount - totalTuition - otherFeeTotal - totalPenalty)
+        : 0;
 
     const getBillingAmount = item => parseFloat(item?.amount || item?.total_amount || 0);
     const getBillingPaid = item => parseFloat(item?.paid_amount || 0);
@@ -552,12 +578,12 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
     const monthOneRemaining = getBillingRemaining(monthOneBill);
     const firstMonthlyDue = monthlyBilling.find(item => getBillingRemaining(item) > 0);
     const miscRemaining = miscBilling.reduce((sum, item) => sum + getBillingRemaining(item), 0);
-    const hasMonthlyService = Boolean(data.services);
     const baseMonthlyAmount = monthlyBilling[1] ? getBillingBaseAmount(monthlyBilling[1]) : getBillingBaseAmount(monthOneBill);
     const monthOneHasIncludedFees = monthOneBill && getBillingBaseAmount(monthOneBill) > baseMonthlyAmount + 0.01;
     const shouldBundleMonthOneFees = monthOneBill && miscRemaining > 0;
-    const firstDueBill = shouldBundleMonthOneFees ? monthOneBill : (firstMonthlyDue || dueScheduleItems[0]);
-    const isFirstMonthDue = shouldBundleMonthOneFees || (firstMonthlyDue && monthOneBill && String(firstMonthlyDue.billing_type) === String(monthOneBill.billing_type));
+    const firstDueBill = shouldBundleMonthOneFees ? monthOneBill : (dueScheduleItems[0] || firstMonthlyDue);
+    const isFirstMonthDue = Boolean(firstDueBill && monthOneBill
+        && String(firstDueBill.id ?? firstDueBill.billing_type) === String(monthOneBill.id ?? monthOneBill.billing_type));
     const firstDueLabelParts = [];
     if (firstDueBill) {
         firstDueLabelParts.push(firstDueBill.billing_type);
@@ -645,6 +671,12 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
     const registrationRows = registrationBilling.map(item => `
         <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
             <div class="text-muted">${item.billing_type}</div>
+            <div class="fw-bold text-danger">₱${formatCurrency(item.amount || item.total_amount)}</div>
+        </div>
+    `).join('');
+    const additionalProductRows = additionalProductBilling.map(item => `
+        <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+            <div class="text-muted">${item.billing_type || 'Additional Product'}</div>
             <div class="fw-bold text-danger">₱${formatCurrency(item.amount || item.total_amount)}</div>
         </div>
     `).join('');
@@ -745,10 +777,10 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                                 <div class="small text-muted text-uppercase">Other Fees</div>
                                 </div>
                             </div>
-                            ${registrationRows}${(miscBilling.length > 0 || miscProducts.length > 0) ? miscRows : `<div class="text-muted small">No other fees.</div>`}
+                            ${registrationRows}${miscRows}${additionalProductRows}${(!registrationRows && !miscRows && !additionalProductRows) ? `<div class="text-muted small">No other fees.</div>` : ''}
                             <div class="d-flex justify-content-between align-items-center border-top pt-3 mt-3">
                                 <div class="fw-bold">Total</div>
-                                <div class="fw-bold text-danger">₱${formatCurrency(miscTotalFromProducts + registrationFeeTotal)}</div>
+                                <div class="fw-bold text-danger">₱${formatCurrency(otherFeeTotal)}</div>
                             </div>
                         </div>
                     </div>
@@ -765,7 +797,7 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                                 <div class="text-muted">Other Fee (Total)</div>
                                 <div class="fw-bold">₱${formatCurrency(otherFeeTotal)}</div>
                             </div>
-                            ${servicesTotal > 0 ? `
+                            ${hasMonthlyService && servicesTotal > 0 ? `
                             <div class="d-flex justify-content-between align-items-center mb-3">
                                 <div class="text-muted">Services${data.services ? ` (${data.services})` : ''}</div>
                                 <div class="fw-bold">₱${formatCurrency(servicesTotal)}</div>

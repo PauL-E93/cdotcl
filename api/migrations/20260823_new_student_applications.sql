@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS enrollment_applications (
     branch_id INT(111) NOT NULL,
     school_year_id INT(11) NOT NULL,
     grade_level_id INT(11) DEFAULT NULL,
+    requested_service_id INT(11) DEFAULT NULL,
     goal TEXT DEFAULT NULL,
     status ENUM(
         'pending_review',
@@ -55,11 +56,13 @@ CREATE TABLE IF NOT EXISTS enrollment_applications (
     KEY idx_enrollment_application_status (status, created_at),
     KEY idx_enrollment_application_student (student_id),
     KEY idx_enrollment_application_branch (branch_id),
+    KEY idx_enrollment_application_service (requested_service_id),
     CONSTRAINT fk_application_student FOREIGN KEY (student_id) REFERENCES student (student_id),
     CONSTRAINT fk_application_program FOREIGN KEY (program_id) REFERENCES program (program_id),
     CONSTRAINT fk_application_branch FOREIGN KEY (branch_id) REFERENCES branch (branch_id),
     CONSTRAINT fk_application_school_year FOREIGN KEY (school_year_id) REFERENCES school_years (school_year_id),
     CONSTRAINT fk_application_grade FOREIGN KEY (grade_level_id) REFERENCES grade_level (grade_level_id),
+    CONSTRAINT fk_application_service FOREIGN KEY (requested_service_id) REFERENCES service (service_id),
     CONSTRAINT fk_application_reviewer FOREIGN KEY (reviewed_by) REFERENCES employee (employee_id),
     CONSTRAINT fk_application_enrollment FOREIGN KEY (enrollment_details_id) REFERENCES enrollment_details (enrollment_details_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -84,4 +87,25 @@ CREATE TABLE IF NOT EXISTS enrollment_application_availability (
     PRIMARY KEY (availability_id),
     UNIQUE KEY uq_application_availability (application_id, day, start_time, end_time),
     CONSTRAINT fk_application_availability_application FOREIGN KEY (application_id) REFERENCES enrollment_applications (application_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS enrollment_application_payments (
+    application_payment_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    application_id BIGINT UNSIGNED NOT NULL,
+    payment_method_id INT(11) NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    reference_no VARCHAR(100) DEFAULT NULL,
+    proof_pic VARCHAR(255) DEFAULT NULL,
+    payment_status ENUM('awaiting_cash','pending_review','received','declined') NOT NULL,
+    reviewed_by INT(11) DEFAULT NULL,
+    reviewed_at DATETIME DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (application_payment_id),
+    UNIQUE KEY uq_application_payment_application (application_id),
+    KEY idx_application_payment_method (payment_method_id),
+    KEY idx_application_payment_status (payment_status),
+    CONSTRAINT fk_application_payment_application FOREIGN KEY (application_id) REFERENCES enrollment_applications (application_id) ON DELETE CASCADE,
+    CONSTRAINT fk_application_payment_method FOREIGN KEY (payment_method_id) REFERENCES payment_method (payment_method_id),
+    CONSTRAINT fk_application_payment_reviewer FOREIGN KEY (reviewed_by) REFERENCES employee (employee_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

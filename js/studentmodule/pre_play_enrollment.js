@@ -385,48 +385,7 @@ function ensurePrePlayPaymentOcrHelpers() {
     if (typeof window.attachGcashOcrAutoFill === 'function') {
         return Promise.resolve();
     }
-
-    if (window.__prePlayBillingScriptPromise) {
-        return window.__prePlayBillingScriptPromise;
-    }
-
-    window.__prePlayBillingScriptPromise = new Promise((resolve, reject) => {
-        const existingScript = document.querySelector('script[src*="studentmodule/billingPlayPre.js"]');
-
-        if (existingScript) {
-            existingScript.addEventListener('load', () => {
-                if (typeof window.attachGcashOcrAutoFill === 'function') {
-                    resolve();
-                    return;
-                }
-
-                reject(new Error('Pre-play billing OCR helpers are unavailable after script load.'));
-            }, { once: true });
-            existingScript.addEventListener('error', () => reject(new Error('Unable to load pre-play billing OCR helpers.')), { once: true });
-
-            setTimeout(() => {
-                if (typeof window.attachGcashOcrAutoFill === 'function') {
-                    resolve();
-                }
-            }, 0);
-            return;
-        }
-
-        const script = document.createElement('script');
-        script.src = '../../js/studentmodule/billingPlayPre.js';
-        script.onload = () => {
-            if (typeof window.attachGcashOcrAutoFill === 'function') {
-                resolve();
-                return;
-            }
-
-            reject(new Error('Pre-play billing OCR helpers are unavailable after script load.'));
-        };
-        script.onerror = () => reject(new Error('Unable to load pre-play billing OCR helpers.'));
-        document.head.appendChild(script);
-    });
-
-    return window.__prePlayBillingScriptPromise;
+    return Promise.reject(new Error('The shared GCash OCR helper is unavailable.'));
 }
 
 function loadPrePlayLookups() {

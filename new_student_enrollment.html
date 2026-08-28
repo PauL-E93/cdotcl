@@ -6,7 +6,7 @@
     <title>New Student Enrollment | CDO Tutor</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="css/new_student_enrollment.css?v=20260823-centered-application-intro">
+    <link rel="stylesheet" href="css/new_student_enrollment.css?v=20260825-admin-billing-theme">
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script src="js/vendor/sweetalert2.all.min.js"></script>
 </head>
@@ -43,7 +43,7 @@
         <section class="application-intro">
             <span class="application-eyebrow">ONLINE APPLICATION</span>
             <h1>Start your child’s learning journey.</h1>
-            <p>This form is for new students only. Complete the application online, then visit your selected center after approval to pay the downpayment and finish enrollment.</p>
+            <p>This form is for new students only. Complete the application and choose Cash or GCash for the registration fee and downpayment.</p>
             <div class="application-notice"><i class="bi bi-info-circle-fill"></i><span>A parent email may be shared by multiple children. A student is considered existing only when the same email, complete name, and birthdate all match.</span></div>
         </section>
 
@@ -162,8 +162,9 @@
                 </section>
 
                 <section class="form-step" data-form-step="4">
-                    <div class="form-section-heading"><div><span>STEP 4</span><h2>Billing Overview</h2></div><p>This is a view-only estimate. Payment is collected by the selected center after it reviews the application.</p></div>
+                    <div class="form-section-heading"><div><span>STEP 4</span><h2>Billing Overview</h2></div><p>Review the amount due now and the program fee breakdown, then choose how you will pay.</p></div>
                     <div id="applicationBillingPanel"></div>
+                    <div id="applicationPaymentPanel"></div>
                     <div class="form-actions" id="billingFormActions"><button type="button" class="btn btn-light" id="billingBackButton" data-go-step="3"><i class="bi bi-arrow-left me-2"></i>Back</button><button type="button" class="btn btn-primary" id="submitApplicationButton">Submit Application <i class="bi bi-send ms-2"></i></button><button type="button" class="btn btn-primary d-none" id="continueToApplicationStatus">Application Status <i class="bi bi-arrow-right ms-2"></i></button></div>
                 </section>
 
@@ -175,6 +176,7 @@
     </main>
 
     <footer class="application-footer"><span>CDO Tutor and Learning Center</span><span>Need help? Contact your preferred center.</span></footer>
-    <script src="js/new_student_enrollment.js?v=20260823-tutorial-billing-overview" defer></script>
+    <script src="js/utilities/gcash_ocr.js?v=20260825-ref-row-2" defer></script>
+    <script src="js/new_student_enrollment.js?v=20260825-admin-billing-theme" defer></script>
 </body>
 </html>

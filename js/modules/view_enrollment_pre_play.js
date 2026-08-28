@@ -118,6 +118,12 @@ function isStudentPrePlayPage() {
     return window.location.pathname.includes('/student/');
 }
 
+function shouldIncludePrePlayApplications() {
+    const pathname = window.location.pathname.toLowerCase();
+    return (pathname.includes('enrollement_pre_play.html') || pathname.includes('payment_pre_play.html'))
+        && ['/owner/', '/secretary/', '/branch_admin/', '/auditor/'].some(rolePath => pathname.includes(rolePath));
+}
+
 function getEnrollmentApiUrl(operation, params = '') {
     const baseUrl = isStudentPrePlayPage()
         ? '../../api/student/enrollment.php'
@@ -133,7 +139,7 @@ function getPrePlayListUrl(summaryFilter = 'total') {
         : getEnrollmentApiUrl('getEnrollments', '&type=preschool');
     const params = [];
 
-    if (window.location.pathname.includes('/owner/enrollement_pre_play.html')) {
+    if (shouldIncludePrePlayApplications()) {
         params.push('include_applications=1');
     }
 
@@ -160,7 +166,7 @@ function getPrePlayListUrl(summaryFilter = 'total') {
 }
 
 function getPrePlayStatsUrl() {
-    const includeApplications = window.location.pathname.includes('/owner/enrollement_pre_play.html')
+    const includeApplications = shouldIncludePrePlayApplications()
         ? '&include_applications=1'
         : '';
 
@@ -576,16 +582,24 @@ function renderEnrollments(enrollments) {
         const applicationStatusLabels = {
             pending_review: 'PENDING',
             approved_for_payment: 'AWAITING CENTER PAYMENT',
-            ready_for_scheduling: 'READY FOR CLASS & SECTION'
+            ready_for_scheduling: 'READY FOR CLASS & SECTION',
+            rejected: 'REJECTED',
+            cancelled: 'CANCELLED'
         };
         const applicationStatus = String(item.application_status || '').toLowerCase();
         const isPendingOnlineApplication = Boolean(item.application_id && applicationStatusLabels[applicationStatus]);
-        const displayStatus = useOwnerPaymentStatus
-            ? paymentStatus
-            : (applicationStatusLabels[applicationStatus] || (item.status || '').toUpperCase());
+        const isOnlineApplicationPaymentTask = useOwnerPaymentStatus
+            && Boolean(item.application_id)
+            && !item.enrollment_details_id
+            && ['pending_review', 'approved_for_payment'].includes(applicationStatus);
+        const displayStatus = isOnlineApplicationPaymentTask
+            ? applicationStatusLabels[applicationStatus]
+            : (useOwnerPaymentStatus ? paymentStatus : (applicationStatusLabels[applicationStatus] || (item.status || '').toUpperCase()));
 
         let statusBadge;
-        if (useOwnerPaymentStatus) {
+        if (isOnlineApplicationPaymentTask) {
+            statusBadge = 'warning text-dark';
+        } else if (useOwnerPaymentStatus) {
             const paymentStatusClasses = {
                 'Fully Paid': 'success',
                 'Partial': 'warning',
@@ -595,7 +609,11 @@ function renderEnrollments(enrollments) {
             };
             statusBadge = paymentStatusClasses[paymentStatus] || 'secondary';
         } else if (isPendingOnlineApplication) {
-            statusBadge = applicationStatus === 'ready_for_scheduling' ? 'primary' : 'warning text-dark';
+            statusBadge = {
+                ready_for_scheduling: 'primary',
+                rejected: 'danger',
+                cancelled: 'secondary'
+            }[applicationStatus] || 'warning text-dark';
         } else {
             switch (enrollmentLifecycleStatus) {
                 case 'active':
@@ -627,12 +645,30 @@ function renderEnrollments(enrollments) {
         const canApprovePayment = canUsePaymentPermission('approve');
         const canExportPayment = canUsePaymentPermission('export');
 
-        if (isPaymentPage) {
+        if (isOnlineApplicationPaymentTask) {
+            const applicationPaymentMethod = String(item.application_payment_method || '').toLowerCase();
+            const paymentTaskLabel = applicationStatus === 'approved_for_payment'
+                ? 'Pay Enrollment'
+                : (applicationPaymentMethod.includes('gcash') ? 'Check GCash Payment' : 'Review & Pay Enrollment');
+            actionButtons = `
+                <div class="dropdown" onclick="event.stopPropagation();">
+                    <button class="btn btn-sm btn-outline-secondary border-0" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Online application payment actions">
+                        <i class="bi bi-three-dots-vertical"></i>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); window.viewNewStudentApplication(${Number(item.application_id)})"><i class="bi bi-wallet2 me-2"></i>${paymentTaskLabel}</a></li>
+                    </ul>
+                </div>
+            `;
+        } else if (isPaymentPage) {
             const payCall = isPreschoolPage ? `openBillingPlayPreModal(${item.enrollment_details_id})` : `openBillingModalByProgram(${item.enrollment_details_id}, '${item.program_name || ''}')`;
             const paymentActions = [
                 `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); ${payCall}"><i class="bi bi-credit-card me-2"></i>${canCreatePayment ? 'Pay' : 'View Billing'}</a></li>`,
                 `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); openPrePlayPaymentHistoryModal(${item.enrollment_details_id}, ${isStudentPrePlayPage() || !canApprovePayment})"><i class="bi bi-eye me-2"></i>View</a></li>`
             ];
+            if (['/owner/', '/secretary/', '/branch_admin/', '/auditor/'].some(rolePath => pagePath.includes(rolePath))) {
+                paymentActions.push(`<li><a class="dropdown-item fw-semibold text-dark" href="#" onclick="event.preventDefault(); openPaymentAssessment(${item.enrollment_details_id})"><i class="bi bi-clipboard2-check me-2"></i>Assessment</a></li>`);
+            }
             if (canExportPayment) {
                 paymentActions.push(`<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); window.exportPrePlayBillingStatement(${item.enrollment_details_id})"><i class="bi bi-download me-2"></i>Export</a></li>`);
             }
@@ -813,7 +849,7 @@ function loadEnrollmentFilterLookups() {
             const branchSelect = document.getElementById('enrollment-branch-filter');
 
             if (Array.isArray(data.statuses)) {
-                populateEnrollmentStatusOptions(statusSelect, data.statuses);
+                populateEnrollmentStatusOptions(statusSelect, data.statuses, shouldIncludePrePlayApplications());
             }
             if (Array.isArray(data.subjects)) {
                 if (isStudentPrePlayPage()) {
@@ -832,7 +868,16 @@ function loadEnrollmentFilterLookups() {
         .catch(err => console.error('Error loading enrollment filter lookups:', err));
 }
 
-function populateEnrollmentStatusOptions(statusSelect, statuses = []) {
+const prePlayApplicationStatusOptions = [
+    ['application_pending_review', 'Online Application — Pending Review'],
+    ['application_approved_for_payment', 'Online Application — Awaiting Center Payment'],
+    ['application_ready_for_scheduling', 'Online Application — Payment Received / Ready for Class & Section'],
+    ['application_enrolled', 'Online Application — Enrolled'],
+    ['application_rejected', 'Online Application — Rejected'],
+    ['application_cancelled', 'Online Application — Cancelled']
+];
+
+function populateEnrollmentStatusOptions(statusSelect, statuses = [], includeApplicationStatuses = false) {
     if (!statusSelect) return;
     statusSelect.innerHTML = '';
     const placeholderOption = document.createElement('option');
@@ -847,6 +892,18 @@ function populateEnrollmentStatusOptions(statusSelect, statuses = []) {
         option.textContent = status;
         statusSelect.appendChild(option);
     });
+
+    if (includeApplicationStatuses) {
+        const applicationGroup = document.createElement('optgroup');
+        applicationGroup.label = 'Online Application Status';
+        prePlayApplicationStatusOptions.forEach(([value, label]) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = label;
+            applicationGroup.appendChild(option);
+        });
+        statusSelect.appendChild(applicationGroup);
+    }
 }
 
 function populateEnrollmentSubjectOptions(subjectSelect, subjects = []) {

@@ -320,7 +320,7 @@
                                 WHERE bs.enrollment_details_id = ?
                                 GROUP BY bs.billing_schedule_id, bs.billing_type, bs.total_amount, bs.original_amount, bs.penalty_amount,
                                          pp.penalty_amount, pp.grace_period_days, bs.status, bs.due_date
-                                ORDER BY bs.billing_schedule_id ASC";
+                                ORDER BY (bs.due_date IS NULL), bs.due_date ASC, bs.billing_schedule_id ASC";
                 $stmtSchedule = $this->conn->prepare($sqlSchedule);
                 $stmtSchedule->execute([$enrollment_id]);
                 $schedule = $stmtSchedule->fetchAll(PDO::FETCH_ASSOC);
@@ -338,9 +338,15 @@
                 $total_paid_global = floatval($stmtGlobal->fetchColumn() ?: 0);
 
                 $total_penalty = array_reduce($schedule, function($sum, $item) {
+                    if (strtolower((string)($item['status'] ?? '')) === 'cancelled') {
+                        return $sum;
+                    }
                     return $sum + floatval($item['penalty_amount'] ?? 0);
                 }, 0);
                 $schedule_total = array_reduce($schedule, function($sum, $item) {
+                    if (strtolower((string)($item['status'] ?? '')) === 'cancelled') {
+                        return $sum;
+                    }
                     return $sum + floatval($item['amount'] ?? 0);
                 }, 0);
                 $total_amount = $schedule_total > 0 ? $schedule_total : floatval($enrollment['total_amount']);
@@ -406,4 +412,3 @@
         case "getPaymentMethods": $api->getPaymentMethods(); break;
         case "getPaymentDueSummary": $api->getPaymentDueSummary(); break;        case "getPrePlayPaymentDueSummary": $api->getPrePlayPaymentDueSummary(); break;        default: echo json_encode(["status" => "error", "message" => "Invalid Operation"]); break;
     }?>
-

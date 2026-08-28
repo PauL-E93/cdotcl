@@ -1,308 +1,331 @@
-// js/modules/product_release.js
-import { guardProductPermission } from './product_rbac.js';
+import { canUseProductPermission, guardProductPermission } from './product_rbac.js';
 
-const API_BASE_URL = '../../api/admin/';
-const releasedStudents = new Set(); // Track released students in this session
-let releasedStudentsHistory = []; // Store full student data for history
+const RELEASE_API = '../../api/admin/product_release.php';
+let releaseOrders = [];
 
-export async function getReleaseStudents(search = '') {
-    try {
-        const params = new URLSearchParams({ operation: 'getReleaseStudents' });
-        if (search) params.append('search', search);
-
-        const response = await fetch(`${API_BASE_URL}enrollment.php?${params.toString()}`);
-        const data = await response.json();
-        if (data.status === 'success') {
-            // Filter out already released students
-            return data.data.filter(student => !releasedStudents.has(student.enrollment_details_id));
-        }
-        return [];
-    } catch (error) {
-        console.error('Error fetching release students:', error);
-        return [];
-    }
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;'
+    })[character]);
 }
 
-export function getReleasedStudentsHistory() {
-    return releasedStudentsHistory;
+function money(value) {
+    return `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function addToReleasedHistory(student) {
-    releasedStudentsHistory.push(student);
-    // Sync with product_history module
-    import('./product_history.js').then(module => {
-        module.updateReleasedStudentsData(releasedStudentsHistory);
+function niceDateTime(value) {
+    if (!value) return '—';
+    const date = new Date(String(value).replace(' ', 'T'));
+    return Number.isNaN(date.getTime()) ? escapeHtml(value) : date.toLocaleString('en-PH', {
+        year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
     });
 }
 
-export async function getProductsByProgram(programId) {
-    try {
-        const response = await fetch(`${API_BASE_URL}program_products.php?operation=getProductsByProgram&program_id=${programId}`);
-        const data = await response.json();
-        if (data.status === 'success') {
-            return data.data;
-        }
-        return [];
-    } catch (error) {
-        console.error('Error fetching products:', error);
-        return [];
-    }
+function displayStatus(order) {
+    if (order.status === 'released') return { label: 'Released', badge: 'success' };
+    if (!order.has_release_details) return { label: 'Uniform size required', badge: 'info text-dark' };
+    if (!order.payment_ready) return { label: 'Waiting for payment', badge: 'warning text-dark' };
+    if (order.stock_quantity < order.quantity) return { label: 'Insufficient stock', badge: 'danger' };
+    if (order.ready_to_release) return { label: 'Ready to release', badge: 'primary' };
+    return { label: 'Not ready', badge: 'secondary' };
 }
 
-async function openProductReleaseDetailsModal(student) {
-    if (!guardProductPermission('edit', 'You do not have permission to manage product releases.')) {
+async function request(operation, payload = {}, method = 'GET') {
+    const response = method === 'GET'
+        ? await axios.get(RELEASE_API, { params: { operation, ...payload } })
+        : await axios.post(`${RELEASE_API}?operation=${encodeURIComponent(operation)}`, { operation, ...payload });
+    if (response.data?.status !== 'success') throw new Error(response.data?.message || 'Product release request failed.');
+    return response.data;
+}
+
+function orderActionHtml(order) {
+    if (order.status === 'released' || !canUseProductPermission('edit')) return '<span class="text-muted">—</span>';
+    const detailsButton = order.requires_size ? `<button type="button" class="btn btn-sm ${order.has_release_details ? 'btn-outline-primary' : 'btn-primary'} product-details-action" data-order-id="${order.product_order_id}">
+        <i class="bi bi-card-checklist me-1"></i>${order.has_release_details ? 'Edit uniform size' : 'Set uniform size'}
+    </button>` : '';
+    const releaseButton = order.ready_to_release
+        ? `<button type="button" class="btn btn-sm btn-success product-release-action" data-order-id="${order.product_order_id}" ${order.stock_quantity < order.quantity ? 'disabled' : ''}>
+            <i class="bi bi-box-arrow-up-right me-1"></i>Release
+          </button>`
+        : (!order.has_release_details ? '' : '<span class="small text-muted">Payment required</span>');
+    return `<div class="d-flex flex-wrap gap-1 align-items-center">${detailsButton}${releaseButton}</div>`;
+}
+
+function bindOrderActions(root) {
+    root.querySelectorAll('.product-release-action').forEach(button => {
+        button.addEventListener('click', () => releaseProductOrder(Number(button.dataset.orderId)));
+    });
+    root.querySelectorAll('.product-details-action').forEach(button => {
+        button.addEventListener('click', () => editProductDetails(Number(button.dataset.orderId)));
+    });
+}
+
+function renderReleaseOrders() {
+    const tableBody = document.getElementById('productReleaseTableBody');
+    if (!tableBody) return;
+    const filter = document.getElementById('product-release-filter')?.value || 'pending';
+    const query = document.getElementById('search-input')?.value.trim().toLowerCase() || '';
+    const grouped = new Map();
+    releaseOrders.forEach(order => {
+        const key = String(order.enrollment_details_id);
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(order);
+    });
+
+    const students = Array.from(grouped.values()).map(allOrders => {
+        const filteredOrders = allOrders.filter(order => filter === 'all'
+            || (filter === 'released' ? order.status === 'released' : order.status !== 'released'));
+        const haystack = allOrders.map(order => `${order.student_name} ${order.student_id_number} ${order.product_name} ${order.program_name} ${order.product_order_id}`).join(' ').toLowerCase();
+        return { allOrders, filteredOrders, matches: filteredOrders.length > 0 && (!query || haystack.includes(query)) };
+    }).filter(group => group.matches);
+
+    if (!students.length) {
+        tableBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">No student product orders match this view.</td></tr>';
         return;
     }
 
-    const existingModal = document.getElementById('productReleaseDetailsModal');
-    if (existingModal) {
-        const existingModalInstance = bootstrap.Modal.getInstance(existingModal);
-        if (existingModalInstance) existingModalInstance.dispose();
-        existingModal.remove();
+    tableBody.innerHTML = students.map(group => {
+        const first = group.allOrders[0];
+        const orders = group.filteredOrders;
+        const ready = orders.filter(order => order.ready_to_release && order.status !== 'released').length;
+        const needsDetails = orders.filter(order => !order.has_release_details && order.status !== 'released').length;
+        const waiting = orders.filter(order => !order.payment_ready && order.status !== 'released').length;
+        const released = orders.filter(order => order.status === 'released').length;
+        let status = { label: `${orders.length} order${orders.length === 1 ? '' : 's'}`, badge: 'secondary' };
+        if (needsDetails > 0) status = { label: `${needsDetails} need uniform size`, badge: 'info text-dark' };
+        else if (ready > 0) status = { label: `${ready} ready to release`, badge: 'primary' };
+        else if (waiting > 0) status = { label: `${waiting} waiting for payment`, badge: 'warning text-dark' };
+        else if (released === orders.length) status = { label: 'All released', badge: 'success' };
+        const pendingTotal = group.allOrders.filter(order => order.status !== 'released').length;
+        const releasedTotal = group.allOrders.length - pendingTotal;
+        return `<tr data-release-row>
+            <td><div class="fw-semibold">${escapeHtml(first.student_name)}</div><div class="small text-muted">${escapeHtml(first.student_id_number || '')}</div></td>
+            <td>${escapeHtml(first.program_name)}</td>
+            <td><div class="fw-semibold">${group.allOrders.length} total</div><div class="small text-muted">${pendingTotal} pending · ${releasedTotal} released</div></td>
+            <td><span class="badge bg-${status.badge}">${status.label}</span></td>
+            <td><button type="button" class="btn btn-sm btn-outline-primary view-student-orders" data-enrollment-id="${first.enrollment_details_id}"><i class="bi bi-eye me-1"></i>View Orders</button></td>
+        </tr>`;
+    }).join('');
+
+    tableBody.querySelectorAll('.view-student-orders').forEach(button => {
+        button.addEventListener('click', () => openStudentOrdersModal(Number(button.dataset.enrollmentId)));
+    });
+}
+
+function openStudentOrdersModal(enrollmentId) {
+    const orders = releaseOrders.filter(order => order.enrollment_details_id === enrollmentId);
+    if (!orders.length) return;
+    const first = orders[0];
+    const existing = document.getElementById('studentProductOrdersModal');
+    if (existing) {
+        bootstrap.Modal.getInstance(existing)?.dispose();
+        existing.remove();
+        document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('padding-right');
     }
 
-    // Clean backdrops
-    document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
-    document.body.classList.remove('modal-open');
+    const rows = orders.map(order => {
+        const status = displayStatus(order);
+        const typeLabel = order.order_type === 'additional_request' ? 'Additional request' : 'Included in program';
+        const paymentLabel = order.order_type === 'enrollment_bundle' ? 'Included' : (order.payment_ready ? 'Paid' : 'Waiting for payment');
+        const releaseDetails = order.status === 'released'
+            ? `<div class="small text-muted mt-1">${niceDateTime(order.released_at)}${order.released_by_name ? ` · ${escapeHtml(order.released_by_name)}` : ''}</div>`
+            : '';
+        return `<tr>
+            <td><div class="fw-semibold">${escapeHtml(order.product_name)} × ${order.quantity}</div><div class="small text-muted">Order #${order.product_order_id}</div></td>
+            <td><span class="badge bg-light text-dark border">${typeLabel}</span><div class="small mt-1">${money(order.line_total)}</div></td>
+            <td>${order.item_note ? escapeHtml(order.item_note) : (order.requires_size ? '<span class="text-danger small">Uniform size required</span>' : '<span class="text-muted small">Not required</span>')}</td>
+            <td>${paymentLabel}</td>
+            <td><span class="badge bg-${status.badge}">${status.label}</span>${releaseDetails}</td>
+            <td>${orderActionHtml(order)}</td>
+        </tr>`;
+    }).join('');
 
-    const products = await getProductsByProgram(student.program_id || 0);
-
-    let productsHtml = '';
-    if (!products || products.length === 0) {
-        productsHtml = '<p class="text-center text-muted">No products associated with this program.</p>';
-    } else {
-        productsHtml = `
-            <div class="list-group">
-                ${products.map((prod, idx) => `
-                    <div class="list-group-item">
-                        <div class="d-flex align-items-center">
-                            <input type="checkbox" id="product_${idx}" value="${prod.product_id}" class="product-release-checkbox me-3" />
-                            <label for="product_${idx}" class="form-check-label flex-grow-1">
-                                <strong>${prod.product_name}</strong>
-                                <br />
-                                <small class="text-muted">₱${parseFloat(prod.price).toFixed(2)} | Stock: ${prod.quantity}</small>
-                            </label>
+    document.body.insertAdjacentHTML('beforeend', `
+        <div class="modal fade" id="studentProductOrdersModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                <div class="modal-content border-0">
+                    <div class="modal-header">
+                        <div><div class="small text-muted">${escapeHtml(first.program_name)}</div><h5 class="modal-title">${escapeHtml(first.student_name)} — Product Orders</h5></div>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead><tr><th>Product</th><th>Type / Amount</th><th>Details</th><th>Payment</th><th>Status</th><th>Action</th></tr></thead>
+                                <tbody>${rows}</tbody>
+                            </table>
                         </div>
                     </div>
-                `).join('')}
+                    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button></div>
+                </div>
             </div>
-        `;
-    }
-
-    const modalHTML = `
-    <div class="modal fade" id="productReleaseDetailsModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">Release Products for ${student.student_name}</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <p><strong>Program:</strong> ${student.program_name}</p>
-            <p><strong>Status:</strong> <span class="badge bg-${student.status === 'enrolled' ? 'success' : 'warning'}">${student.status}</span></p>
-            <hr />
-            <p class="fw-bold">Select products to release:</p>
-            ${productsHtml}
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-            <button type="button" class="btn btn-success" id="releaseProductsBtn">Release</button>
-          </div>
-        </div>
-      </div>
-    </div>`;
-
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-    const modalEl = document.getElementById('productReleaseDetailsModal');
-    const modal = new bootstrap.Modal(modalEl);
-
-    document.getElementById('releaseProductsBtn').addEventListener('click', async () => {
-        const selectedCheckboxes = document.querySelectorAll('.product-release-checkbox:checked');
-        if (selectedCheckboxes.length === 0) {
-            Swal.fire('Info', 'Please select at least one product to release.', 'info');
-            return;
-        }
-
-        const productIds = Array.from(selectedCheckboxes).map(cb => cb.value);
-        const enrollmentId = student.enrollment_details_id;
-
-        try {
-            const response = await fetch(`${API_BASE_URL}enrollment.php`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    operation: 'releaseProducts',
-                    enrollment_id: enrollmentId,
-                    product_ids: productIds
-                })
-            });
-            
-            const result = await response.json();
-            if (result.status === 'success') {
-                Swal.fire('Success', 'Products released successfully!', 'success');
-                
-                // Mark student as released and add to history
-                releasedStudents.add(student.enrollment_details_id);
-                addToReleasedHistory(student);
-                
-                // Destroy modal and cleanup
-                const modalInstance = bootstrap.Modal.getInstance(modalEl);
-                if (modalInstance) modalInstance.dispose();
-                modalEl.remove();
-                document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
-                
-                // Only remove modal-open if no other modals are open
-                if (document.querySelectorAll('.modal').length === 0) {
-                    document.body.classList.remove('modal-open');
-                }
-                
-                // Update release card count and history
-                if (window.initProductPage && typeof window.initProductPage === 'function') {
-                    setTimeout(() => {
-                        window.initProductPage();
-                    }, 500);
-                }
-            } else {
-                Swal.fire('Error', result.message || 'Failed to release products', 'error');
-            }
-        } catch (error) {
-            console.error('Error releasing products:', error);
-            Swal.fire('Error', 'An error occurred while releasing products.', 'error');
-        }
-    });
-
-    modalEl.addEventListener('hidden.bs.modal', () => {
-        const modalInstance = bootstrap.Modal.getInstance(modalEl);
-        if (modalInstance) modalInstance.dispose();
-        document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
-        document.body.classList.remove('modal-open');
-        modalEl.remove();
-    });
-    
+        </div>`);
+    const modalElement = document.getElementById('studentProductOrdersModal');
+    bindOrderActions(modalElement);
+    const modal = new bootstrap.Modal(modalElement);
+    modalElement.addEventListener('hidden.bs.modal', () => modalElement.remove(), { once: true });
     modal.show();
 }
 
-export async function openProductReleaseModal() {
-    if (!guardProductPermission('edit', 'You do not have permission to manage product releases.')) {
+async function closeStudentOrdersModal() {
+    const modalElement = document.getElementById('studentProductOrdersModal');
+    if (!modalElement) return;
+    const modal = bootstrap.Modal.getInstance(modalElement);
+    if (!modal || !modalElement.classList.contains('show')) {
+        modal?.dispose();
+        modalElement.remove();
         return;
     }
-
-    // Remove any existing modal
-    const existingModal = document.getElementById('productReleaseModal');
-    if (existingModal) {
-        const existingModalInstance = bootstrap.Modal.getInstance(existingModal);
-        if (existingModalInstance) existingModalInstance.dispose();
-        existingModal.remove();
+    await new Promise(resolve => {
+        let finished = false;
+        const complete = () => {
+            if (finished) return;
+            finished = true;
+            resolve();
+        };
+        modalElement.addEventListener('hidden.bs.modal', complete, { once: true });
+        modal.hide();
+        setTimeout(complete, 500);
+    });
+    const lingeringModal = document.getElementById('studentProductOrdersModal');
+    if (lingeringModal) {
+        bootstrap.Modal.getInstance(lingeringModal)?.dispose();
+        lingeringModal.remove();
     }
-
-    // Remove all lingering modal backdrops and reset body
     document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
     document.body.classList.remove('modal-open');
+    document.body.style.removeProperty('padding-right');
+}
 
-    const modalHTML = `
-    <div class="modal fade" id="productReleaseModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-xl modal-dialog-scrollable">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">Students for Book Release</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <div class="mb-3">
-              <div class="input-group">
-                <input id="releaseStudentSearch" type="text" class="form-control" placeholder="Search student name or program..." />
-                <button id="releaseStudentSearchBtn" class="btn btn-outline-secondary" type="button">Search</button>
-              </div>
-            </div>
-            <div class="table-responsive">
-              <table class="table table-striped table-hover">
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Program</th>
-                    <th>Enrolled</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody id="releaseStudentsTableBody">
-                  <tr><td colspan="5" class="text-center">Loading...</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-          </div>
-        </div>
-      </div>
-    </div>`;
+function updateReleaseStats() {
+    const ready = releaseOrders.filter(order => order.ready_to_release && order.status !== 'released').length;
+    const needsDetails = releaseOrders.filter(order => !order.has_release_details && order.status !== 'released').length;
+    const waiting = releaseOrders.filter(order => !order.payment_ready && order.status !== 'released').length;
+    const released = releaseOrders.filter(order => order.status === 'released').length;
+    const values = {
+        'ready-release-count': ready,
+        'needs-details-count': needsDetails,
+        'waiting-payment-count': waiting,
+        'released-products-count': released
+    };
+    Object.entries(values).forEach(([id, value]) => {
+        const element = document.getElementById(id);
+        if (element) element.textContent = value;
+    });
+}
 
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-    const modalEl = document.getElementById('productReleaseModal');
-    const modal = new bootstrap.Modal(modalEl);
+async function releaseProductOrder(orderId) {
+    if (!guardProductPermission('edit', 'You do not have permission to release products.')) return;
+    const order = releaseOrders.find(item => item.product_order_id === orderId);
+    if (!order) return;
+    await closeStudentOrdersModal();
+    const confirmation = await Swal.fire({
+        icon: 'question',
+        title: 'Release this product?',
+        html: `<strong>${escapeHtml(order.product_name)} × ${order.quantity}</strong><br>for ${escapeHtml(order.student_name)}<br><small>Stock will be reduced permanently and the release will be recorded.</small>`,
+        showCancelButton: true,
+        confirmButtonText: 'Release product',
+        confirmButtonColor: '#198754'
+    });
+    if (!confirmation.isConfirmed) {
+        openStudentOrdersModal(order.enrollment_details_id);
+        return;
+    }
+    try {
+        Swal.fire({ title: 'Releasing product…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+        const response = await request('releaseOrder', { product_order_id: orderId }, 'POST');
+        await Swal.fire('Released', response.message, 'success');
+        await Promise.all([loadProductReleaseOrders(), window.initProductPage?.()]);
+        openStudentOrdersModal(order.enrollment_details_id);
+    } catch (error) {
+        await Swal.fire('Release failed', error.response?.data?.message || error.message, 'error');
+        openStudentOrdersModal(order.enrollment_details_id);
+    }
+}
 
-    const loadData = async (searchTerm = '') => {
-        const body = document.getElementById('releaseStudentsTableBody');
-        if (!body) return;
-        
-        body.innerHTML = '<tr><td colspan="5" class="text-center">Loading...</td></tr>';
-        
-        const data = await getReleaseStudents(searchTerm);
-        body.innerHTML = '';
-
-        if (!data || data.length === 0) {
-            body.innerHTML = '<tr><td colspan="5" class="text-center">No students to release.</td></tr>';
-            return;
+async function editProductDetails(orderId) {
+    if (!guardProductPermission('edit', 'You do not have permission to update product details.')) return;
+    const order = releaseOrders.find(item => item.product_order_id === orderId);
+    if (!order) return;
+    await closeStudentOrdersModal();
+    let currentSize = '';
+    let currentDetails = order.item_note || '';
+    if (order.requires_size && currentDetails.startsWith('Size: ')) {
+        const parts = currentDetails.slice(6).split(' | ');
+        currentSize = parts.shift() || '';
+        currentDetails = parts.join(' | ');
+    }
+    const formHtml = order.requires_size ? `
+        <div class="text-start">
+            <label class="form-label fw-semibold" for="releaseProductSize">Uniform size <span class="text-danger">*</span></label>
+            <input id="releaseProductSize" class="form-control mb-3" maxlength="30" value="${escapeHtml(currentSize)}" placeholder="e.g. Size 10, Small, Medium">
+            <label class="form-label fw-semibold" for="releaseProductDetails">Other information</label>
+            <textarea id="releaseProductDetails" class="form-control" maxlength="60" rows="3" placeholder="Name to print, preferred fit, or special instructions">${escapeHtml(currentDetails)}</textarea>
+        </div>` : `
+        <div class="text-start">
+            <label class="form-label fw-semibold" for="releaseProductDetails">Product details <span class="text-danger">*</span></label>
+            <textarea id="releaseProductDetails" class="form-control" maxlength="100" rows="3" placeholder="Edition, level, name, color, or other specifications">${escapeHtml(currentDetails)}</textarea>
+        </div>`;
+    const result = await Swal.fire({
+        title: order.requires_size ? 'Set uniform details' : 'Set product details',
+        html: `<div class="mb-3"><strong>${escapeHtml(order.product_name)} × ${order.quantity}</strong><br><span class="text-muted">${escapeHtml(order.student_name)}</span></div>${formHtml}`,
+        showCancelButton: true,
+        confirmButtonText: 'Save details',
+        confirmButtonColor: '#0d6efd',
+        focusConfirm: false,
+        preConfirm: () => {
+            const size = document.getElementById('releaseProductSize')?.value.trim() || '';
+            const details = document.getElementById('releaseProductDetails')?.value.trim() || '';
+            if (order.requires_size && !size) {
+                Swal.showValidationMessage('Enter the uniform size.');
+                return false;
+            }
+            if (!order.requires_size && !details) {
+                Swal.showValidationMessage('Enter the product details.');
+                return false;
+            }
+            return { size, details };
         }
-
-        data.forEach(item => {
-            const row = `
-                <tr style="cursor:pointer;" class="student-row" data-student='${JSON.stringify(item)}'>
-                    <td>${item.student_id || item.enrollment_details_id || 'N/A'}</td>
-                    <td>${item.student_name || 'N/A'}</td>
-                    <td>${item.program_name || 'N/A'}</td>
-                    <td>${item.enrollment_date || 'N/A'}</td>
-                    <td><span class="badge bg-${item.status === 'enrolled' ? 'success' : item.status === 'pending' ? 'warning' : 'secondary'}">${item.status || 'N/A'}</span></td>
-                </tr>`;
-            body.insertAdjacentHTML('beforeend', row);
-        });
-
-        // Add click handlers to student rows
-        document.querySelectorAll('.student-row').forEach(row => {
-            row.addEventListener('click', function() {
-                const studentData = JSON.parse(this.getAttribute('data-student'));
-                const modalInstance = bootstrap.Modal.getInstance(modalEl);
-                if (modalInstance) modalInstance.dispose();
-                modalEl.remove();
-                document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
-                document.body.classList.remove('modal-open');
-                
-                setTimeout(() => openProductReleaseDetailsModal(studentData), 300);
-            });
-        });
-    };
-
-    const searchInput = document.getElementById('releaseStudentSearch');
-    const searchBtn = document.getElementById('releaseStudentSearchBtn');
-
-    const performSearch = () => { 
-        loadData(searchInput.value.trim());
-    };
-
-    searchBtn.addEventListener('click', performSearch);
-    searchInput.addEventListener('keyup', (event) => {
-        if (event.key === 'Enter') performSearch();
     });
+    if (!result.isConfirmed) {
+        openStudentOrdersModal(order.enrollment_details_id);
+        return;
+    }
+    try {
+        Swal.fire({ title: 'Saving product details…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+        const response = await request('updateOrderDetails', {
+            product_order_id: order.product_order_id,
+            product_order_item_id: order.product_order_item_id,
+            ...result.value
+        }, 'POST');
+        await Swal.fire('Saved', response.message, 'success');
+        await loadProductReleaseOrders();
+        openStudentOrdersModal(order.enrollment_details_id);
+    } catch (error) {
+        await Swal.fire('Unable to save details', error.response?.data?.message || error.message, 'error');
+        openStudentOrdersModal(order.enrollment_details_id);
+    }
+}
 
-    modal.show();
-    loadData();
+export async function loadProductReleaseOrders() {
+    const tableBody = document.getElementById('productReleaseTableBody');
+    if (!tableBody) return;
+    tableBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">Loading student product orders…</td></tr>';
+    try {
+        const response = await request('listOrders');
+        releaseOrders = response.data || [];
+        updateReleaseStats();
+        renderReleaseOrders();
+    } catch (error) {
+        tableBody.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-4">${escapeHtml(error.response?.data?.message || error.message)}</td></tr>`;
+    }
+}
 
-    modalEl.addEventListener('hidden.bs.modal', () => {
-        const modalInstance = bootstrap.Modal.getInstance(modalEl);
-        if (modalInstance) modalInstance.dispose();
-        document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
-        document.body.classList.remove('modal-open');
-        modalEl.remove();
-    });
+export function initProductReleasePage() {
+    if (!document.getElementById('productReleaseTableBody')) return;
+    document.getElementById('product-release-filter')?.addEventListener('change', renderReleaseOrders);
+    document.getElementById('search-input')?.addEventListener('input', renderReleaseOrders);
+    loadProductReleaseOrders();
 }

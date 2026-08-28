@@ -253,7 +253,7 @@ const applicationTime = value => {
 };
 
 const isPreschoolApplication = item => {
-    const programName = String(item?.program_name || '').toLowerCase();
+    const programName = `${item?.program_name || ''} ${item?.program_type || ''}`.toLowerCase();
     return ['preschool', 'playschool', 'pre-school', 'play-school', 'pre school', 'play school']
         .some(keyword => programName.includes(keyword));
 };
@@ -330,14 +330,22 @@ export async function openNewStudentApplications(filters = {}) {
 
 function applicationDetailHtml(item) {
     const fullName = [item.first_name, item.middle_name, item.last_name, item.ext].filter(Boolean).join(' ');
+    const submittedGcash = String(item.application_payment?.payment_method || '').toLowerCase() === 'gcash';
+    const paymentProofUrl = item.application_payment?.proof_pic
+        ? `../../${String(item.application_payment.proof_pic).replace(/^\/+/, '')}`
+        : '';
     const availability = (item.availability || []).map(slot => `<span class="application-chip application-chip--neutral"><i class="bi bi-calendar3"></i>${applicationEscape(slot.day)} ${applicationTime(slot.start_time)}–${applicationTime(slot.end_time)}</span>`).join('');
     const subjects = (item.subjects || []).map(subject => `<span class="application-chip">${applicationEscape(subject.subject_name)}</span>`).join('') || '<span class="text-muted">To be confirmed during enrollment proper</span>';
+    const preschoolApplication = isPreschoolApplication(item);
+    const selectedService = item.financial?.service_id && item.financial?.service_name
+        ? `${applicationEscape(item.financial.service_name)} (${applicationMoney(item.financial.service_amount)} monthly)`
+        : 'Not included';
     const actions = applicationReadOnly ? '' : item.status === 'pending_review'
-        ? `<button class="application-inline-button application-inline-button--danger" id="rejectApplication"><i class="bi bi-x-circle me-2"></i>Reject</button><button class="application-inline-button application-inline-button--primary" id="approveApplication"><i class="bi bi-check-circle me-2"></i>Accept &amp; Continue to Payment</button>`
+        ? `<button class="application-inline-button application-inline-button--danger" id="rejectApplication"><i class="bi bi-x-circle me-2"></i>Reject</button><button class="application-inline-button application-inline-button--primary" id="approveApplication"><i class="bi bi-check-circle me-2"></i>${submittedGcash ? (preschoolApplication ? 'Approve Payment &amp; Assign Class' : 'Approve Payment &amp; Assign Teacher') : 'Accept &amp; Continue to Payment'}</button>`
         : item.status === 'approved_for_payment'
             ? `<button class="application-inline-button application-inline-button--primary" id="receiveApplicationPayment"><i class="bi bi-cash-coin me-2"></i>Receive Downpayment</button>`
             : item.status === 'ready_for_scheduling'
-                ? (isPreschoolApplication(item)
+                ? (preschoolApplication
                     ? `<button class="application-inline-button application-inline-button--primary" id="placePrePlayApplication"><i class="bi bi-diagram-3 me-2"></i>Assign Class &amp; Section</button>`
                     : `<button class="application-inline-button application-inline-button--primary" id="scheduleApplication"><i class="bi bi-calendar2-check me-2"></i>Assign Teacher &amp; Plot Schedule</button>`)
                 : item.status === 'enrolled'
@@ -351,10 +359,28 @@ function applicationDetailHtml(item) {
             <section class="application-section-card"><h3 class="application-section-title"><i class="bi bi-person-vcard"></i>Student Information</h3><div class="application-detail-line"><span>Birthdate</span><strong>${applicationEscape(item.birthday)}</strong></div><div class="application-detail-line"><span>Email</span><strong>${applicationEscape(item.email)}</strong></div><div class="application-detail-line"><span>Student ID</span><strong>${applicationEscape(item.student_id_number)}</strong></div><div class="application-detail-line"><span>Portal account</span><strong>${applicationEscape(item.username || 'Created after enrollment')}</strong></div></section>
             <section class="application-section-card"><h3 class="application-section-title"><i class="bi bi-people"></i>Parent / Guardian</h3><div class="application-detail-line"><span>Name</span><strong>${applicationEscape(item.guardian_name)}</strong></div><div class="application-detail-line"><span>Relationship</span><strong>${applicationEscape(item.guardian_relationship)}</strong></div><div class="application-detail-line"><span>Contact</span><strong>${applicationEscape(item.guardian_contact)}</strong></div><div class="application-detail-line"><span>Address</span><strong>${applicationEscape([item.adr_street, item.adr_barangay, item.adr_city, item.adr_province].filter(Boolean).join(', ') || 'No address provided')}</strong></div></section>
             <section class="application-section-card application-section-card--wide"><h3 class="application-section-title"><i class="bi bi-mortarboard"></i>Learning Preferences</h3><div class="application-meta-grid"><div><span class="application-meta-label">Grade level</span><span class="application-meta-value">${applicationEscape(item.grade_level || 'Not selected')}</span></div><div class="application-meta-item--wide"><span class="application-meta-label">Selected subjects</span><div class="application-chip-list">${subjects}</div></div>${item.goal ? `<div class="application-meta-item--wide"><span class="application-meta-label">Learning goal</span><span>${applicationEscape(item.goal)}</span></div>` : ''}<div class="application-meta-item--wide"><span class="application-meta-label">Student's weekly availability</span><div class="application-chip-list">${availability || '<span class="text-muted">No availability recorded.</span>'}</div></div></div></section>
-            <div class="application-section-card application-section-card--wide"><div class="application-flow-callout"><i class="bi bi-wallet2"></i><div><strong>Required center payment: ${applicationMoney(item.financial?.initial_payment)}</strong><div class="text-muted small mt-1">Registration ${applicationMoney(item.financial?.registration_fee)} + Downpayment ${applicationMoney(item.financial?.downpayment_amount)}</div>${item.review_notes ? `<div class="mt-2"><strong>Review notes:</strong> ${applicationEscape(item.review_notes)}</div>` : ''}</div></div></div>
+            <div class="application-section-card application-section-card--wide"><div class="application-flow-callout ${submittedGcash ? 'application-flow-callout--success' : ''}"><i class="bi bi-wallet2"></i><div><strong>Required payment: ${applicationMoney(item.financial?.initial_payment)}</strong><div class="text-muted small mt-1">Registration ${applicationMoney(item.financial?.registration_fee)} + Downpayment ${applicationMoney(item.financial?.downpayment_amount)}</div><div class="mt-2"><strong>Selected method:</strong> ${applicationEscape(item.application_payment?.payment_method || 'Not recorded')} · ${applicationEscape(String(item.application_payment?.payment_status || '').replaceAll('_', ' '))}</div>${item.application_payment?.reference_no ? `<div class="small mt-1"><strong>GCash reference:</strong> ${applicationEscape(item.application_payment.reference_no)}</div>` : ''}${paymentProofUrl ? '<button type="button" class="application-inline-button application-inline-button--outline d-inline-block mt-3" id="viewApplicationGcashProof"><i class="bi bi-image me-2"></i>View GCash Payment Proof</button>' : ''}${item.review_notes ? `<div class="mt-2"><strong>Review notes:</strong> ${applicationEscape(item.review_notes)}</div>` : ''}</div></div></div>
+            ${item.financial?.available_service ? `<section class="application-section-card application-section-card--wide"><h3 class="application-section-title"><i class="bi bi-bag-check"></i>Monthly Service</h3><div class="application-detail-line"><span>Applicant selection</span><strong>${selectedService}</strong></div></section>` : ''}
         </div>
         <div class="application-detail-actions">${actions}</div>
     </div>`;
+}
+
+async function showApplicationGcashProof(item) {
+    const proofPath = String(item.application_payment?.proof_pic || '').replace(/^\/+/, '');
+    if (!proofPath) {
+        await Swal.fire('Payment Proof Unavailable', 'No GCash screenshot was uploaded for this application.', 'info');
+        return;
+    }
+    await Swal.fire({
+        title: applicationModalTitle('bi-image', 'GCash Payment Proof'),
+        width: 'min(760px, 96vw)',
+        html: `<div class="text-start"><div class="application-flow-callout mb-3"><i class="bi bi-receipt"></i><div><strong>${applicationMoney(item.application_payment?.amount)}</strong><div class="small text-muted mt-1">Reference: ${applicationEscape(item.application_payment?.reference_no || 'Not provided')}</div></div></div><div class="text-center"><img src="../../${applicationEscape(proofPath)}" alt="Uploaded GCash payment proof" class="img-fluid rounded-3" style="max-height:70vh;object-fit:contain"></div></div>`,
+        showCloseButton: true,
+        confirmButtonText: 'Close',
+        customClass: applicationModalClasses(),
+        buttonsStyling: false
+    });
 }
 
 export async function viewNewStudentApplication(applicationId) {
@@ -369,9 +395,13 @@ export async function viewNewStudentApplication(applicationId) {
             customClass: applicationModalClasses(), buttonsStyling: false,
             html: applicationDetailHtml(item),
             didOpen: popup => {
-                popup.querySelector('#approveApplication')?.addEventListener('click', () => reviewNewStudentApplication(applicationId, 'approve'));
-                popup.querySelector('#rejectApplication')?.addEventListener('click', () => reviewNewStudentApplication(applicationId, 'reject'));
+                popup.querySelector('#approveApplication')?.addEventListener('click', () => reviewNewStudentApplication(item, 'approve'));
+                popup.querySelector('#rejectApplication')?.addEventListener('click', () => reviewNewStudentApplication(item, 'reject'));
                 popup.querySelector('#receiveApplicationPayment')?.addEventListener('click', () => receiveApplicationDownpayment(item));
+                popup.querySelector('#viewApplicationGcashProof')?.addEventListener('click', async () => {
+                    await showApplicationGcashProof(item);
+                    await viewNewStudentApplication(item.application_id);
+                });
                 popup.querySelector('#scheduleApplication')?.addEventListener('click', () => scheduleNewStudentApplication(item));
                 popup.querySelector('#placePrePlayApplication')?.addEventListener('click', () => {
                     if (typeof window.openPrePlayApplicationPlacement !== 'function') {
@@ -388,13 +418,20 @@ export async function viewNewStudentApplication(applicationId) {
     }
 }
 
-async function reviewNewStudentApplication(applicationId, decision) {
+async function reviewNewStudentApplication(item, decision) {
+    const applicationId = Number(item.application_id);
+    const submittedGcash = String(item.application_payment?.payment_method || '').toLowerCase() === 'gcash';
+    const preschoolApplication = isPreschoolApplication(item);
     const answer = await Swal.fire({
         title: applicationModalTitle(decision === 'approve' ? 'bi-check2-circle' : 'bi-x-circle', decision === 'approve' ? 'Accept This Application?' : 'Reject This Application?'),
         input: 'textarea', inputLabel: 'Review notes', inputPlaceholder: decision === 'approve' ? 'Optional instructions for the family' : 'Explain why the application cannot proceed',
         inputValidator: value => decision === 'reject' && !value.trim() ? 'A reason is required when rejecting an application.' : undefined,
         showCancelButton: true, showCloseButton: true, reverseButtons: true,
-        confirmButtonText: decision === 'approve' ? '<i class="bi bi-arrow-right-circle me-2"></i>Accept & Continue to Payment' : '<i class="bi bi-x-circle me-2"></i>Reject Application',
+        confirmButtonText: decision === 'approve'
+            ? (submittedGcash
+                ? `<i class="bi bi-check2-circle me-2"></i>Approve GCash & ${preschoolApplication ? 'Assign Class' : 'Continue'}`
+                : '<i class="bi bi-arrow-right-circle me-2"></i>Accept & Continue to Payment')
+            : '<i class="bi bi-x-circle me-2"></i>Reject Application',
         customClass: applicationModalClasses(), buttonsStyling: false
     });
     if (!answer.isConfirmed) return;
@@ -403,9 +440,22 @@ async function reviewNewStudentApplication(applicationId, decision) {
         if (result.status !== 'success') throw new Error(result.message);
         window.loadEnrollments?.();
         if (decision === 'approve') {
-            Swal.fire({ title: 'Opening center payment…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
             const application = await applicationApi('getApplication', { application_id: applicationId });
             if (application.status !== 'success') throw new Error(application.message);
+            if (result.payment_confirmed) {
+                await Swal.fire('Approved', result.message, 'success');
+                if (isPreschoolApplication(application.data)) {
+                    if (typeof window.openPrePlayApplicationPlacement !== 'function') {
+                        await viewNewStudentApplication(applicationId);
+                        return;
+                    }
+                    window.openPrePlayApplicationPlacement(application.data.application_id, application.data.enrollment_details_id);
+                } else {
+                    await scheduleNewStudentApplication(application.data);
+                }
+                return;
+            }
+            Swal.fire({ title: 'Opening center payment…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
             await receiveApplicationDownpayment(application.data);
             return;
         }

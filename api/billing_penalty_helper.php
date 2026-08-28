@@ -28,10 +28,21 @@ function refreshBillingSchedulePenalties(PDO $conn, $enrollmentDetailsId = null,
     // the first penalty is charged on July 4.
     $penaltyStartDate = "DATE_ADD(bs.due_date, INTERVAL (COALESCE(pp.grace_period_days, 2) + 1) DAY)";
     $chargeablePenaltyDays = "DATEDIFF(CURDATE(), $penaltyStartDate) + 1";
+    $itemTableCheck = $conn->prepare("SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'billing_schedule_items'");
+    $itemTableCheck->execute();
+    // Legacy installations and legacy bills remain penalty eligible. Itemized
+    // bills (for example an additional uniform) can explicitly opt out.
+    $penaltyEligible = !(bool)$itemTableCheck->fetchColumn() ? '1 = 1' : "(
+        NOT EXISTS (SELECT 1 FROM billing_schedule_items bsi_any WHERE bsi_any.billing_schedule_id = bs.billing_schedule_id)
+        OR EXISTS (SELECT 1 FROM billing_schedule_items bsi_eligible
+            WHERE bsi_eligible.billing_schedule_id = bs.billing_schedule_id AND bsi_eligible.penalty_eligible = 1)
+    )";
     $penaltyAmount = "CASE
         WHEN bs.status IN ('unpaid', 'partial', 'overdue')
              AND bs.due_date IS NOT NULL
              AND CURDATE() >= $penaltyStartDate
+             AND $penaltyEligible
              AND ($baseAmount) > 0
              THEN ($chargeablePenaltyDays) * COALESCE(pp.penalty_amount, 0)
         WHEN bs.status = 'paid' THEN COALESCE(bs.penalty_amount, 0)

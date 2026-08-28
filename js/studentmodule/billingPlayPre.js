@@ -140,476 +140,6 @@ window.openStudentPrePlayIncompleteEnrollment = async function(enrollmentId) {
     Swal.fire('Error', 'Enrollment completion is not available right now.', 'error');
 };
 
-var GCASH_OCR_SCRIPT_URL = window.GCASH_OCR_SCRIPT_URL || 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
-
-function ensureGcashOcrLibrary() {
-    if (window.Tesseract?.recognize) {
-        return Promise.resolve(window.Tesseract);
-    }
-
-    if (window.__gcashOcrScriptPromise) {
-        return window.__gcashOcrScriptPromise;
-    }
-
-    window.__gcashOcrScriptPromise = new Promise((resolve, reject) => {
-        const existingScript = document.querySelector('script[data-gcash-ocr="true"]');
-
-        if (existingScript) {
-            existingScript.addEventListener('load', () => resolve(window.Tesseract));
-            existingScript.addEventListener('error', () => reject(new Error('Unable to load OCR library.')));
-            return;
-        }
-
-        const script = document.createElement('script');
-        script.src = GCASH_OCR_SCRIPT_URL;
-        script.async = true;
-        script.dataset.gcashOcr = 'true';
-        script.onload = () => {
-            if (window.Tesseract?.recognize) {
-                resolve(window.Tesseract);
-                return;
-            }
-
-            reject(new Error('OCR library loaded but is not available.'));
-        };
-        script.onerror = () => reject(new Error('Unable to load OCR library.'));
-        document.head.appendChild(script);
-    });
-
-    return window.__gcashOcrScriptPromise;
-}
-
-function setGcashOcrStatus(statusElement, message, tone = 'muted') {
-    if (!statusElement) return;
-
-    statusElement.textContent = message;
-    statusElement.className = 'small d-block mt-1';
-
-    const toneClassMap = {
-        muted: 'text-muted',
-        info: 'text-primary',
-        success: 'text-success',
-        warning: 'text-warning',
-        danger: 'text-danger'
-    };
-
-    statusElement.classList.add(toneClassMap[tone] || toneClassMap.muted);
-}
-
-function normalizeGcashReferenceCandidate(value) {
-    return String(value || '')
-        .toUpperCase()
-        .replace(/[OQ]/g, '0')
-        .replace(/[IL]/g, '1')
-        .replace(/\D/g, '');
-}
-
-function isLikelyGcashReference(value) {
-    return value.length >= 8 && value.length <= 20 && !/^0+$/.test(value);
-}
-
-function scoreGcashReferenceCandidate(value) {
-    let score = value.length;
-    if (value.length === 13) score += 30;
-    if (value.length === 12 || value.length === 14) score += 12;
-
-    if (value.length >= 12) score += 10;
-    if (value.startsWith('63') && value.length <= 12) score -= 20;
-
-    return score;
-}
-
-function stripGcashDateArtifacts(value) {
-    return String(value || '')
-        .replace(/\b(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|SEPT|OCT|NOV|DEC)[A-Z]*\b.*$/i, '')
-        .replace(/\b\d{1,2}:\d{2}\b.*$/i, '')
-        .replace(/\b(?:AM|PM)\b.*$/i, '')
-        .trim();
-}
-
-function extractDigitRuns(value) {
-    return [...String(value || '').matchAll(/\d[\d\s-]{6,24}\d/g)]
-        .map(match => normalizeGcashReferenceCandidate(match[0]))
-        .filter(isLikelyGcashReference);
-}
-
-function parseGcashAmountValue(value) {
-    const normalizedValue = String(value || '')
-        .replace(/[,\s]/g, '')
-        .replace(/[â‚±₱Pp]/g, '');
-    const matchedAmount = normalizedValue.match(/\d+(?:\.\d{1,2})?/);
-    if (!matchedAmount) {
-        return null;
-    }
-
-    const amount = parseFloat(matchedAmount[0]);
-    if (!Number.isFinite(amount) || amount <= 0) {
-        return null;
-    }
-
-    return amount;
-}
-
-function extractGcashAmount(text) {
-    const normalizedText = String(text || '')
-        .replace(/\r/g, '')
-        .replace(/[â‚±]/g, '₱');
-
-    const lines = normalizedText
-        .split('\n')
-        .map(line => line.trim())
-        .filter(Boolean);
-
-    const scoredCandidates = [];
-    const pushCandidate = (rawValue, scoreBoost = 0) => {
-        const amount = parseGcashAmountValue(rawValue);
-        if (amount === null) {
-            return;
-        }
-
-        scoredCandidates.push({ amount, score: scoreBoost });
-    };
-
-    lines.forEach(line => {
-        const totalAmountMatch = line.match(/total\s+amount\s+sent\s*[:\-]?\s*(.+)$/i);
-        if (totalAmountMatch) {
-            pushCandidate(totalAmountMatch[1], 50);
-        }
-
-        const amountMatch = line.match(/^amount\s*[:\-]?\s*(.+)$/i);
-        if (amountMatch) {
-            pushCandidate(amountMatch[1], 30);
-        }
-    });
-
-    const fullTextTotalMatch = normalizedText.match(/total\s+amount\s+sent[\s\S]{0,30}?([₱P]?\s*\d+(?:\.\d{1,2})?)/i);
-    if (fullTextTotalMatch) {
-        pushCandidate(fullTextTotalMatch[1], 45);
-    }
-
-    const fullTextAmountMatch = normalizedText.match(/\bamount\b[\s\S]{0,20}?([₱P]?\s*\d+(?:\.\d{1,2})?)/i);
-    if (fullTextAmountMatch) {
-        pushCandidate(fullTextAmountMatch[1], 25);
-    }
-
-    if (scoredCandidates.length === 0) {
-        return null;
-    }
-
-    return scoredCandidates
-        .sort((a, b) => b.score - a.score || b.amount - a.amount)[0]
-        .amount;
-}
-
-function extractGcashReferenceNumber(text) {
-    const normalizedText = String(text || '')
-        .replace(/[|]/g, 'I')
-        .replace(/[‘’´`]/g, '')
-        .replace(/\s+/g, ' ');
-
-    const anchoredCandidates = [...normalizedText.matchAll(/ref(?:erence)?\s*(?:no|n0|number|#|mo)?\.?\s*[:\-]?\s*([A-Z0-9\s,.:-]{8,50})/gi)]
-        .flatMap(match => {
-            const withoutDate = stripGcashDateArtifacts(match[1]);
-            const directCandidates = extractDigitRuns(withoutDate);
-            if (directCandidates.length > 0) {
-                return directCandidates;
-            }
-
-            const leftSideOnly = withoutDate.split(/\s{2,}/)[0] || withoutDate;
-            return extractDigitRuns(leftSideOnly);
-        });
-
-    if (anchoredCandidates.length > 0) {
-        return anchoredCandidates.sort((a, b) => scoreGcashReferenceCandidate(b) - scoreGcashReferenceCandidate(a))[0];
-    }
-
-    const improvedFallbackCandidates = extractDigitRuns(stripGcashDateArtifacts(normalizedText));
-    if (improvedFallbackCandidates.length > 0) {
-        return improvedFallbackCandidates.sort((a, b) => scoreGcashReferenceCandidate(b) - scoreGcashReferenceCandidate(a))[0];
-    }
-
-    const anchoredMatches = [...normalizedText.matchAll(/ref(?:erence)?\s*(?:no|n0|number|#|mo)?\.?\s*[:\-]?\s*([A-Z0-9\s]{8,30})/gi)]
-        .map(match => normalizeGcashReferenceCandidate(match[1]))
-        .filter(isLikelyGcashReference);
-
-    if (anchoredMatches.length > 0) {
-        return anchoredMatches.sort((a, b) => scoreGcashReferenceCandidate(b) - scoreGcashReferenceCandidate(a))[0];
-    }
-
-    const fallbackCandidates = [...normalizedText.matchAll(/\d[\d\s]{7,24}\d/g)]
-        .map(match => normalizeGcashReferenceCandidate(match[0]))
-        .filter(isLikelyGcashReference);
-
-    if (fallbackCandidates.length === 0) {
-        return '';
-    }
-
-    return fallbackCandidates.sort((a, b) => scoreGcashReferenceCandidate(b) - scoreGcashReferenceCandidate(a))[0];
-}
-
-function loadImageFromFile(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-            const image = new Image();
-            image.onload = () => resolve(image);
-            image.onerror = () => reject(new Error('Unable to read the selected screenshot.'));
-            image.src = reader.result;
-        };
-        reader.onerror = () => reject(new Error('Unable to read the selected screenshot.'));
-        reader.readAsDataURL(file);
-    });
-}
-
-function buildGcashOcrCanvasData(image, cropConfig = {}) {
-    const scale = cropConfig.scale || 2;
-    const sourceX = Math.max(0, Math.floor((cropConfig.x || 0) * image.width));
-    const sourceY = Math.max(0, Math.floor((cropConfig.y || 0) * image.height));
-    const sourceWidth = Math.max(1, Math.floor((cropConfig.width || 1) * image.width));
-    const sourceHeight = Math.max(1, Math.floor((cropConfig.height || 1) * image.height));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.floor(sourceWidth * scale);
-    canvas.height = Math.floor(sourceHeight * scale);
-
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
-
-    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-    const pixels = imageData.data;
-
-    for (let i = 0; i < pixels.length; i += 4) {
-        const grayscale = (pixels[i] * 0.299) + (pixels[i + 1] * 0.587) + (pixels[i + 2] * 0.114);
-        const normalized = grayscale > 170 ? 255 : 0;
-        pixels[i] = normalized;
-        pixels[i + 1] = normalized;
-        pixels[i + 2] = normalized;
-    }
-
-    context.putImageData(imageData, 0, 0);
-    return canvas.toDataURL('image/png');
-}
-
-async function buildGcashOcrTargets(file) {
-    const image = await loadImageFromFile(file);
-
-    return [
-        {
-            label: 'reference number strip',
-            image: buildGcashOcrCanvasData(image, { x: 0.06, y: 0.605, width: 0.54, height: 0.06, scale: 3.2 })
-        },
-        {
-            label: 'reference line left side',
-            image: buildGcashOcrCanvasData(image, { x: 0.04, y: 0.575, width: 0.64, height: 0.09, scale: 3 })
-        },
-        {
-            label: 'reference area',
-            image: buildGcashOcrCanvasData(image, { x: 0.04, y: 0.55, width: 0.78, height: 0.16, scale: 2.6 })
-        },
-        {
-            label: 'full receipt',
-            image: buildGcashOcrCanvasData(image, { x: 0, y: 0, width: 1, height: 1, scale: 1.6 })
-        }
-    ];
-}
-
-async function buildGcashAmountOcrTargets(file) {
-    const image = await loadImageFromFile(file);
-
-    return [
-        {
-            label: 'total amount sent row',
-            image: buildGcashOcrCanvasData(image, { x: 0.05, y: 0.43, width: 0.88, height: 0.12, scale: 3 })
-        },
-        {
-            label: 'amount row',
-            image: buildGcashOcrCanvasData(image, { x: 0.05, y: 0.31, width: 0.88, height: 0.11, scale: 3 })
-        },
-        {
-            label: 'amount value area',
-            image: buildGcashOcrCanvasData(image, { x: 0.68, y: 0.31, width: 0.24, height: 0.25, scale: 3.2 })
-        },
-        {
-            label: 'full receipt',
-            image: buildGcashOcrCanvasData(image, { x: 0, y: 0, width: 1, height: 1, scale: 1.6 })
-        }
-    ];
-}
-
-async function detectGcashReferenceFromFile(file, onProgress) {
-    const Tesseract = await ensureGcashOcrLibrary();
-    const targets = await buildGcashOcrTargets(file);
-    let lastText = '';
-
-    for (let index = 0; index < targets.length; index += 1) {
-        const target = targets[index];
-        const result = await Tesseract.recognize(target.image, 'eng', {
-            logger: message => {
-                if (typeof onProgress !== 'function') return;
-                if (message.status === 'recognizing text' && Number.isFinite(message.progress)) {
-                    const percent = Math.round(message.progress * 100);
-                    onProgress(`Reading ${target.label}... ${percent}%`);
-                }
-            }
-        });
-
-        const text = result?.data?.text || '';
-        lastText = text || lastText;
-
-        const referenceNo = extractGcashReferenceNumber(text);
-        if (referenceNo) {
-            return referenceNo;
-        }
-    }
-
-    return extractGcashReferenceNumber(lastText);
-}
-
-async function detectGcashAmountFromFile(file, onProgress) {
-    const Tesseract = await ensureGcashOcrLibrary();
-    const targets = await buildGcashAmountOcrTargets(file);
-    let lastText = '';
-
-    for (let index = 0; index < targets.length; index += 1) {
-        const target = targets[index];
-        const result = await Tesseract.recognize(target.image, 'eng', {
-            logger: message => {
-                if (typeof onProgress !== 'function') return;
-                if (message.status === 'recognizing text' && Number.isFinite(message.progress)) {
-                    const percent = Math.round(message.progress * 100);
-                    onProgress(`Reading ${target.label}... ${percent}%`);
-                }
-            }
-        });
-
-        const text = result?.data?.text || '';
-        lastText = text || lastText;
-
-        const amount = extractGcashAmount(text);
-        if (amount !== null) {
-            return amount;
-        }
-    }
-
-    return extractGcashAmount(lastText);
-}
-
-function renderGcashReceiptPreview(file, previewWrapper, previewImage) {
-    if (!previewWrapper || !previewImage) {
-        return;
-    }
-
-    if (!file) {
-        previewWrapper.classList.add('d-none');
-        previewImage.removeAttribute('src');
-        return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-        previewImage.src = reader.result;
-        previewWrapper.classList.remove('d-none');
-    };
-    reader.onerror = () => {
-        previewWrapper.classList.add('d-none');
-        previewImage.removeAttribute('src');
-    };
-    reader.readAsDataURL(file);
-}
-
-function attachGcashOcrAutoFill({
-    fileInputId,
-    actionButtonId,
-    amountInputId,
-    refInputId,
-    statusId,
-    previewWrapperId,
-    previewImageId
-}) {
-    const fileInput = document.getElementById(fileInputId);
-    const actionButton = document.getElementById(actionButtonId);
-    const amountInput = document.getElementById(amountInputId);
-    const refInput = document.getElementById(refInputId);
-    const statusElement = document.getElementById(statusId);
-    const previewWrapper = document.getElementById(previewWrapperId);
-    const previewImage = document.getElementById(previewImageId);
-    const confirmButton = Swal.getConfirmButton();
-
-    if (!fileInput || !actionButton || !amountInput || !refInput || !statusElement) {
-        return;
-    }
-
-    const toggleBusyState = isBusy => {
-        statusElement.dataset.ocrBusy = isBusy ? 'true' : 'false';
-        fileInput.disabled = isBusy;
-        actionButton.disabled = isBusy;
-        if (confirmButton) confirmButton.disabled = isBusy;
-    };
-
-    const runOcr = async () => {
-        const file = fileInput.files?.[0];
-        renderGcashReceiptPreview(file, previewWrapper, previewImage);
-
-        if (!file) {
-            setGcashOcrStatus(statusElement, 'Upload the GCash receipt screenshot first.', 'warning');
-            return;
-        }
-
-        const isImageFile = /^image\//i.test(file.type || '') || /\.(png|jpe?g|webp|bmp)$/i.test(file.name || '');
-        if (!isImageFile) {
-            setGcashOcrStatus(statusElement, 'Please choose an image file for the receipt screenshot.', 'danger');
-            return;
-        }
-
-        toggleBusyState(true);
-        setGcashOcrStatus(statusElement, 'Preparing OCR for amount and reference number...', 'info');
-
-        try {
-            const amount = await detectGcashAmountFromFile(file, progressMessage => {
-                setGcashOcrStatus(statusElement, progressMessage, 'info');
-            });
-            const referenceNo = await detectGcashReferenceFromFile(file, progressMessage => {
-                setGcashOcrStatus(statusElement, progressMessage, 'info');
-            });
-
-            if (amount !== null) {
-                amountInput.value = amount.toFixed(2);
-            }
-            if (referenceNo) {
-                refInput.value = referenceNo;
-            }
-
-            if (amount !== null && referenceNo) {
-                setGcashOcrStatus(statusElement, `Detected amount ${amount.toFixed(2)} and reference number ${referenceNo}.`, 'success');
-                return;
-            }
-
-            if (amount !== null) {
-                setGcashOcrStatus(statusElement, `Detected amount ${amount.toFixed(2)}. Please verify or type the reference number manually.`, 'warning');
-                return;
-            }
-
-            if (referenceNo) {
-                setGcashOcrStatus(statusElement, `Reference number detected: ${referenceNo}. Please verify or type the amount manually.`, 'warning');
-                return;
-            }
-
-            setGcashOcrStatus(statusElement, 'We could not read the amount or Ref No. clearly. Please fill them in manually after checking the screenshot.', 'warning');
-        } catch (error) {
-            console.error('GCash OCR failed:', error);
-            setGcashOcrStatus(statusElement, 'OCR could not read the screenshot right now. You can still type the amount and Ref No. manually.', 'danger');
-        } finally {
-            toggleBusyState(false);
-        }
-    };
-
-    fileInput.addEventListener('change', () => {
-        renderGcashReceiptPreview(fileInput.files?.[0] || null, previewWrapper, previewImage);
-        runOcr();
-    });
-    actionButton.addEventListener('click', runOcr);
-}
-
 window.openBillingPlayPreModal = async function(enrollmentId, showPayment = true) {
     Swal.fire({
         title: 'Loading Billing Details...',
@@ -797,6 +327,11 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
         });
     const miscBilling = allBillingItems.filter(s => s.billing_type && s.billing_type.toLowerCase() === 'miscellaneous');
     const registrationBilling = allBillingItems.filter(s => s.billing_type && s.billing_type.toLowerCase() === 'registration fee');
+    const downpaymentBilling = allBillingItems.filter(item => String(item.billing_type || '').toLowerCase() === 'downpayment');
+    const additionalProductBilling = allBillingItems.filter(item =>
+        String(item.billing_type || '').toLowerCase().startsWith('additional ')
+        && String(item.status || '').toLowerCase() !== 'cancelled'
+    );
     const formatCurrency = amount => parseFloat(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     const miscTotalFromSchedule = miscBilling.reduce((sum, item) => sum + parseFloat(item.amount || item.total_amount || 0), 0);
@@ -821,12 +356,18 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
         ? `${formatCurrency(discountValue).replace(/\.00$/, '')}%`
         : `₱${formatCurrency(discountValue || discountAmount)}`;
     const programTuition = parseFloat(data.program_tuition || 0);
-    const totalTuition = programTuition > 0
+    const monthlyTuitionTotal = programTuition > 0
         ? programTuition * monthlyBilling.length
         : monthlyTotal;
+    const downpaymentTotal = downpaymentBilling.reduce((sum, item) => sum + parseFloat(item.amount || item.total_amount || 0), 0);
+    const totalTuition = monthlyBilling.length > 0 ? monthlyTuitionTotal : downpaymentTotal;
     const registrationFeeTotal = registrationTotal || parseFloat(data.registration_fee || 0);
-    const otherFeeTotal = Math.max(0, miscTotalFromProducts + registrationFeeTotal);
-    const servicesTotal = Math.max(0, grandTotal + discountAmount - totalTuition - otherFeeTotal - totalPenalty);
+    const additionalProductTotal = additionalProductBilling.reduce((sum, item) => sum + parseFloat(item.amount || item.total_amount || 0), 0);
+    const otherFeeTotal = Math.max(0, miscTotalFromProducts + registrationFeeTotal + additionalProductTotal);
+    const hasMonthlyService = Boolean(String(data.services || '').trim());
+    const servicesTotal = hasMonthlyService
+        ? Math.max(0, grandTotal + discountAmount - totalTuition - otherFeeTotal - totalPenalty)
+        : 0;
 
     const getBillingAmount = item => parseFloat(item?.amount || item?.total_amount || 0);
     const getBillingPaid = item => parseFloat(item?.paid_amount || 0);
@@ -865,12 +406,12 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
     const monthOneBill = monthlyBilling[0] || null;
     const firstMonthlyDue = monthlyBilling.find(item => getBillingRemaining(item) > 0);
     const miscRemaining = miscBilling.reduce((sum, item) => sum + getBillingRemaining(item), 0);
-    const hasMonthlyService = Boolean(data.services);
     const baseMonthlyAmount = monthlyBilling[1] ? getBillingBaseAmount(monthlyBilling[1]) : getBillingBaseAmount(monthOneBill);
     const monthOneHasIncludedFees = monthOneBill && getBillingBaseAmount(monthOneBill) > baseMonthlyAmount + 0.01;
     const shouldBundleMonthOneFees = monthOneBill && miscRemaining > 0;
-    const firstDueBill = shouldBundleMonthOneFees ? monthOneBill : (firstMonthlyDue || dueScheduleItems[0]);
-    const isFirstMonthDue = shouldBundleMonthOneFees || (firstMonthlyDue && monthOneBill && String(firstMonthlyDue.billing_type) === String(monthOneBill.billing_type));
+    const firstDueBill = shouldBundleMonthOneFees ? monthOneBill : (dueScheduleItems[0] || firstMonthlyDue);
+    const isFirstMonthDue = Boolean(firstDueBill && monthOneBill
+        && String(firstDueBill.id ?? firstDueBill.billing_type) === String(monthOneBill.id ?? monthOneBill.billing_type));
     const firstDueLabelParts = [];
     if (firstDueBill) {
         firstDueLabelParts.push(firstDueBill.billing_type);
@@ -952,6 +493,12 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
     const registrationRows = registrationBilling.map(item => `
         <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
             <div class="text-muted">${item.billing_type}</div>
+            <div class="fw-bold text-danger">PHP ${formatCurrency(item.amount || item.total_amount)}</div>
+        </div>
+    `).join('');
+    const additionalProductRows = additionalProductBilling.map(item => `
+        <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+            <div class="text-muted">${item.billing_type || 'Additional Product'}</div>
             <div class="fw-bold text-danger">PHP ${formatCurrency(item.amount || item.total_amount)}</div>
         </div>
     `).join('');
@@ -1076,7 +623,7 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                                     <div class="small text-muted text-uppercase">Other Fees</div>
                                 </div>
                             </div>
-                            ${registrationRows}${miscProducts.length > 0 ? miscRows : (registrationRows ? '' : `<div class="text-muted small">No other fees.</div>`)}
+                            ${registrationRows}${miscRows}${additionalProductRows}${(!registrationRows && !miscRows && !additionalProductRows) ? `<div class="text-muted small">No other fees.</div>` : ''}
                             <div class="d-flex justify-content-between align-items-center border-top pt-3 mt-3">
                                 <div class="fw-bold">Total</div>
                                 <div class="fw-bold text-danger">₱${formatCurrency(otherFeeTotal)}</div>
@@ -1096,7 +643,7 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                                 <div class="text-muted">Other Fee (Total)</div>
                                 <div class="fw-bold">₱${formatCurrency(otherFeeTotal)}</div>
                             </div>
-                            ${servicesTotal > 0 ? `
+                            ${hasMonthlyService && servicesTotal > 0 ? `
                             <div class="d-flex justify-content-between align-items-center mb-3">
                                 <div class="text-muted">Services${data.services ? ` (${data.services})` : ''}</div>
                                 <div class="fw-bold">₱${formatCurrency(servicesTotal)}</div>
@@ -1178,7 +725,7 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                     });
                 }
 
-                attachGcashOcrAutoFill({
+                window.attachGcashOcrAutoFill({
                     fileInputId: 'modalPaymentScreenshot',
                     actionButtonId: 'modalPaymentRunOcr',
                     amountInputId: 'modalPaymentAmount',
@@ -1200,7 +747,7 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
             if (!screenshotFile) { Swal.showValidationMessage('Upload the GCash payment screenshot first'); return false; }
             if (screenshotFile.size > 10 * 1024 * 1024) { Swal.showValidationMessage('Please upload a JPG or PNG receipt no larger than 10MB'); return false; }
             if (ocrBusy) { Swal.showValidationMessage('OCR is still reading the screenshot. Please wait a moment.'); return false; }
-            if (!ref) { Swal.showValidationMessage('Enter GCash reference number'); return false; }
+            if (!/^\d{13}$/.test(ref)) { Swal.showValidationMessage('GCash reference number must contain exactly 13 digits'); return false; }
             return { amount, method: gcashMethodId, ref, screenshotFile };
         }
     }).then((result) => {

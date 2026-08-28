@@ -22,7 +22,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Preload billing.js
     if (!document.querySelector('script[src*=\"billing.js\"]')) {
         const billingScript = document.createElement('script');
-        billingScript.src = '../../js/studentmodule/billing.js';
+        billingScript.src = '../../js/studentmodule/billing.js?v=20260825-shared-ocr';
         document.head.appendChild(billingScript);
     }
     
@@ -84,49 +84,7 @@ function ensureStudentPaymentOcrHelpers() {
     if (typeof window.attachGcashOcrAutoFill === 'function') {
         return Promise.resolve();
     }
-
-    if (window.__studentBillingScriptPromise) {
-        return window.__studentBillingScriptPromise;
-    }
-
-    window.__studentBillingScriptPromise = new Promise((resolve, reject) => {
-        const existingScript = document.querySelector('script[src*="studentmodule/billing.js"]');
-
-        if (existingScript) {
-            existingScript.addEventListener('load', () => {
-                if (typeof window.attachGcashOcrAutoFill === 'function') {
-                    resolve();
-                    return;
-                }
-
-                reject(new Error('Billing OCR helpers are unavailable after script load.'));
-            }, { once: true });
-            existingScript.addEventListener('error', () => reject(new Error('Unable to load billing OCR helpers.')), { once: true });
-
-            // In case the script already finished loading before listeners were attached.
-            setTimeout(() => {
-                if (typeof window.attachGcashOcrAutoFill === 'function') {
-                    resolve();
-                }
-            }, 0);
-            return;
-        }
-
-        const script = document.createElement('script');
-        script.src = '../../js/studentmodule/billing.js';
-        script.onload = () => {
-            if (typeof window.attachGcashOcrAutoFill === 'function') {
-                resolve();
-                return;
-            }
-
-            reject(new Error('Billing OCR helpers are unavailable after script load.'));
-        };
-        script.onerror = () => reject(new Error('Unable to load billing OCR helpers.'));
-        document.head.appendChild(script);
-    });
-
-    return window.__studentBillingScriptPromise;
+    return Promise.reject(new Error('The shared GCash OCR helper is unavailable.'));
 }
 
 const PH_ADDRESS_API_BASE = 'https://psgc.cloud/api/v2';
