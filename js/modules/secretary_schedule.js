@@ -1,4 +1,4 @@
-import OwnerCalendarModule from './owner_schedule.js?v=20260814-all-schedule-details';
+import OwnerCalendarModule from './owner_schedule.js?v=20260828-five-schedule-rows';
 
 const SECRETARY_SCHEDULE_ENDPOINT = '../../api/admin/secetary_schedule.php';
 const ALL_BRANCHES = 'all';

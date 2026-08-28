@@ -57,6 +57,41 @@ body { margin: 0; min-height: 100vh; color: var(--ink); background: linear-gradi
 .form-label { font-size: .89rem; font-weight: 700; color: #4e4f59; }
 .form-control, .form-select { min-height: 46px; border-color: #dcd8dc; border-radius: 10px; }
 .form-control:focus, .form-select:focus { border-color: var(--brand); box-shadow: 0 0 0 .2rem rgba(233,111,145,.14); }
+
+/* Public application tracker */
+.tracking-modal { width: min(620px, calc(100vw - 28px)); padding: 0 0 28px !important; overflow: hidden; border: 1px solid #f2d9e1; border-radius: 24px !important; background: #fff !important; box-shadow: 0 28px 80px rgba(97, 42, 64, .2) !important; }
+.tracking-modal::before { display: block; height: 8px; background: linear-gradient(90deg, var(--brand-dark), var(--pink)); content: ""; }
+.tracking-modal__title { margin: 0 !important; padding: 28px 30px 4px !important; color: var(--ink) !important; font-size: 1.65rem !important; font-weight: 800 !important; letter-spacing: -.025em; }
+.tracking-modal__body { margin: 0 !important; padding: 0 30px !important; color: var(--ink) !important; }
+.tracking-modal__intro { display: flex; align-items: center; gap: 12px; margin: 10px 0 22px; padding: 13px 15px; border: 1px solid #f5d8e2; border-radius: 14px; background: var(--soft); text-align: left; }
+.tracking-modal__intro p { margin: 0; color: var(--muted); font-size: .9rem; line-height: 1.45; }
+.tracking-modal__icon { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border-radius: 50%; color: #fff; background: linear-gradient(135deg, var(--brand), var(--pink)); box-shadow: 0 7px 16px rgba(233, 111, 145, .24); }
+.tracking-modal__fields { display: grid; gap: 16px; }
+.tracking-modal__name-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.tracking-modal__field { display: grid; gap: 7px; margin: 0; text-align: left; }
+.tracking-modal__field > span { color: #4e4f59; font-size: .82rem; font-weight: 800; }
+.tracking-modal__field > div { position: relative; }
+.tracking-modal__field i { position: absolute; top: 50%; left: 14px; z-index: 1; color: var(--brand); transform: translateY(-50%); }
+.tracking-modal__field input { width: 100%; min-height: 48px; padding: 10px 13px 10px 42px; border: 1px solid #ddd5d9; border-radius: 11px; outline: 0; background: #fff; color: var(--ink); font: inherit; transition: border-color .2s ease, box-shadow .2s ease; }
+.tracking-modal__field input:focus { border-color: var(--brand); box-shadow: 0 0 0 .22rem rgba(233, 111, 145, .14); }
+.tracking-modal__field input::placeholder { color: #aaa5aa; }
+.tracking-modal__actions { width: 100%; margin: 24px 0 0 !important; padding: 0 30px; gap: 10px; }
+.tracking-modal__confirm, .tracking-modal__cancel { min-height: 47px; margin: 0 !important; padding: 11px 20px; border-radius: 999px; font-weight: 800; transition: transform .2s ease, box-shadow .2s ease, background .2s ease; }
+.tracking-modal__confirm { flex: 1; border: 0; color: #fff; background: linear-gradient(135deg, var(--brand), var(--pink)); box-shadow: 0 10px 22px rgba(233, 111, 145, .25); }
+.tracking-modal__confirm:hover { color: #fff; box-shadow: 0 13px 26px rgba(233, 111, 145, .34); transform: translateY(-1px); }
+.tracking-modal__cancel { border: 1px solid #e5d9dd; color: #6c6065; background: #fff; }
+.tracking-modal__cancel:hover { color: var(--brand-dark); background: var(--soft); }
+.tracking-modal__validation { margin: 16px 30px 0 !important; border-radius: 10px !important; background: #fff0f3 !important; color: #a73555 !important; font-size: .86rem !important; }
+
+@media (max-width: 575.98px) {
+    .tracking-modal { border-radius: 20px !important; }
+    .tracking-modal__title { padding: 24px 20px 4px !important; font-size: 1.4rem !important; }
+    .tracking-modal__body { padding: 0 20px !important; }
+    .tracking-modal__name-grid { grid-template-columns: 1fr; gap: 16px; }
+    .tracking-modal__actions { padding: 0 20px; }
+    .tracking-modal__confirm, .tracking-modal__cancel { width: 100%; flex: 1 0 100%; }
+    .tracking-modal__validation { margin-right: 20px !important; margin-left: 20px !important; }
+}
 .form-control.enrollment-field-error, .form-select.enrollment-field-error { border-color: var(--danger); background-color: #fff8f8; box-shadow: 0 0 0 .22rem rgba(220,53,69,.16); animation: invalid-field-pulse .7s ease; }
 .form-control.enrollment-field-error:focus, .form-select.enrollment-field-error:focus { border-color: var(--danger); box-shadow: 0 0 0 .25rem rgba(220,53,69,.2); }
 .contact-number-group .input-group-text { min-width: 58px; justify-content: center; color: #4e4f59; background: #f7f5f6; border-color: #dcd8dc; border-radius: 10px 0 0 10px; font-weight: 700; }
@@ -223,7 +258,32 @@ body { margin: 0; min-height: 100vh; color: var(--ink); background: linear-gradi
 .application-payment-choice small { margin-top: 3px; color: var(--muted); }
 .application-payment-detail { margin-top: 16px; padding: 18px; border-radius: 13px; background: #f8f7f8; }
 .application-payment-detail--cash { color: #684a12; background: #fff7e8; border: 1px solid #efd59f; }
-.application-gcash-account { margin-bottom: 14px; display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+.application-payment-detail--gcash { padding: 22px; border: 1px solid #f3bfd0; background: #fff; }
+.application-gcash-title { display: flex; align-items: center; gap: 13px; margin-bottom: 18px; }
+.application-gcash-title > span { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 12px; color: var(--brand-dark); background: #fdebf1; font-size: 1.15rem; }
+.application-gcash-title h3 { margin: 0; color: var(--brand); font-size: 1.35rem; font-weight: 800; }
+.application-gcash-account { margin-bottom: 18px; padding: 22px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, 250px); align-items: center; gap: 28px; border: 1px solid #f1c4d2; border-radius: 15px; background: #fffafb; }
+.application-gcash-account-copy { min-width: 0; }
+.application-gcash-eyebrow { display: inline-flex; align-items: center; gap: 7px; color: var(--brand); font-size: .76rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.application-gcash-account-copy h4 { margin: 7px 0 18px; color: var(--ink); font-size: 1.2rem; font-weight: 800; }
+.application-gcash-account-copy dl { display: grid; gap: 12px; margin: 0; }
+.application-gcash-account-copy dl > div { display: grid; grid-template-columns: 130px minmax(0, 1fr); align-items: center; gap: 16px; }
+.application-gcash-account-copy dt { color: #72758a; font-size: .82rem; font-weight: 700; }
+.application-gcash-account-copy dd { min-width: 0; margin: 0; display: flex; align-items: center; gap: 9px; color: #283047; font-size: 1rem; font-weight: 800; overflow-wrap: anywhere; }
+.application-gcash-account-copy > p { margin: 18px 0 0; display: flex; align-items: flex-start; gap: 8px; color: #72758a; font-size: .8rem; }
+.application-gcash-copy { padding: 5px 9px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid #efabc1; border-radius: 8px; color: var(--brand-dark); background: #fff; font-size: .75rem; font-weight: 800; transition: background .2s ease, color .2s ease; }
+.application-gcash-copy:hover, .application-gcash-copy.is-copied { color: #fff; background: var(--brand); }
+.application-gcash-qr { width: 100%; min-height: 240px; padding: 11px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 9px; border: 1px solid #f0c4d2; border-radius: 14px; color: var(--brand-dark); background: #fff; font-size: .78rem; font-weight: 800; cursor: pointer; transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
+.application-gcash-qr img { display: block; width: 100%; max-width: 190px; max-height: 190px; border-radius: 7px; object-fit: contain; }
+.application-gcash-qr:hover { border-color: var(--brand); box-shadow: 0 10px 24px rgba(233,111,145,.16); transform: translateY(-1px); }
+.application-gcash-qr-empty { min-height: 210px; display: grid; place-items: center; align-content: center; gap: 8px; border: 1px dashed #e4c9d2; border-radius: 14px; color: #9d8a91; text-align: center; }
+.application-gcash-qr-empty i { font-size: 2rem; }
+.application-qr-modal { width: min(520px, calc(100vw - 28px)); padding: 28px !important; border: 1px solid #f1c4d2; border-radius: 22px !important; box-shadow: 0 28px 80px rgba(97,42,64,.22) !important; }
+.application-qr-modal__title { color: var(--brand-dark) !important; font-size: 1.5rem !important; font-weight: 800 !important; }
+.application-qr-modal__image { width: auto !important; max-width: 100% !important; max-height: 62vh !important; margin: 18px auto 24px !important; border: 1px solid #f2d8e0; border-radius: 12px; object-fit: contain; }
+.application-qr-modal__close { min-width: 150px; padding: 11px 24px; border: 0; border-radius: 999px; color: #fff; background: linear-gradient(135deg, var(--brand), var(--pink)); font-weight: 800; }
+.application-receipt-alert { border: 1px solid #f1c4d2; border-radius: 22px !important; box-shadow: 0 28px 80px rgba(97,42,64,.2) !important; }
+.application-receipt-alert__confirm { min-width: 140px; padding: 11px 24px; border: 0; border-radius: 999px; color: #fff; background: linear-gradient(135deg, var(--brand), var(--pink)); font-weight: 800; }
 .application-gcash-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .application-receipt-upload { margin-top: 14px; padding: 18px; display: block; border: 1px dashed #c9bdc3; border-radius: 12px; background: #fff; cursor: pointer; }
 .application-receipt-upload input { display: block; width: 100%; }
@@ -257,5 +317,8 @@ body { margin: 0; min-height: 100vh; color: var(--ink); background: linear-gradi
     .billing-admin-theme .billing-totals { align-items: stretch; justify-content: flex-start; }
     .billing-totals small { text-align: left; }
     .application-payment-methods, .application-gcash-fields { grid-template-columns: 1fr; }
+    .application-gcash-account { grid-template-columns: 1fr; padding: 18px; }
+    .application-gcash-account-copy dl > div { grid-template-columns: 1fr; gap: 4px; }
+    .application-gcash-qr { width: min(250px, 100%); justify-self: center; }
     .application-footer { display: grid; gap: 6px; }
 }

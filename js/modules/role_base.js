@@ -15,6 +15,10 @@ const MODULE_DETAIL_MAP = {
         { label: 'Approve Enrollment', hint: 'Handle approval-related enrollment steps.', permissionKey: 'approve' },
         { label: 'Export Enrollment', hint: 'Export enrollment data and summaries.', permissionKey: 'export' }
     ],
+    student_management: [
+        { label: 'Edit Student Profiles', hint: 'Update student, guardian, address, and account information.', permissionKey: 'edit' },
+        { label: 'Export Student Directory', hint: 'Export the filtered student directory to PDF, Excel, or CSV.', permissionKey: 'export' }
+    ],
     employee: [
         { label: 'Add Employee', hint: 'Create new employee accounts.', permissionKey: 'create' },
         { label: 'Edit Employee', hint: 'Update employee records and account details.', permissionKey: 'edit' },
@@ -33,6 +37,8 @@ const MODULE_DETAIL_MAP = {
         { label: 'Add Payment Record', hint: 'Create or log payment records.', permissionKey: 'create' },
         { label: 'Edit Payment', hint: 'Update payment details and statuses.', permissionKey: 'edit' },
         { label: 'To Receive Payment Card', hint: 'Show the To Receive Payment card and allow approve / decline actions for pending payments.', permissionKey: 'approve' },
+        { label: 'View Assessment', hint: 'Open billing assessments from tutorial and pre-play payment records.', permissionKey: 'view_assessment' },
+        { label: 'Manage Assessment', hint: 'Change discounts, optional services, and additional product charges in billing assessments.', permissionKey: 'manage_assessment' },
         { label: 'Export Payment Data', hint: 'Export payment reports and records.', permissionKey: 'export' }
     ],
     class: [
@@ -66,6 +72,12 @@ const MODULE_VIEW_DETAIL_MAP = {
     class: {
         label: 'Search Classes and Sections',
         hint: 'Show the Class module and allow use of the new class and section selectors.'
+    }
+};
+
+const MODULE_PERMISSION_DEPENDENCIES = {
+    payment: {
+        manage_assessment: ['view_assessment']
     }
 };
 
@@ -152,7 +164,9 @@ const rbacState = {
     selectedRole: '',
     permissionsByRole: {},
     expandedModules: {},
-    expandedProgramFeatures: {}
+    expandedProgramFeatures: {},
+    isSavingBulkPermissions: false,
+    bulkSavingModuleKey: ''
 };
 
 function isRoleBasePage() {
@@ -436,10 +450,38 @@ function renderPermissionRow(detail, matrix, fallbackModuleKey) {
                 data-action-key="${detail.permissionKey}"
                 aria-pressed="${allowed ? 'true' : 'false'}"
                 title="${allowed ? 'Enabled' : 'Disabled'}"
+                ${rbacState.isSavingBulkPermissions ? 'disabled' : ''}
             >
                 <i class="bi ${allowed ? 'bi-check-lg' : 'bi-dash-lg'}"></i>
             </button>
         </div>`;
+}
+
+function getDisplayedPermissionKeys(moduleKey) {
+    const permissionKeys = ['view'];
+
+    if (moduleKey === 'program') {
+        PROGRAM_FEATURE_DETAIL_MAP.forEach(feature => {
+            feature.actions.forEach(action => {
+                if ((action.moduleKey || 'program') === moduleKey) {
+                    permissionKeys.push(action.permissionKey);
+                }
+            });
+        });
+    } else {
+        (MODULE_DETAIL_MAP[moduleKey] || []).forEach(detail => {
+            if ((detail.moduleKey || moduleKey) === moduleKey) {
+                permissionKeys.push(detail.permissionKey);
+            }
+        });
+    }
+
+    return [...new Set(permissionKeys)];
+}
+
+function hasAllDisplayedPermissions(matrix, moduleKey) {
+    return getDisplayedPermissionKeys(moduleKey)
+        .every(permissionKey => Boolean(matrix[moduleKey]?.[permissionKey]));
 }
 
 function renderProgramFeatureTree(matrix) {
@@ -491,9 +533,11 @@ function renderPermissionTree() {
 
     const matrix = ensurePermissionMatrix(rbacState.selectedRole);
 
-    container.innerHTML = RBAC_MODULES.map(module => {
+    const moduleGroups = RBAC_MODULES.map(module => {
         const expanded = Boolean(rbacState.expandedModules[module.key]);
         const enabled = Boolean(matrix[module.key]?.view);
+        const allModulePermissionsSelected = hasAllDisplayedPermissions(matrix, module.key);
+        const isSavingThisModule = rbacState.bulkSavingModuleKey === module.key;
         const viewDetail = MODULE_VIEW_DETAIL_MAP[module.key] || {
             label: `View ${module.label}`,
             hint: 'Show this module in navigation and allow the selected role to open it.'
@@ -531,11 +575,25 @@ function renderPermissionTree() {
                     </span>
                 </button>
                 <div class="employee-rbac-module-panel">
+                    <div class="employee-rbac-module-bulk-actions">
+                        <button
+                            type="button"
+                            class="employee-rbac-bulk-button"
+                            data-select-all-module="${module.key}"
+                            ${allModulePermissionsSelected || rbacState.isSavingBulkPermissions ? 'disabled' : ''}
+                        >
+                            ${isSavingThisModule
+                                ? '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>Saving...</span>'
+                                : `<i class="bi ${allModulePermissionsSelected ? 'bi-check2' : 'bi-check2-all'}"></i><span>${allModulePermissionsSelected ? 'All selected' : 'Select all'}</span>`}
+                        </button>
+                    </div>
                     ${panelContent}
                 </div>
             </article>
         `;
     }).join('');
+
+    container.innerHTML = moduleGroups;
 }
 
 function renderAssignedUsers() {
@@ -675,7 +733,7 @@ function handleRoleListClick(event) {
 
 async function handlePermissionToggle(event) {
     const button = event.target.closest('[data-module-key][data-action-key]');
-    if (!button || !rbacState.selectedRole) return;
+    if (!button || !rbacState.selectedRole || rbacState.isSavingBulkPermissions) return;
 
     const moduleKey = button.getAttribute('data-module-key');
     const actionKey = button.getAttribute('data-action-key');
@@ -696,6 +754,20 @@ async function handlePermissionToggle(event) {
     if (nextValue && actionKey !== 'view' && !matrix[moduleKey].view) {
         matrix[moduleKey].view = true;
         updates.view = true;
+    }
+
+    if (nextValue) {
+        (MODULE_PERMISSION_DEPENDENCIES[moduleKey]?.[actionKey] || []).forEach(requiredPermissionKey => {
+            if (matrix[moduleKey][requiredPermissionKey]) return;
+            matrix[moduleKey][requiredPermissionKey] = true;
+            updates[requiredPermissionKey] = true;
+        });
+    } else {
+        Object.entries(MODULE_PERMISSION_DEPENDENCIES[moduleKey] || {}).forEach(([dependentPermissionKey, requiredPermissionKeys]) => {
+            if (!requiredPermissionKeys.includes(actionKey) || !matrix[moduleKey][dependentPermissionKey]) return;
+            matrix[moduleKey][dependentPermissionKey] = false;
+            updates[dependentPermissionKey] = false;
+        });
     }
 
     if (nextValue && featureViewAction && actionKey !== featureViewAction.permissionKey && !matrix[moduleKey][featureViewAction.permissionKey]) {
@@ -720,6 +792,54 @@ async function handlePermissionToggle(event) {
     }
 
     renderRbac();
+}
+
+async function selectAllModulePermissions(moduleKey) {
+    if (!rbacState.selectedRole || rbacState.isSavingBulkPermissions) return;
+
+    const roleKey = rbacState.selectedRole;
+    const matrix = ensurePermissionMatrix(roleKey);
+    rbacState.isSavingBulkPermissions = true;
+    rbacState.bulkSavingModuleKey = moduleKey;
+    renderPermissionTree();
+
+    try {
+        const updates = Object.fromEntries(
+            getDisplayedPermissionKeys(moduleKey)
+                .filter(permissionKey => !matrix[moduleKey]?.[permissionKey])
+                .map(permissionKey => [permissionKey, true])
+        );
+        if (!Object.keys(updates).length) return;
+
+        const previousModulePermissions = { ...matrix[moduleKey] };
+        Object.assign(matrix[moduleKey], updates);
+
+        try {
+            await setRbacModulePermissions(roleKey, moduleKey, updates);
+        } catch (error) {
+            matrix[moduleKey] = previousModulePermissions;
+            throw error;
+        }
+    } catch (error) {
+        console.error('Error selecting module permissions:', error);
+        Swal.fire(
+            'Unable to select module permissions',
+            error.message || 'The permission update failed.',
+            'error'
+        );
+    } finally {
+        rbacState.isSavingBulkPermissions = false;
+        rbacState.bulkSavingModuleKey = '';
+        renderRbac();
+    }
+}
+
+function handleSelectAllPermissions(event) {
+    const moduleButton = event.target.closest('[data-select-all-module]');
+    if (!moduleButton) return false;
+
+    selectAllModulePermissions(moduleButton.getAttribute('data-select-all-module'));
+    return true;
 }
 
 function handleModuleToggle(event) {
@@ -754,6 +874,8 @@ function bindRbacEvents() {
 
     roleList?.addEventListener('click', handleRoleListClick);
     permissionTree?.addEventListener('click', event => {
+        if (handleSelectAllPermissions(event)) return;
+
         if (event.target.closest('[data-module-key][data-action-key]')) {
             handlePermissionToggle(event);
             return;

@@ -448,10 +448,12 @@ class EnrollmentApplicationAPI
                 return;
             }
 
-            $rate = $this->conn->prepare("SELECT created_at FROM enrollment_email_verifications WHERE email = ? ORDER BY verification_id DESC LIMIT 1");
+            // Compare database timestamps inside MySQL. On hosted servers PHP and
+            // MySQL commonly use different time zones, so parsing a MySQL DATETIME
+            // with PHP's clock can make a newly-created record look hours old.
+            $rate = $this->conn->prepare("SELECT (created_at > DATE_SUB(NOW(), INTERVAL 1 MINUTE)) FROM enrollment_email_verifications WHERE email = ? ORDER BY verification_id DESC LIMIT 1");
             $rate->execute([$email]);
-            $last = $rate->fetchColumn();
-            if ($last && strtotime($last) > time() - 60) {
+            if ((bool)$rate->fetchColumn()) {
                 throw new RuntimeException('Please wait one minute before requesting another code.');
             }
 
@@ -498,10 +500,10 @@ class EnrollmentApplicationAPI
                 throw new InvalidArgumentException('Enter the six-digit verification code.');
             }
 
-            $stmt = $this->conn->prepare("SELECT * FROM enrollment_email_verifications WHERE verification_id = ? AND email = ? LIMIT 1");
+            $stmt = $this->conn->prepare("SELECT *, (expires_at >= NOW()) AS is_unexpired FROM enrollment_email_verifications WHERE verification_id = ? AND email = ? LIMIT 1");
             $stmt->execute([$id, $email]);
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
-            if (!$row || strtotime($row['expires_at']) < time()) {
+            if (!$row || !(bool)$row['is_unexpired']) {
                 throw new RuntimeException('The verification code has expired. Please request a new one.');
             }
             if ((int)$row['attempts'] >= 5) {
@@ -674,7 +676,7 @@ class EnrollmentApplicationAPI
             $paymentReference = trim((string)($data['payment_reference_no'] ?? '')) ?: null;
             if ($isGcashPayment) {
                 if (abs($paymentAmount - $expectedInitialPayment) > 0.01) {
-                    throw new InvalidArgumentException('The GCash receipt amount must equal the registration fee and downpayment total of PHP ' . number_format($expectedInitialPayment, 2) . '.');
+                    throw new InvalidArgumentException('The GCash receipt amount must equal the registration fee and downpayment total of ₱ ' . number_format($expectedInitialPayment, 2) . '.');
                 }
                 if (!preg_match('/^\d{13}$/', (string)$paymentReference)) {
                     throw new InvalidArgumentException('The GCash reference number must contain exactly 13 digits.');
@@ -768,8 +770,8 @@ class EnrollmentApplicationAPI
                         : 'Please visit your selected center after approval to pay the registration fee and downpayment in cash.'
                 ],
                 'notice' => 'Current status: Pending',
-                'featured_label' => 'Private tracking token',
-                'featured_value' => $trackingToken,
+                'featured_label' => 'Application number',
+                'featured_value' => $applicationNumber,
                 'details' => [
                     'Application number' => $applicationNumber,
                     'Student ID' => $studentNumber,
@@ -777,19 +779,19 @@ class EnrollmentApplicationAPI
                     'Center' => $branch['branch_name'],
                     'Payment method' => $paymentMethodName,
                     'Monthly service' => $snapshot['service_name'] ?: 'Not included',
-                    'Initial payment' => 'PHP ' . number_format($expectedInitialPayment, 2),
+                    'Initial payment' => '₱ ' . number_format($expectedInitialPayment, 2),
                     'School year' => $schoolYear['school_year']
                 ],
                 'button_label' => 'Track your application',
                 'button_url' => $trackingUrl,
-                'security' => 'Keep the tracking token private. You will need it together with the application number when checking the application online.'
+                'security' => 'To check the application online, enter the application number and the student’s first name, last name, and birthdate exactly as submitted.'
             ]);
             $paymentNextStep = $isGcashPayment
                 ? 'Your GCash receipt was recorded and will be confirmed when the center approves the application.'
                 : 'After approval, visit the selected center to pay the registration fee and downpayment in cash.';
             $receivedPlainText = "Hello {$data['first_name']},\n\nYour new-student application {$applicationNumber} is pending review. " .
                 $paymentNextStep . "\n\n" .
-                "Tracking token: {$trackingToken}\n\nKeep this token private.";
+                "Track the application using application number {$applicationNumber} together with the student's first name, last name, and birthdate exactly as submitted.";
             $this->sendEmail($email, "Enrollment application {$applicationNumber} received", $receivedEmail, $receivedPlainText);
 
             $successMessage = $isGcashPayment
@@ -797,7 +799,6 @@ class EnrollmentApplicationAPI
                 : 'Application submitted. Please visit the center after approval to pay the registration fee and downpayment in cash.';
             $this->respond('success', $successMessage, [
                 'application_number' => $applicationNumber,
-                'tracking_token' => $trackingToken,
                 'student_id_number' => $studentNumber,
                 'payment_method' => $paymentMethodName,
                 'payment_status' => $isGcashPayment ? 'pending_review' : 'awaiting_cash',
@@ -864,13 +865,19 @@ class EnrollmentApplicationAPI
     public function getPublicStatus(array $data): void
     {
         try {
-            $number = trim((string)($data['application_number'] ?? ''));
-            $token = trim((string)($data['tracking_token'] ?? ''));
-            if ($number === '' || $token === '') {
-                throw new InvalidArgumentException('Application number and tracking token are required.');
+            $number = strtoupper(trim((string)($data['application_number'] ?? '')));
+            $firstName = trim((string)($data['first_name'] ?? ''));
+            $lastName = trim((string)($data['last_name'] ?? ''));
+            $birthday = trim((string)($data['birthday'] ?? ''));
+            if ($number === '' || $firstName === '' || $lastName === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $birthday)) {
+                throw new InvalidArgumentException('Application number, student first name, last name, and birthdate are required.');
             }
-            $stmt = $this->conn->prepare($this->applicationBaseQuery() . ' WHERE ea.application_number = ? AND ea.tracking_token_hash = ? LIMIT 1');
-            $stmt->execute([$number, hash('sha256', $token)]);
+            [$year, $month, $day] = array_map('intval', explode('-', $birthday));
+            if (!checkdate($month, $day, $year)) {
+                throw new InvalidArgumentException('Enter a valid student birthdate.');
+            }
+            $stmt = $this->conn->prepare($this->applicationBaseQuery() . ' WHERE ea.application_number = ? AND TRIM(s.first_name) = ? AND TRIM(s.last_name) = ? AND s.birthday = ? LIMIT 1');
+            $stmt->execute([$number, $firstName, $lastName, $birthday]);
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
             if (!$row) {
                 throw new RuntimeException('Application was not found.');
@@ -879,7 +886,21 @@ class EnrollmentApplicationAPI
             if (!empty($row['enrollment_details_id'])) {
                 $row['payment_receipt'] = $this->publicPaymentReceipt((int)$row['enrollment_details_id']);
             }
-            unset($row['tracking_token_hash'], $row['password_hash']);
+            // This lookup uses identifying details instead of a secret token, so
+            // return only information needed by the public status screen.
+            unset(
+                $row['tracking_token_hash'], $row['password_hash'], $row['email'], $row['username'],
+                $row['nickname'], $row['gender_id'], $row['adr_street'], $row['adr_barangay'],
+                $row['adr_city'], $row['adr_province'], $row['adr_note'], $row['health_note'],
+                $row['guardian_name'], $row['guardian_contact'], $row['guardian_relationship'],
+                $row['reviewer_name'], $row['subjects'], $row['availability']
+            );
+            if (is_array($row['application_payment'] ?? null)) {
+                unset(
+                    $row['application_payment']['proof_pic'], $row['application_payment']['account_name'],
+                    $row['application_payment']['account_number'], $row['application_payment']['qr_code']
+                );
+            }
             $this->respond('success', '', ['data' => $row]);
         } catch (Throwable $e) {
             $this->respond('error', $e->getMessage(), [], 404);
@@ -1217,7 +1238,7 @@ class EnrollmentApplicationAPI
     ): array {
         $expected = round((float)$snapshot['initial_payment'], 2);
         if (abs($amount - $expected) > 0.01) {
-            throw new InvalidArgumentException('Payment must equal the required registration fee and downpayment of PHP ' . number_format($expected, 2) . '.');
+            throw new InvalidArgumentException('Payment must equal the required registration fee and downpayment of ₱ ' . number_format($expected, 2) . '.');
         }
 
         $header = $this->conn->prepare("INSERT INTO enrollment_header (student_id, employee_id, branch_id, school_year_id, status, total_of_program, date_created) VALUES (?, ?, ?, ?, 'incomplete', ?, NOW())");
@@ -1315,7 +1336,7 @@ class EnrollmentApplicationAPI
             $snapshot = $this->applicationFinancialSnapshot($application);
             $expected = round((float)$snapshot['initial_payment'], 2);
             if (abs($amount - $expected) > 0.01) {
-                throw new InvalidArgumentException('Payment must equal the required registration fee and downpayment of PHP ' . number_format($expected, 2) . '.');
+                throw new InvalidArgumentException('Payment must equal the required registration fee and downpayment of ₱ ' . number_format($expected, 2) . '.');
             }
             $method = $this->conn->prepare('SELECT payment_method FROM payment_method WHERE payment_method_id = ?');
             $method->execute([$methodId]);
@@ -1389,14 +1410,14 @@ class EnrollmentApplicationAPI
                 TRIM(CONCAT_WS(' ', e.first_name, NULLIF(TRIM(COALESCE(e.middle_name,'')), ''), e.last_name)) AS teacher_name
             FROM employee e
             JOIN role r ON r.role_id = e.role_id AND r.role_name = 'teacher'
+            JOIN program_teacher eligible_program
+              ON eligible_program.employee_id = e.employee_id AND eligible_program.program_id = ?
             WHERE e.employee_id = ? AND e.status = 'active' AND e.branch_id = ? LIMIT 1");
-        $stmt->execute([$teacherId, (int)$application['branch_id']]);
+        $stmt->execute([(int)$application['program_id'], $teacherId, (int)$application['branch_id']]);
         $teacher = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$teacher) return [];
 
-        $program = $this->conn->prepare('SELECT 1 FROM program_teacher WHERE employee_id = ? AND program_id = ? LIMIT 1');
-        $program->execute([$teacherId, (int)$application['program_id']]);
-        $programAssigned = (bool)$program->fetchColumn();
+        $programAssigned = true;
 
         $assigned = $this->conn->prepare('SELECT s.subject_id, s.subject_name FROM subject_teacher st JOIN subject s ON s.subject_id = st.subject_id WHERE st.employee_id = ?');
         $assigned->execute([$teacherId]);
@@ -1476,9 +1497,11 @@ class EnrollmentApplicationAPI
         try {
             $admin = $this->requireAdmin();
             $application = $this->adminApplication((int)($data['application_id'] ?? 0), $admin);
-            $stmt = $this->conn->prepare("SELECT e.employee_id FROM employee e JOIN role r ON r.role_id = e.role_id
+            $stmt = $this->conn->prepare("SELECT DISTINCT e.employee_id FROM employee e
+                JOIN role r ON r.role_id = e.role_id
+                JOIN program_teacher pt ON pt.employee_id = e.employee_id AND pt.program_id = ?
                 WHERE r.role_name = 'teacher' AND e.status = 'active' AND e.branch_id = ? ORDER BY e.last_name, e.first_name");
-            $stmt->execute([(int)$application['branch_id']]);
+            $stmt->execute([(int)$application['program_id'], (int)$application['branch_id']]);
             $teachers = [];
             foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $teacherId) {
                 $candidate = $this->manualTeacherCandidate($application, (int)$teacherId);
@@ -1509,7 +1532,7 @@ class EnrollmentApplicationAPI
                 ? $this->manualTeacherCandidate($application, $teacherId)
                 : $this->teacherMatches($application, $teacherId);
             if (!$match) throw new RuntimeException($manualOverride
-                ? 'The manually selected teacher must be an active teacher in the application branch.'
+                ? 'The manually selected teacher must be active, assigned to this program, and in the application branch.'
                 : 'The selected teacher does not match the program, subjects, branch, and preferred availability.');
             if (empty($match['matching_slots'])) {
                 throw new RuntimeException('The selected teacher has no working schedule that overlaps the student’s submitted availability. Update the teacher schedule before continuing.');
@@ -1722,7 +1745,7 @@ class EnrollmentApplicationAPI
                 : $this->teacherMatches($application, $teacherId);
             if (!$selectedTeacher) {
                 throw new RuntimeException($manualOverride
-                    ? 'The manually selected teacher is no longer active in this branch.'
+                    ? 'The manually selected teacher is no longer active, assigned to this program, or in this branch.'
                     : 'The selected teacher is no longer a valid automatic match.');
             }
             $isSessionProgram = strtolower((string)$application['unit_type']) === 'session';
@@ -1750,7 +1773,7 @@ class EnrollmentApplicationAPI
                 $insert->execute([$detailsId, date('l', strtotime($row['date'])), $row['start_time'], $row['end_time'], $row['date']]);
             }
             $this->conn->prepare("UPDATE enrollment_details SET preferred_teacher = ?, status = 'enrolled' WHERE enrollment_details_id = ?")->execute([$teacherId, $detailsId]);
-            $this->conn->prepare("UPDATE enrollment_header eh JOIN enrollment_details ed ON ed.enrollment_header_id = eh.enrollment_header_id SET eh.status = 'enrolled' WHERE ed.enrollment_details_id = ?")->execute([$detailsId]);
+            $this->conn->prepare("UPDATE enrollment_header eh JOIN enrollment_details ed ON ed.enrollment_header_id = eh.enrollment_header_id SET eh.employee_id = ?, eh.status = 'enrolled' WHERE ed.enrollment_details_id = ?")->execute([$admin['employee_id'], $detailsId]);
             $snapshot = $this->applicationFinancialSnapshot($application);
             $this->generateRemainingBills($detailsId, $application, $snapshot, $schedule);
             $portalCredentials = $this->activateStudentPortalAccount($application);
@@ -1881,9 +1904,9 @@ class EnrollmentApplicationAPI
                 ->execute([$sectionId, $section['employee_id'] ?: null, $section['section_schedule'] ?: null, $detailsId]);
             $this->conn->prepare("UPDATE enrollment_header eh
                     JOIN enrollment_details ed ON ed.enrollment_header_id = eh.enrollment_header_id
-                    SET eh.status = 'enrolled'
+                    SET eh.employee_id = ?, eh.status = 'enrolled'
                     WHERE ed.enrollment_details_id = ?")
-                ->execute([$detailsId]);
+                ->execute([$admin['employee_id'], $detailsId]);
 
             $this->generateRemainingBills($detailsId, $application, $snapshot, []);
             $portalCredentials = $this->activateStudentPortalAccount($application);

@@ -1,8 +1,8 @@
 import { buildAppUrl } from '../utilities/app_url.js';
 import {
-    canUseEnrollmentPermission,
-    initEnrollmentPermissions
-} from './enrollment_rbac.js';
+    canUseStudentManagementPermission,
+    initStudentManagementPermissions
+} from './student_management_rbac.js';
 
 const PAGE_SIZE = 10;
 
@@ -245,7 +245,7 @@ function renderTable() {
         const branch = cleanText(student.current_branch, 'Not assigned');
         return `
             <tr>
-                <td><strong>${escapeHtml(studentNumber)}</strong>${student.lrn ? `<small class="d-block text-muted mt-1">LRN: ${escapeHtml(student.lrn)}</small>` : ''}</td>
+                <td><div class="student-id-cell"><strong>${escapeHtml(studentNumber)}</strong>${student.lrn ? `<small class="d-block text-muted mt-1">LRN: ${escapeHtml(student.lrn)}</small>` : ''}</div></td>
                 <td><div class="student-identity">${avatarHtml(student)}<div><strong>${escapeHtml(name)}</strong><small>${student.nickname ? `“${escapeHtml(student.nickname)}”` : `Record #${escapeHtml(student.student_id)}`}</small></div></div></td>
                 <td><div class="student-contact"><strong>${escapeHtml(cleanText(student.email))}</strong><small>${escapeHtml(cleanText(student.guardian_contact, 'No guardian phone'))}</small></div></td>
                 <td><div class="student-program-cell"><strong>${escapeHtml(program)}</strong><small>${escapeHtml(cleanText(student.school_year, 'No school year'))}</small></div></td>
@@ -255,6 +255,13 @@ function renderTable() {
                 <td><button type="button" class="student-view-button" data-view-student="${escapeHtml(student.student_id)}"><i class="bi ${state.meta.can_edit ? 'bi-pencil-square' : 'bi-eye'}"></i>${state.meta.can_edit ? 'View / Edit' : 'View'}</button></td>
             </tr>`;
     }).join('');
+
+    const columnLabels = ['Student ID', 'Student', 'Contact', 'Current program', 'Branch', 'Enrollment', 'Account', 'Action'];
+    tbody.querySelectorAll('tr').forEach(row => {
+        row.querySelectorAll('td').forEach((cell, index) => {
+            cell.dataset.label = columnLabels[index] || '';
+        });
+    });
 
     const end = Math.min(start + PAGE_SIZE, total);
     document.getElementById('student-page-summary').textContent = `Showing ${start + 1}–${end} of ${total} students`;
@@ -719,8 +726,8 @@ async function loadStudents() {
     const payload = await requestJson(apiUrl('list'));
     state.students = Array.isArray(payload.data) ? payload.data : [];
     state.meta = { ...state.meta, ...(payload.meta || {}) };
-    state.meta.can_edit = Boolean(state.meta.can_edit && canUseEnrollmentPermission('edit'));
-    state.meta.can_export = Boolean(state.meta.can_export && canUseEnrollmentPermission('export'));
+    state.meta.can_edit = Boolean(state.meta.can_edit && canUseStudentManagementPermission('edit'));
+    state.meta.can_export = Boolean(state.meta.can_export && canUseStudentManagementPermission('export'));
     document.getElementById('student-export-button')?.classList.toggle('d-none', !state.meta.can_export);
     renderSummary();
     applyFilters(false);
@@ -731,8 +738,8 @@ export async function initStudentManagementPage() {
 
     try {
         await hydrateSharedTemplate();
-        await initEnrollmentPermissions();
-        if (!canUseEnrollmentPermission('view')) {
+        await initStudentManagementPermissions();
+        if (!canUseStudentManagementPermission('view')) {
             renderAccessDenied('You do not currently have permission to view student records.');
             return;
         }
@@ -748,8 +755,8 @@ export async function initStudentManagementPage() {
         state.students = Array.isArray(listPayload.data) ? listPayload.data : [];
         state.lookups = lookupPayload.data || state.lookups;
         state.meta = { ...state.meta, ...(listPayload.meta || {}) };
-        state.meta.can_edit = Boolean(state.meta.can_edit && canUseEnrollmentPermission('edit'));
-        state.meta.can_export = Boolean(state.meta.can_export && canUseEnrollmentPermission('export'));
+        state.meta.can_edit = Boolean(state.meta.can_edit && canUseStudentManagementPermission('edit'));
+        state.meta.can_export = Boolean(state.meta.can_export && canUseStudentManagementPermission('export'));
 
         populateLookups();
         renderSummary();

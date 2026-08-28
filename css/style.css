@@ -212,6 +212,35 @@
             letter-spacing: 0.04em;
         }
 
+        .login-home-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.55rem;
+            padding: 0.85rem 1rem;
+            border: 1px solid #f1b6c8;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #fff0f5 0%, #ffe3ec 100%);
+            box-shadow: 0 7px 18px rgba(211, 79, 118, 0.1);
+            color: #c94f73;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease;
+        }
+
+        .login-home-button i {
+            color: #e85d88;
+        }
+
+        .login-home-button:hover,
+        .login-home-button:focus-visible {
+            border-color: #e990aa;
+            background: linear-gradient(90deg, #ffe6ef 0%, #ffd7e4 100%);
+            box-shadow: 0 9px 22px rgba(211, 79, 118, 0.16);
+            color: #b63f64;
+            transform: translateY(-1px);
+        }
+
         .math-captcha {
             grid-template-columns: 64px 24px 64px 24px minmax(0, 1fr) 44px;
             gap: 0.6rem;
@@ -559,6 +588,12 @@
                 background: linear-gradient(90deg, #ea6f92 0%, #f36b96 100%);
                 color: #fff;
                 font-size: 1.05rem;
+            }
+
+            .login-home-button {
+                min-height: 54px;
+                border-radius: 10px;
+                font-size: 1rem;
             }
 
             .login-card small {

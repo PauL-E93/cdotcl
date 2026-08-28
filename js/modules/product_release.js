@@ -145,7 +145,7 @@ function openStudentOrdersModal(enrollmentId) {
     document.body.insertAdjacentHTML('beforeend', `
         <div class="modal fade" id="studentProductOrdersModal" tabindex="-1" aria-hidden="true">
             <div class="modal-dialog modal-xl modal-dialog-scrollable">
-                <div class="modal-content border-0">
+                <div class="modal-content border-0">    
                     <div class="modal-header">
                         <div><div class="small text-muted">${escapeHtml(first.program_name)}</div><h5 class="modal-title">${escapeHtml(first.student_name)} — Product Orders</h5></div>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>

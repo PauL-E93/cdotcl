@@ -6,7 +6,9 @@ const DEFAULT_PAYMENT_PERMISSIONS = {
     edit: true,
     delete: true,
     approve: true,
-    export: true
+    export: true,
+    view_assessment: true,
+    manage_assessment: true
 };
 
 let currentPaymentRole = '';

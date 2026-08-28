@@ -1,4 +1,4 @@
-import { guardPaymentPermission } from './payment_rbac.js';
+import { canUsePaymentPermission, guardPaymentPermission } from './payment_rbac.js';
 
 const ASSESSMENT_API = '../../api/admin/assessment.php';
 
@@ -187,6 +187,10 @@ function modalHtml(data) {
 }
 
 async function runAction(operation, payload, confirmation) {
+    if (!guardPaymentPermission('manage_assessment', 'You do not have permission to manage billing assessments.')) {
+        return false;
+    }
+
     if (confirmation) {
         const result = await Swal.fire({
             icon: 'question', title: confirmation.title, text: confirmation.text,
@@ -264,7 +268,8 @@ function bindActions(data, enrollmentId) {
 }
 
 window.openPaymentAssessment = async function openPaymentAssessment(enrollmentId, refresh = false) {
-    if (!refresh && !guardPaymentPermission('view', 'You do not have permission to view billing assessments.')) return;
+    if (!guardPaymentPermission('view', 'You do not have permission to view the payment module.')) return;
+    if (!guardPaymentPermission('view_assessment', 'You do not have permission to view billing assessments.')) return;
     ensureStyles();
     try {
         if (!refresh) Swal.fire({ title: 'Loading assessment…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
@@ -278,6 +283,7 @@ window.openPaymentAssessment = async function openPaymentAssessment(enrollmentId
             document.body.classList.remove('modal-open');
             document.body.style.removeProperty('padding-right');
         }
+        response.data.read_only = Boolean(response.data.read_only || !canUsePaymentPermission('manage_assessment'));
         document.body.insertAdjacentHTML('beforeend', modalHtml(response.data));
         const modalElement = document.getElementById('paymentAssessmentModal');
         const modal = new bootstrap.Modal(modalElement);

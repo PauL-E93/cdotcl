@@ -794,6 +794,16 @@
         padding: 15px;
     }
 
+    .student-filter-field,
+    .student-search-control {
+        min-width: 0;
+    }
+
+    .student-filter-card .form-control,
+    .student-filter-card .form-select {
+        width: 100%;
+    }
+
     .student-clear-button {
         width: 100%;
     }
@@ -804,17 +814,125 @@
         flex-direction: column;
     }
 
+    .student-table-heading {
+        padding: 18px 16px 14px;
+    }
+
+    .student-table-card .table-responsive {
+        overflow: visible;
+    }
+
+    .student-directory-table {
+        display: block;
+        width: 100%;
+        min-width: 0;
+        table-layout: auto;
+    }
+
+    .student-directory-table thead {
+        display: none;
+    }
+
+    .student-directory-table tbody,
+    .student-directory-table tr,
+    .student-directory-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .student-directory-table tbody tr {
+        padding: 8px 16px;
+        border-top: 1px solid var(--student-border);
+    }
+
+    .student-directory-table tbody td {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 9px 0;
+        border: 0;
+        text-align: right;
+        overflow-wrap: anywhere;
+    }
+
+    .student-directory-table tbody td::before {
+        content: attr(data-label);
+        flex: 0 0 98px;
+        color: #69758a;
+        font-size: 10px;
+        font-weight: 750;
+        text-align: left;
+        text-transform: uppercase;
+    }
+
+    .student-directory-table tbody td > * {
+        min-width: 0;
+        max-width: calc(100% - 114px);
+    }
+
+    .student-directory-table tbody td[colspan] {
+        display: block;
+        padding: 36px 12px !important;
+        text-align: center;
+    }
+
+    .student-directory-table tbody td[colspan]::before {
+        content: none;
+    }
+
+    .student-identity {
+        justify-content: flex-end;
+        text-align: right;
+    }
+
+    .student-id-cell strong,
+    .student-id-cell small {
+        display: block;
+    }
+
+    .student-contact strong,
+    .student-identity small,
+    .student-contact small,
+    .student-program-cell small {
+        max-width: none;
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
+    }
+
+    .student-program-cell strong {
+        max-width: none;
+    }
+
+    .student-pagination {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
     .student-profile-modal .modal-dialog {
+        width: 100%;
+        max-width: none;
+        min-height: 100dvh;
         margin: 0;
     }
 
     .student-profile-modal .modal-content {
-        min-height: 100vh;
+        height: 100dvh;
+        min-height: 0;
         border-radius: 0;
     }
 
     .student-profile-modal .modal-body {
+        flex: 1 1 auto;
         max-height: none;
+        overflow-y: auto;
+    }
+
+    .student-enrollment-history.is-scrollable {
+        max-height: none;
+        padding-right: 0;
+        overflow-y: visible;
     }
 
     .student-editor-form,

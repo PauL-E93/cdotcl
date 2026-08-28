@@ -26,6 +26,25 @@ class EnrollmentAPI {
         $this->notifications = new NotificationService($this->conn);
     }
 
+    private function getCurrentEnrollmentEmployeeId() {
+        $role = strtolower(trim((string)($_SESSION['user_role'] ?? '')));
+        if ($role === 'student') {
+            return null;
+        }
+
+        $employeeId = intval($_SESSION['employee_id'] ?? 0);
+        if ($employeeId <= 0) {
+            throw new Exception("A logged-in staff account is required to record who performed this enrollment.");
+        }
+
+        $stmt = $this->conn->prepare("SELECT 1 FROM employee WHERE employee_id = ? LIMIT 1");
+        $stmt->execute([$employeeId]);
+        if (!$stmt->fetchColumn()) {
+            throw new Exception("The logged-in staff account could not be found.");
+        }
+        return $employeeId;
+    }
+
     private function assertActiveGradeLevel($gradeLevelId) {
         $gradeLevelId = intval($gradeLevelId ?? 0);
         if ($gradeLevelId <= 0) {
@@ -870,7 +889,7 @@ class EnrollmentAPI {
             $branchId = $_SESSION['branch_id'] ?? null;
             $requestedServiceId = !empty($data['include_service']) ? ($data['service_id'] ?? null) : null;
             $snapshot = $this->getProgramFinancialSnapshot($program, $isNewStudent, $requestedServiceId, $branchId);
-            $employeeId = $_SESSION['employee_id'] ?? 1;
+            $employeeId = $this->getCurrentEnrollmentEmployeeId();
             $schoolYearId = $this->getActiveSchoolYearId($data['school_year_id'] ?? null);
             $totalFee = floatval($snapshot['grand_total']);
             $registrationFee = floatval($snapshot['registration_fee']);
@@ -905,7 +924,7 @@ class EnrollmentAPI {
             $stmt = $this->conn->prepare("INSERT INTO enrollment_details (" . implode(", ", $detailColumns) . ") VALUES (" . implode(", ", $detailPlaceholders) . ")");
             $stmt->execute($detailValues);
             $detailsId = $this->conn->lastInsertId();
-            ensureEnrollmentBundleOrdersForProgram($this->conn, (int)$detailsId, $programId, null, (int)$employeeId);
+            ensureEnrollmentBundleOrdersForProgram($this->conn, (int)$detailsId, $programId, null, $employeeId);
 
             $paymentMethodName = $this->getPaymentMethodName($methodId);
             $paymentStatus = (strtolower($paymentMethodName) === 'cash') ? 'Received' : 'Pending';
@@ -1014,6 +1033,7 @@ class EnrollmentAPI {
         $data = json_decode($json, true);
 
         try {
+            $enrolledByEmployeeId = $this->getCurrentEnrollmentEmployeeId();
             $this->conn->beginTransaction();
 
             $detailsId = isset($data['pending_enrollment_id']) ? intval($data['pending_enrollment_id']) : 0;
@@ -1176,8 +1196,8 @@ class EnrollmentAPI {
 
             $actualTotal = $this->generateRemainingBilling($detailsId, $program, $totalFee, $scheduleRows, $snapshot);
 
-            $stmtUpdateHeader = $this->conn->prepare("UPDATE enrollment_header SET branch_id = ?, school_year_id = ?, total_of_program = ?, status = ? WHERE enrollment_header_id = ?");
-            $stmtUpdateHeader->execute([$branchId, $schoolYearId, $actualTotal, $completedHeaderStatus, $headerId]);
+            $stmtUpdateHeader = $this->conn->prepare("UPDATE enrollment_header SET employee_id = COALESCE(?, employee_id), branch_id = ?, school_year_id = ?, total_of_program = ?, status = ? WHERE enrollment_header_id = ?");
+            $stmtUpdateHeader->execute([$enrolledByEmployeeId, $branchId, $schoolYearId, $actualTotal, $completedHeaderStatus, $headerId]);
 
             $this->conn->commit();
 
@@ -1222,7 +1242,7 @@ class EnrollmentAPI {
                 throw new Exception("Student ID is required to create an enrollment. Please select or create a student before proceeding.");
             }
 
-            $employee_id = $_SESSION['employee_id'] ?? 1;
+            $employee_id = $this->getCurrentEnrollmentEmployeeId();
             $branch_id = $this->getEnrollmentBranchId($data, $_SESSION['branch_id'] ?? null);
             $program = $this->getProgram($data['program_id'] ?? 0);
             $requestedServiceId = !empty($data['include_service']) ? ($data['service_id'] ?? null) : null;
@@ -1774,7 +1794,7 @@ class EnrollmentAPI {
             $total = $countStmt->fetchColumn();
 
             // Get paginated data
-            $sql = "SELECT ed.enrollment_details_id, ed.program_id, p.name AS program_name, st.student_id_number, TRIM(CONCAT_WS(' ', st.first_name, st.last_name, NULLIF(TRIM(st.ext), ''))) AS student_name, COALESCE(esub.subject_names, sub.subject_name) AS subject_name, CONCAT(e.first_name, ' ', e.last_name) AS teacher_name, b.branch_id, b.branch_name, DATE_FORMAT(eh.date_created, '%M %d, %Y') AS enrollment_date, eh.date_created AS sort_date, COALESCE(NULLIF(eh.status, ''), ed.status) AS status, ea.application_id, ea.status AS application_status, " .
+            $sql = "SELECT ed.enrollment_details_id, ed.program_id, p.name AS program_name, st.student_id_number, TRIM(CONCAT_WS(' ', st.first_name, st.last_name, NULLIF(TRIM(st.ext), ''))) AS student_name, COALESCE(esub.subject_names, sub.subject_name) AS subject_name, CONCAT(e.first_name, ' ', e.last_name) AS teacher_name, TRIM(CONCAT_WS(' ', enrolled_by.first_name, enrolled_by.last_name)) AS enrolled_by_name, enrolled_by_role.role_name AS enrolled_by_role, b.branch_id, b.branch_name, DATE_FORMAT(eh.date_created, '%M %d, %Y') AS enrollment_date, eh.date_created AS sort_date, COALESCE(NULLIF(eh.status, ''), ed.status) AS status, ea.application_id, ea.status AS application_status, " .
                 "CASE " .
                     "WHEN COALESCE(pt.pending_payment_count, 0) > 0 THEN 'Pending' " .
                     "WHEN (COALESCE(eh.total_of_program, 0) + COALESCE(bt.total_penalty, 0) - COALESCE(pt.total_paid, 0)) <= 0 THEN 'Fully Paid' " .
@@ -1787,6 +1807,8 @@ class EnrollmentAPI {
                 "LEFT JOIN subject sub ON ed.subject_id = sub.subject_id " .
                 "LEFT JOIN (SELECT es.enrollment_details_id, GROUP_CONCAT(s.subject_name ORDER BY s.subject_name SEPARATOR ', ') AS subject_names FROM enrollment_subjects es JOIN subject s ON es.subject_id = s.subject_id GROUP BY es.enrollment_details_id) esub ON ed.enrollment_details_id = esub.enrollment_details_id " .
                 "LEFT JOIN employee e ON ed.preferred_teacher = e.employee_id " .
+                "LEFT JOIN employee enrolled_by ON eh.employee_id = enrolled_by.employee_id " .
+                "LEFT JOIN role enrolled_by_role ON enrolled_by.role_id = enrolled_by_role.role_id " .
                 "LEFT JOIN branch b ON eh.branch_id = b.branch_id " .
                 "LEFT JOIN enrollment_applications ea ON ea.enrollment_details_id = ed.enrollment_details_id " .
                 "JOIN program p ON ed.program_id = p.program_id " .
@@ -2256,6 +2278,8 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
                                COALESCE(esub.subject_names, sub.subject_name) AS subject_name,
                                gl.grade_level,
                                CONCAT(e.first_name, ' ', e.last_name) as teacher_name,
+                               TRIM(CONCAT_WS(' ', enrolled_by.first_name, enrolled_by.last_name)) AS enrolled_by_name,
+                               enrolled_by_role.role_name AS enrolled_by_role,
                                CONCAT(sec_e.first_name, ' ', sec_e.last_name) as section_teacher_name,
                                eh.branch_id, b.branch_name,
                                COALESCE(sec.section_name, '') as section_name,
@@ -2271,6 +2295,8 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
                         LEFT JOIN (SELECT es.enrollment_details_id, GROUP_CONCAT(es.subject_id ORDER BY s.subject_name SEPARATOR ',') AS subject_ids, GROUP_CONCAT(s.subject_name ORDER BY s.subject_name SEPARATOR ', ') AS subject_names FROM enrollment_subjects es JOIN subject s ON es.subject_id = s.subject_id GROUP BY es.enrollment_details_id) esub ON ed.enrollment_details_id = esub.enrollment_details_id
                         LEFT JOIN grade_level gl ON ed.grade_level_id = gl.grade_level_id
                         LEFT JOIN employee e ON ed.preferred_teacher = e.employee_id
+                        LEFT JOIN employee enrolled_by ON eh.employee_id = enrolled_by.employee_id
+                        LEFT JOIN role enrolled_by_role ON enrolled_by.role_id = enrolled_by_role.role_id
                         LEFT JOIN sections sec ON ed.section_id = sec.section_id
                         LEFT JOIN class cls ON COALESCE(ed.class_id, sec.class_id) = cls.class_id
                         LEFT JOIN employee sec_e ON sec.employee_id = sec_e.employee_id
@@ -2282,6 +2308,8 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
                                COALESCE(esub.subject_names, sub.subject_name) AS subject_name,
                                gl.grade_level,
                                CONCAT(e.first_name, ' ', e.last_name) as teacher_name,
+                               TRIM(CONCAT_WS(' ', enrolled_by.first_name, enrolled_by.last_name)) AS enrolled_by_name,
+                               enrolled_by_role.role_name AS enrolled_by_role,
                                CONCAT(sec_e.first_name, ' ', sec_e.last_name) as section_teacher_name,
                                eh.branch_id, b.branch_name,
                                COALESCE(sec.section_name, '') as section_name,
@@ -2297,6 +2325,8 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
                         LEFT JOIN (SELECT es.enrollment_details_id, GROUP_CONCAT(es.subject_id ORDER BY s.subject_name SEPARATOR ',') AS subject_ids, GROUP_CONCAT(s.subject_name ORDER BY s.subject_name SEPARATOR ', ') AS subject_names FROM enrollment_subjects es JOIN subject s ON es.subject_id = s.subject_id GROUP BY es.enrollment_details_id) esub ON ed.enrollment_details_id = esub.enrollment_details_id
                         LEFT JOIN grade_level gl ON ed.grade_level_id = gl.grade_level_id
                         LEFT JOIN employee e ON ed.preferred_teacher = e.employee_id
+                        LEFT JOIN employee enrolled_by ON eh.employee_id = enrolled_by.employee_id
+                        LEFT JOIN role enrolled_by_role ON enrolled_by.role_id = enrolled_by_role.role_id
                         LEFT JOIN sections sec ON ed.section_id = sec.section_id
                         LEFT JOIN class cls ON sec.class_id = cls.class_id
                         LEFT JOIN employee sec_e ON sec.employee_id = sec_e.employee_id
@@ -2551,6 +2581,7 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
         $data = json_decode($json, true);
         $enrollment_details_id = $data['enrollment_details_id'];
         try {
+            $enrolledByEmployeeId = $this->getCurrentEnrollmentEmployeeId();
             $this->assertEnrollmentAccessibleToCurrentUser($enrollment_details_id);
             $this->conn->beginTransaction();
             
@@ -2559,8 +2590,8 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
             $stmt->execute([$enrollment_details_id]);
             
             // Update enrollment_header status
-            $stmt2 = $this->conn->prepare("UPDATE enrollment_header SET status = 'enrolled' WHERE enrollment_header_id = (SELECT enrollment_header_id FROM enrollment_details WHERE enrollment_details_id = ?)");
-            $stmt2->execute([$enrollment_details_id]);
+            $stmt2 = $this->conn->prepare("UPDATE enrollment_header SET employee_id = COALESCE(?, employee_id), status = 'enrolled' WHERE enrollment_header_id = (SELECT enrollment_header_id FROM enrollment_details WHERE enrollment_details_id = ?)");
+            $stmt2->execute([$enrolledByEmployeeId, $enrollment_details_id]);
             
             // Get section_id from enrollment_details
             $detailSql = "SELECT section_id FROM enrollment_details WHERE enrollment_details_id = ?";

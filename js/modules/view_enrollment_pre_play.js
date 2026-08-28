@@ -99,9 +99,24 @@ function preparePrePlayEnrollmentView() {
         studentRow.insertBefore(branchField, statusField || null);
     }
 
+    if (studentRow && !document.getElementById('view_enrolled_by')) {
+        const enrolledByField = document.createElement('div');
+        enrolledByField.className = 'col-md-4 preplay-view-field';
+        enrolledByField.innerHTML = '<label class="small text-muted">Enrolled By</label><div class="fw-bold" id="view_enrolled_by">...</div>';
+        const statusField = document.getElementById('view_status')?.closest('[class*="col-"]');
+        studentRow.insertBefore(enrolledByField, statusField || null);
+    }
+
     const status = document.getElementById('view_status');
     status?.classList.add('preplay-status-pill');
     status?.closest('[class*="col-"]')?.classList.add('preplay-status-field');
+}
+
+function formatEnrolledBy(item) {
+    const name = String(item?.enrolled_by_name || '').trim();
+    const role = String(item?.enrolled_by_role || '').trim();
+    if (!name) return 'Online / not recorded';
+    return role ? `${name} (${role})` : name;
 }
 
 function resolvePaymentProofUrl(proofPath) {
@@ -644,6 +659,7 @@ function renderEnrollments(enrollments) {
         const canCreatePayment = canUsePaymentPermission('create');
         const canApprovePayment = canUsePaymentPermission('approve');
         const canExportPayment = canUsePaymentPermission('export');
+        const canViewPaymentAssessment = canUsePaymentPermission('view') && canUsePaymentPermission('view_assessment');
 
         if (isOnlineApplicationPaymentTask) {
             const applicationPaymentMethod = String(item.application_payment_method || '').toLowerCase();
@@ -666,7 +682,7 @@ function renderEnrollments(enrollments) {
                 `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); ${payCall}"><i class="bi bi-credit-card me-2"></i>${canCreatePayment ? 'Pay' : 'View Billing'}</a></li>`,
                 `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); openPrePlayPaymentHistoryModal(${item.enrollment_details_id}, ${isStudentPrePlayPage() || !canApprovePayment})"><i class="bi bi-eye me-2"></i>View</a></li>`
             ];
-            if (['/owner/', '/secretary/', '/branch_admin/', '/auditor/'].some(rolePath => pagePath.includes(rolePath))) {
+            if (canViewPaymentAssessment && ['/owner/', '/secretary/', '/branch_admin/', '/auditor/', '/teacher/'].some(rolePath => pagePath.includes(rolePath))) {
                 paymentActions.push(`<li><a class="dropdown-item fw-semibold text-dark" href="#" onclick="event.preventDefault(); openPaymentAssessment(${item.enrollment_details_id})"><i class="bi bi-clipboard2-check me-2"></i>Assessment</a></li>`);
             }
             if (canExportPayment) {
@@ -1116,6 +1132,7 @@ window.viewPrePlayDetails = function(id, viewOnly = true, applicationPlacement =
             setText('view_student_id', d.student_id_number || d.student_id || 'N/A');
             setText('view_program', d.program_name || 'N/A');
             setText('view_branch', d.branch_name || 'N/A');
+            setText('view_enrolled_by', formatEnrolledBy(d));
             setText('view_status', (d.status || 'N/A').toUpperCase());
 
             const classText = d.class_id_from_section || d.class_id;

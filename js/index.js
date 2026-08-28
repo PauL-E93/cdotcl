@@ -6,8 +6,8 @@ import { handleLogin, handleEmployeeSignup, handleSignup, initLoginPage, initial
 import "./modules/receipt.js";
 import "./modules/receipt_mobile.js";
 import "./modules/orf.js";
-import "./modules/billing.js";
-import "./modules/payment_assessment.js?v=20260825-discount-tag";
+import "./modules/billing.js?v=20260828-assessment-sync";
+import "./modules/payment_assessment.js?v=20260828-assessment-rbac";
 import "./utilities/gcash_ocr.js?v=20260825-ref-row-2";
 import { initProgramPage, setupAddProgramModal } from "./modules/program.js?v=20260814-program-filters";
 import { setupAddProgramTypeModal, loadProgramTypes } from "./modules/program_type.js";
@@ -19,12 +19,12 @@ import { initServicesPage, setupAddServiceModal } from "./modules/services.js";
 import { initPaymentMethodsPage, setupAddPaymentMethodModal } from "./modules/payment_method.js?v=20260812-payment-methods";
 import { loadSchoolYears, setupAddSchoolYearModal, setupEditSchoolYearStatusModal } from "./modules/school_year.js?v=20260814-schedule-details";
 import { initCardManagementPage, initCardManagementEditorPage } from "./modules/card_mangpre.js?v=20260814-school-year-curriculum";
-import "./modules/view_enrollment_pre_play.js?v=20260825-discount-tag";
-import "./modules/view_enrollment.js?v=20260825-discount-tag";
+import "./modules/view_enrollment_pre_play.js?v=20260828-assessment-rbac";
+import "./modules/view_enrollment.js?v=20260828-assessment-rbac";
 import "./modules/edit_enrollment.js?v=20260823-grade-level-crud";
 import "./modules/employee.js";
 import "./modules/employee_rbac.js";
-import "./modules/role_base.js?v=20260823-grade-level-paging";
+import "./modules/role_base.js?v=20260828-payment-assessment-rbac";
 import { openAddClassModal } from "./modules/class_add.js";
 import { initSectionView } from "./modules/section_view.js?v=20260814-profile-table-fields";
 import { initSectionAttendancePage } from "./modules/section_attendance.js";
@@ -33,7 +33,7 @@ import { openAddSectionModal } from "./modules/section.js";
 import { initProductPage, openAddProductModal, openAddCategoryModal } from "./modules/product.js?v=20260814-product-search";
 import { initProductReleasePage } from "./modules/product_release.js?v=20260825-product-modal-focus";
 import { resetEnrollmentState, openEnrollmentModal, openApplicationDownpaymentModal } from "./modules/addenrollment.js?v=20260823-admin-field-validation";
-import { initNewStudentApplications } from "./modules/enrollment_applications.js?v=20260825-preplay-gcash-admin";
+import { initNewStudentApplications } from "./modules/enrollment_applications.js?v=20260828-program-teacher-filter";
 import { initLandingPage } from "./modules/landingpage.js?v=20260823-public-applications";
 import { initLandingPageManager } from "./modules/landing_page_manager.js";
 import { SessionManager } from './studentmodule/session.js?v=20260823-meeting-numbers';
@@ -44,7 +44,7 @@ import { applyClassPagePermissions, canUseClassPermission, initClassPermissions 
 import { applySessionPagePermissions, initSessionPermissions } from "./modules/session_rbac.js";
 import { applyProductPagePermissions, canUseProductPermission, initProductPermissions } from "./modules/product_rbac.js";
 import { applySchedulePagePermissions, initSchedulePermissions } from "./modules/schedule_rbac.js";
-import { initStudentManagementPage } from "./modules/student_management.js?v=20260823";
+import { initStudentManagementPage } from "./modules/student_management.js?v=20260828-mobile";
 
 
 

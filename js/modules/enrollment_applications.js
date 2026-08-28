@@ -604,8 +604,8 @@ async function scheduleNewStudentApplication(item) {
             return;
         }
         const noAutomaticMatch = !teachers.length
-            ? '<div class="application-flow-callout application-flow-callout--warning"><i class="bi bi-exclamation-triangle"></i><div><strong>No automatic match was found.</strong><br>You may use Manual Override below. Qualification differences are displayed beside each teacher, but schedule overlap and conflict rules will still be enforced.</div></div>'
-            : '<div class="application-flow-callout"><i class="bi bi-info-circle"></i><div>Recommended matches satisfy the branch, program, subject, and availability filters.<br>Manual Override is available when an administrator needs to make the final assignment.</div></div>';
+            ? '<div class="application-flow-callout application-flow-callout--warning"><i class="bi bi-exclamation-triangle"></i><div><strong>No automatic match was found.</strong><br>You may use Manual Override below for a teacher assigned to this program. Subject differences are displayed beside each teacher, while schedule overlap and conflict rules remain enforced.</div></div>'
+            : '<div class="application-flow-callout"><i class="bi bi-info-circle"></i><div>Recommended matches satisfy the branch, program, subject, and availability filters.<br>Manual Override includes only teachers assigned to this program and may be used for subject qualification differences.</div></div>';
         const isSessionProgram = String(item.unit_type || '').toLowerCase() === 'session';
         const totalProgramSessions = Math.max(1, Number(item.total_units) || 1);
         const sessionsPerDayOptions = Array.from({ length: totalProgramSessions }, (_, index) => index + 1)
@@ -615,7 +615,7 @@ async function scheduleNewStudentApplication(item) {
             : '';
         const chooser = await Swal.fire({
             title: applicationModalTitle('bi-calendar2-week', 'Select Teacher & Plot Schedule'), width: 'min(1180px, 96vw)',
-            html: `<div class="text-start">${applicationSchedulingGuideHtml(item)}${noAutomaticMatch}<div class="application-form-grid ${isSessionProgram ? '' : 'application-form-grid--single'}"><div class="application-flow-field"><label for="applicationTeacher">Teacher</label><select id="applicationTeacher" class="form-select"><option value="">Select teacher</option>${automaticOptions ? `<optgroup label="Recommended matches">${automaticOptions}</optgroup>` : ''}${manualOptions ? `<optgroup label="Manual override — active teachers in this branch">${manualOptions}</optgroup>` : ''}</select></div>${sessionsPerDayField}</div><div class="application-teacher-card" id="applicationTeacherSchedulePreview">${teacherSchedulePreviewHtml(null, false)}</div><div class="application-flow-callout mt-4"><i class="bi bi-lightbulb"></i><div>The system will generate conflict-free suggestions inside the student’s submitted availability and the selected teacher’s working schedule. You can adjust exact dates and times before finalizing.</div></div></div>`,
+            html: `<div class="text-start">${applicationSchedulingGuideHtml(item)}${noAutomaticMatch}<div class="application-form-grid ${isSessionProgram ? '' : 'application-form-grid--single'}"><div class="application-flow-field"><label for="applicationTeacher">Teacher</label><select id="applicationTeacher" class="form-select"><option value="">Select teacher</option>${automaticOptions ? `<optgroup label="Recommended matches">${automaticOptions}</optgroup>` : ''}${manualOptions ? `<optgroup label="Manual override — teachers assigned to this program">${manualOptions}</optgroup>` : ''}</select></div>${sessionsPerDayField}</div><div class="application-teacher-card" id="applicationTeacherSchedulePreview">${teacherSchedulePreviewHtml(null, false)}</div><div class="application-flow-callout mt-4"><i class="bi bi-lightbulb"></i><div>The system will generate conflict-free suggestions inside the student’s submitted availability and the selected teacher’s working schedule. You can adjust exact dates and times before finalizing.</div></div></div>`,
             showCancelButton: true,
             cancelButtonText: '<i class="bi bi-arrow-left me-2"></i>Back to Application Details',
             confirmButtonText: '<i class="bi bi-magic me-2"></i>Generate Session Suggestions',
@@ -660,7 +660,7 @@ async function scheduleNewStudentApplication(item) {
             ? `<div class="application-flow-callout"><i class="bi bi-link-45deg"></i><div><strong>Selected meeting length:</strong> ${chooser.value.sessionsPerDay} ${chooser.value.sessionsPerDay === 1 ? 'hour' : 'hours'}. Consecutive package sessions on the same day are merged into one meeting row below.</div></div>`
             : '';
         const overrideWarning = chooser.value.manualOverride
-            ? '<div class="application-flow-callout application-flow-callout--warning mb-3"><i class="bi bi-exclamation-triangle"></i><div><strong>Manual teacher override:</strong> Program or subject assignments may not fully match. Student availability, teacher working hours, and booking conflicts will still be validated.</div></div>'
+            ? '<div class="application-flow-callout application-flow-callout--warning mb-3"><i class="bi bi-exclamation-triangle"></i><div><strong>Manual teacher override:</strong> The teacher is assigned to this program, but subject assignments may not fully match. Student availability, teacher working hours, and booking conflicts will still be validated.</div></div>'
             : '';
         const final = await Swal.fire({
             title: applicationModalTitle('bi-calendar2-check', 'Confirm Exact Sessions'), width: 'min(1100px, 96vw)',

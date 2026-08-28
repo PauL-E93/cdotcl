@@ -41,7 +41,7 @@ class StudentManagementAPI
     private function requireAdmin(): array
     {
         $role = $this->normalizeRole($_SESSION['user_role'] ?? '');
-        $allowedRoles = ['owner', 'secretary', 'branch admin', 'auditor'];
+        $allowedRoles = ['owner', 'secretary', 'branch admin', 'auditor', 'teacher'];
         $employeeId = (int) ($_SESSION['employee_id'] ?? 0);
 
         if (!in_array($role, $allowedRoles, true) || $employeeId <= 0) {
@@ -61,31 +61,28 @@ class StudentManagementAPI
         return $admin;
     }
 
-    private function defaultEnrollmentPermission(string $role, string $permission): bool
+    private function defaultStudentManagementPermission(string $role, string $permission): bool
     {
         $defaults = [
-            'owner' => ['view', 'create', 'edit', 'delete', 'approve', 'export'],
-            'secretary' => ['view', 'create', 'edit', 'approve', 'export'],
-            'branch admin' => ['view', 'create', 'edit', 'approve', 'export'],
-            'auditor' => ['view', 'export']
+            'owner' => ['view', 'edit', 'export'],
+            'secretary' => ['view', 'edit', 'export'],
+            'branch admin' => ['view', 'edit', 'export'],
+            'auditor' => ['view', 'export'],
+            'teacher' => []
         ];
 
         return in_array($permission, $defaults[$role] ?? [], true);
     }
 
-    private function hasEnrollmentPermission(array $admin, string $permission): bool
+    private function hasStudentManagementPermission(array $admin, string $permission): bool
     {
-        if ($admin['role'] === 'owner') {
-            return true;
-        }
-
-        $allowed = $this->defaultEnrollmentPermission($admin['role'], $permission);
+        $allowed = $this->defaultStudentManagementPermission($admin['role'], $permission);
 
         try {
             $stmt = $this->conn->prepare(
                 "SELECT permissions_json
                  FROM role_module_permissions
-                 WHERE role_name = :role_name AND module_key = 'enrollment'
+                 WHERE role_name = :role_name AND module_key = 'student_management'
                  LIMIT 1"
             );
             $stmt->execute([':role_name' => $admin['role']]);
@@ -112,7 +109,7 @@ class StudentManagementAPI
 
     private function requirePermission(array $admin, string $permission): void
     {
-        if (!$this->hasEnrollmentPermission($admin, $permission)) {
+        if (!$this->hasStudentManagementPermission($admin, $permission)) {
             throw new RuntimeException("You do not have permission to {$permission} student records.", 403);
         }
     }
@@ -133,6 +130,17 @@ class StudentManagementAPI
                 WHERE eh.student_id = s.student_id AND eh.branch_id = :branch_id
             )';
             $params[':branch_id'] = $admin['branch_id'];
+        } elseif ($admin['role'] === 'teacher') {
+            $sql .= ' AND EXISTS (
+                SELECT 1
+                FROM enrollment_header eh
+                INNER JOIN enrollment_details ed ON ed.enrollment_header_id = eh.enrollment_header_id
+                LEFT JOIN sections sec ON sec.section_id = ed.section_id
+                WHERE eh.student_id = s.student_id
+                  AND (ed.preferred_teacher = :preferred_teacher_id OR sec.employee_id = :section_teacher_id)
+            )';
+            $params[':preferred_teacher_id'] = $admin['employee_id'];
+            $params[':section_teacher_id'] = $admin['employee_id'];
         }
 
         $stmt = $this->conn->prepare($sql . ' LIMIT 1');
@@ -166,6 +174,17 @@ class StudentManagementAPI
                   AND eh_scope.branch_id = ?
             )";
             $params[] = $admin['branch_id'];
+        } elseif ($admin['role'] === 'teacher') {
+            $sql .= " WHERE EXISTS (
+                SELECT 1
+                FROM enrollment_header eh_scope
+                INNER JOIN enrollment_details ed_scope ON ed_scope.enrollment_header_id = eh_scope.enrollment_header_id
+                LEFT JOIN sections sec_scope ON sec_scope.section_id = ed_scope.section_id
+                WHERE eh_scope.student_id = s.student_id
+                  AND (ed_scope.preferred_teacher = ? OR sec_scope.employee_id = ?)
+            )";
+            $params[] = $admin['employee_id'];
+            $params[] = $admin['employee_id'];
         }
 
         $sql .= ' ORDER BY s.last_name ASC, s.first_name ASC, s.student_id DESC';
@@ -302,8 +321,8 @@ class StudentManagementAPI
             'data' => $students,
             'meta' => [
                 'total' => count($students),
-                'can_edit' => $this->hasEnrollmentPermission($admin, 'edit') && $admin['role'] !== 'auditor',
-                'can_export' => $this->hasEnrollmentPermission($admin, 'export'),
+                'can_edit' => $this->hasStudentManagementPermission($admin, 'edit'),
+                'can_export' => $this->hasStudentManagementPermission($admin, 'export'),
                 'role' => $admin['role'],
                 'branch_id' => $admin['role'] === 'branch admin' ? $admin['branch_id'] : null
             ]
@@ -468,10 +487,8 @@ class StudentManagementAPI
     public function updateStudent(array $data): void
     {
         $admin = $this->requireAdmin();
+        $this->requirePermission($admin, 'view');
         $this->requirePermission($admin, 'edit');
-        if ($admin['role'] === 'auditor') {
-            throw new RuntimeException('Auditor accounts can view and export student records but cannot edit them.', 403);
-        }
 
         $studentId = (int) ($data['student_id'] ?? 0);
         $this->assertStudentAccessible($admin, $studentId);

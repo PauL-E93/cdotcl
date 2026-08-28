@@ -28,14 +28,60 @@ class BillingAssessmentAPI
         return strtolower(trim((string)preg_replace('/[\s_-]+/', ' ', (string)$value)));
     }
 
+    private function defaultPaymentPermission(string $role, string $permission): bool
+    {
+        $defaults = [
+            'owner' => ['view', 'view_assessment', 'manage_assessment'],
+            'secretary' => ['view', 'view_assessment', 'manage_assessment'],
+            'branch admin' => ['view', 'view_assessment', 'manage_assessment'],
+            'auditor' => ['view', 'view_assessment'],
+            'teacher' => ['view']
+        ];
+
+        return in_array($permission, $defaults[$role] ?? [], true);
+    }
+
+    private function hasPaymentPermission(string $role, string $permission): bool
+    {
+        $allowed = $this->defaultPaymentPermission($role, $permission);
+
+        try {
+            $stmt = $this->conn->prepare(
+                "SELECT permissions_json
+                 FROM role_module_permissions
+                 WHERE role_name = :role_name AND module_key = 'payment'
+                 LIMIT 1"
+            );
+            $stmt->execute([':role_name' => $role]);
+            $stored = $stmt->fetchColumn();
+
+            if ($stored !== false) {
+                $permissions = json_decode((string)$stored, true);
+                if (is_array($permissions) && array_key_exists($permission, $permissions)) {
+                    return (bool)$permissions[$permission];
+                }
+            }
+        } catch (Throwable $error) {
+            // Preserve role defaults on installations where the RBAC table is not available yet.
+        }
+
+        return $allowed;
+    }
+
     private function requireAdmin(bool $write = false): array
     {
         $role = $this->normalizeRole($_SESSION['user_role'] ?? '');
-        if (!in_array($role, ['owner', 'secretary', 'branch admin', 'auditor'], true) || empty($_SESSION['employee_id'])) {
+        if (!in_array($role, ['owner', 'secretary', 'branch admin', 'auditor', 'teacher'], true) || empty($_SESSION['employee_id'])) {
             throw new RuntimeException('Administrator login is required.', 401);
         }
-        if ($write && $role === 'auditor') {
-            throw new RuntimeException('Auditor accounts can view assessments but cannot change them.', 403);
+        if (!$this->hasPaymentPermission($role, 'view')) {
+            throw new RuntimeException('You do not have permission to view the payment module.', 403);
+        }
+        if (!$this->hasPaymentPermission($role, 'view_assessment')) {
+            throw new RuntimeException('You do not have permission to view billing assessments.', 403);
+        }
+        if ($write && !$this->hasPaymentPermission($role, 'manage_assessment')) {
+            throw new RuntimeException('You do not have permission to manage billing assessments.', 403);
         }
         return [
             'employee_id' => (int)$_SESSION['employee_id'],
@@ -72,6 +118,7 @@ class BillingAssessmentAPI
             JOIN enrollment_header eh ON eh.enrollment_header_id = ed.enrollment_header_id
             JOIN student s ON s.student_id = eh.student_id
             JOIN program p ON p.program_id = ed.program_id
+            LEFT JOIN sections sec ON sec.section_id = ed.section_id
             LEFT JOIN enrollment_applications ea ON ea.enrollment_details_id = ed.enrollment_details_id
             WHERE ed.enrollment_details_id = ?";
         $params = [$detailsId];
@@ -79,6 +126,10 @@ class BillingAssessmentAPI
             if ($admin['branch_id'] <= 0) throw new RuntimeException('Branch admin account is not assigned to a branch.');
             $sql .= ' AND eh.branch_id = ?';
             $params[] = $admin['branch_id'];
+        } elseif ($admin['role'] === 'teacher') {
+            $sql .= ' AND (ed.preferred_teacher = ? OR sec.employee_id = ?)';
+            $params[] = $admin['employee_id'];
+            $params[] = $admin['employee_id'];
         }
         $sql .= ' LIMIT 1' . ($lock ? ' FOR UPDATE' : '');
         $stmt = $this->conn->prepare($sql);
@@ -262,7 +313,7 @@ class BillingAssessmentAPI
                     'product_id' => (int)$row['product_id'], 'product_name' => $row['product_name'],
                     'price' => (float)$row['price'], 'quantity' => (int)$row['quantity'], 'status' => $row['status']
                 ], $products),
-                'read_only' => $admin['role'] === 'auditor'
+                'read_only' => !$this->hasPaymentPermission($admin['role'], 'manage_assessment')
             ]
         ]);
     }

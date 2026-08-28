@@ -22,6 +22,12 @@ import { chooseBillingStatementExportFormat, exportBillingStatementData } from "
         });
     }
 
+    function getActiveBillingSchedule(schedule = []) {
+        return schedule.filter(item => !['cancelled', 'canceled'].includes(
+            String(item?.status || '').trim().toLowerCase()
+        ));
+    }
+
     function getReceiptBill(schedule = [], fallback = 'Tuition Fee') {
         const nextBill = schedule.find((item) => {
             const status = (item.status || '').toLowerCase();
@@ -91,32 +97,9 @@ window.openBillingModal = function(enrollmentId, viewOnly = false) {
             Swal.close();
             
             if (billingRes.data.status === 'success' && methodsRes.data.status === 'success') {
-                // Fetch program details and products
-                const programId = billingRes.data.data.program_id;
-                Promise.all([
-                    axios.get(`../../api/admin/program.php?operation=getProgram&json=${JSON.stringify({program_id: programId})}`),
-                    axios.get(`../../api/admin/program_products.php?operation=getProgramProducts`),
-                    axios.get(`../../api/admin/product.php?operation=getAllProducts`)
-                ])
-                .then(([programRes, productsRes, productsDetailRes]) => {
-                    const programData = programRes.data.status === 'success' ? programRes.data.data : {};
-                    const allProgramProducts = productsRes.data || [];
-                    const programProducts = allProgramProducts.filter(pp => pp.program_id == programId);
-                    const allProducts = productsDetailRes.data || [];
-                    
-                    // Add program tuition to billing data
-                    billingRes.data.data.program_tuition = programData.tuition || 0;
-
-                    const details = enrollmentRes.data?.data?.details || {};
-                    billingRes.data.data.enrollment_status = details.header_status || details.status || billingRes.data.data.enrollment_status || '';
-                    renderBillingModal(billingRes.data.data, methodsRes.data.data, enrollmentId, programProducts, allProducts, effectiveViewOnly);
-                })
-                .catch(err => {
-                    console.error("Error fetching additional data:", err);
-                    const details = enrollmentRes.data?.data?.details || {};
-                    billingRes.data.data.enrollment_status = details.header_status || details.status || billingRes.data.data.enrollment_status || '';
-                    renderBillingModal(billingRes.data.data, methodsRes.data.data, enrollmentId, [], [], effectiveViewOnly);
-                });
+                const details = enrollmentRes.data?.data?.details || {};
+                billingRes.data.data.enrollment_status = details.header_status || details.status || billingRes.data.data.enrollment_status || '';
+                renderBillingModal(billingRes.data.data, methodsRes.data.data, enrollmentId, effectiveViewOnly);
             } else {
                 Swal.fire("Error", "Could not fetch necessary data.", "error");
             }
@@ -163,6 +146,9 @@ function ensureAdminBillingModalStyles() {
         .admin-billing-status.paid{border-color:#76cf9a;color:#159452;background:#f0fbf5}
         .admin-billing-status.partial{border-color:#80b7ef;color:#2775c9;background:#f1f7ff}
         .admin-billing-status.item{border-color:#c7a6eb;color:#7b43b2;background:#f8f3ff}
+        .admin-billing-discount{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:14px;padding:14px 16px;border:1px solid #9edbb8;border-radius:10px;color:#147a43;background:#effbf4}
+        .admin-billing-discount-name{font-weight:750}
+        .admin-billing-discount-amount{font-size:1.08rem;font-weight:800;white-space:nowrap}
         .admin-billing-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:0;overflow:hidden}
         .admin-billing-summary-item{display:flex;align-items:center;justify-content:center;gap:22px;min-height:108px;padding:20px}
         .admin-billing-summary-item+.admin-billing-summary-item{border-left:1px solid #f1d9e1}
@@ -237,7 +223,7 @@ function createBillingExportFilename(studentName, enrollmentId) {
     return `billing-statement-${safeName || enrollmentId}`;
 }
 
-function downloadTutorialBillingStatementPdf(data, enrollmentId, programProducts, allProducts, totalPaid, totalFee, hasPenalty, paymentHistory = []) {
+function downloadTutorialBillingStatementPdf(data, enrollmentId, totalPaid, totalFee, hasPenalty, paymentHistory = []) {
     if (!window.jspdf?.jsPDF) throw new Error('PDF export library is unavailable.');
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ orientation: 'portrait' });
@@ -266,7 +252,7 @@ function downloadTutorialBillingStatementPdf(data, enrollmentId, programProducts
     if (hasPenalty) headers.push('Penalty');
     headers.push('Amount', 'Paid', 'Balance', 'Due Date', 'Status');
 
-    const scheduleRows = (data.schedule || []).map(item => {
+    const scheduleRows = getActiveBillingSchedule(data.schedule).map(item => {
         const amount = Number(item.amount || 0);
         const original = Number(item.original_amount || amount);
         const paid = Number(item.paid_amount || 0);
@@ -281,15 +267,6 @@ function downloadTutorialBillingStatementPdf(data, enrollmentId, programProducts
             item.status || 'Unpaid'
         );
         return row;
-    });
-
-    programProducts.forEach(programProduct => {
-        const product = allProducts.find(item => item.product_id == programProduct.product_id);
-        if (!product) return;
-        const row = [product.product_name || 'Program Item', money(product.price)];
-        if (hasPenalty) row.push('-');
-        row.push(money(product.price), '-', money(product.price), 'Not Set', 'Item');
-        scheduleRows.push(row);
     });
 
     pdf.autoTable({
@@ -337,7 +314,10 @@ function downloadTutorialBillingStatementPdf(data, enrollmentId, programProducts
         startY: pdf.lastAutoTable.finalY + 5,
         theme: 'grid',
         body: [
-            ['Total Amount', money(totalFee)],
+            ...(Number(data.discount_amount || 0) > 0
+                ? [[`Discount (${data.discount_name || 'Applied discount'})`, `-${money(data.discount_amount)}`]]
+                : []),
+            ['Total Amount after assessment', money(totalFee)],
             ['Total Paid', money(totalPaid)],
             ['Outstanding Balance', money(data.balance)]
         ],
@@ -365,10 +345,8 @@ window.exportTutorialBillingStatement = async function(enrollmentId) {
     });
 
     try {
-        const [billingRes, productsRes, productDetailsRes, paymentsRes] = await Promise.all([
+        const [billingRes, paymentsRes] = await Promise.all([
             axios.get(`../../api/admin/billing.php?operation=getBillingDetails&enrollment_id=${enrollmentId}`),
-            axios.get('../../api/admin/program_products.php?operation=getProgramProducts').catch(() => ({ data: [] })),
-            axios.get('../../api/admin/product.php?operation=getAllProducts').catch(() => ({ data: [] })),
             axios.get(`../../api/admin/payment.php?operation=getPaymentHistory&enrollment_details_id=${enrollmentId}`).catch(() => ({ data: { history: [] } }))
         ]);
         if (billingRes.data?.status !== 'success') {
@@ -376,24 +354,22 @@ window.exportTutorialBillingStatement = async function(enrollmentId) {
         }
 
         const data = billingRes.data.data;
-        const programProducts = (Array.isArray(productsRes.data) ? productsRes.data : productsRes.data?.data || [])
-            .filter(item => item.program_id == data.program_id);
-        const allProducts = Array.isArray(productDetailsRes.data) ? productDetailsRes.data : productDetailsRes.data?.data || [];
         const totalFee = Number(data.total_amount || 0);
         const recordedTotalPaid = Number(data.total_paid);
         const totalPaid = Number.isFinite(recordedTotalPaid)
             ? recordedTotalPaid
             : Math.max(totalFee - Number(data.balance || 0), 0);
-        const hasPenalty = (data.schedule || []).some(item => Number(item.penalty_amount || 0) > 0);
+        const activeSchedule = getActiveBillingSchedule(data.schedule);
+        const hasPenalty = activeSchedule.some(item => Number(item.penalty_amount || 0) > 0);
         const paymentHistory = paymentsRes.data?.history || [];
 
         if (format === 'pdf') {
-            downloadTutorialBillingStatementPdf(data, enrollmentId, programProducts, allProducts, totalPaid, totalFee, hasPenalty, paymentHistory);
+            downloadTutorialBillingStatementPdf(data, enrollmentId, totalPaid, totalFee, hasPenalty, paymentHistory);
         } else {
             const billingHeaders = ['Payment Type', 'Original'];
             if (hasPenalty) billingHeaders.push('Penalty');
             billingHeaders.push('Amount', 'Paid', 'Balance', 'Due Date', 'Status');
-            const billingRows = (data.schedule || []).map(item => {
+            const billingRows = activeSchedule.map(item => {
                 const amount = Number(item.amount || 0);
                 const original = Number(item.original_amount || amount);
                 const paid = Number(item.paid_amount || 0);
@@ -403,15 +379,6 @@ window.exportTutorialBillingStatement = async function(enrollmentId) {
                 row.push(amount, paid, remaining, item.due_date || 'Not Set', item.status || 'Unpaid');
                 return row;
             });
-            programProducts.forEach(programProduct => {
-                const product = allProducts.find(item => item.product_id == programProduct.product_id);
-                if (!product) return;
-                const row = [product.product_name || 'Program Item', Number(product.price || 0)];
-                if (hasPenalty) row.push(0);
-                row.push(Number(product.price || 0), 0, Number(product.price || 0), 'Not Set', 'Item');
-                billingRows.push(row);
-            });
-
             exportBillingStatementData({
                 format,
                 filename: createBillingExportFilename(data.student_name, enrollmentId),
@@ -449,7 +416,10 @@ window.exportTutorialBillingStatement = async function(enrollmentId) {
                     {
                         name: 'Summary',
                         rows: [
-                            ['Total Amount', totalFee],
+                            ...(Number(data.discount_amount || 0) > 0
+                                ? [[`Discount (${data.discount_name || 'Applied discount'})`, -Number(data.discount_amount)]]
+                                : []),
+                            ['Total Amount after assessment', totalFee],
                             ['Total Paid', totalPaid],
                             ['Outstanding Balance', Number(data.balance || 0)]
                         ]
@@ -464,16 +434,19 @@ window.exportTutorialBillingStatement = async function(enrollmentId) {
     }
 };
 
-function renderBillingModal(data, paymentMethods, enrollmentId, programProducts = [], allProducts = [], viewOnly = false, miscProducts = []) {
+function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false) {
     ensureAdminBillingModalStyles();
     const paymentPageContext = isPaymentModulePage();
     const enrollmentStatus = String(data.enrollment_status || '').toLowerCase();
     const isIncompleteEnrollment = enrollmentStatus === 'incomplete';
+    const activeSchedule = getActiveBillingSchedule(data.schedule);
+    const discountAmount = Math.max(0, Number(data.discount_amount || 0));
+    const discountName = String(data.discount_name || 'Applied discount');
 
     // Detect if this is "pending header only" state (needs enrollment proper)
-    const isPendingHeaderOnly = data.schedule?.length === 1 && 
-                               data.schedule[0].billing_type.toLowerCase().includes('downpayment') && 
-                               data.schedule[0].status === 'paid';
+    const isPendingHeaderOnly = activeSchedule.length === 1 &&
+                               activeSchedule[0].billing_type.toLowerCase().includes('downpayment') &&
+                               activeSchedule[0].status === 'paid';
     
     // No longer need client-side override since payment is now processed in database
     // The billing API will return the correct status from the database
@@ -487,14 +460,12 @@ function renderBillingModal(data, paymentMethods, enrollmentId, programProducts 
         ? recordedTotalPaid
         : Math.max(updatedTotalFee - parseFloat(data.balance || 0), 0);
 
-    console.log('programProducts:', programProducts);
-    console.log('allProducts:', allProducts);
     console.log('updatedTotalFee:', updatedTotalFee);
 
     const isFullyPaid = data.balance <= 0;
 
     // Handle case where schedule is missing
-    if (data.schedule.length === 0 && !isFullyPaid) {
+    if (activeSchedule.length === 0 && !isFullyPaid) {
         Swal.fire({
             title: "Billing Not Found",
             text: "No billing schedule has been generated for this enrollment yet. Please generate the bill first.",
@@ -509,10 +480,10 @@ function renderBillingModal(data, paymentMethods, enrollmentId, programProducts 
         `<option value="${pm.payment_method_id}">${pm.payment_method}</option>`
     ).join('');
 
-    const hasPenalty = data.schedule.some(item => parseFloat(item.penalty_amount || 0) > 0);
+    const hasPenalty = activeSchedule.some(item => parseFloat(item.penalty_amount || 0) > 0);
 
     // Generate billing schedule rows dynamically
-    const billingRows = data.schedule.map(item => {
+    const billingRows = activeSchedule.map(item => {
         const amount = parseFloat(item.amount);
         const originalAmount = parseFloat(item.original_amount || amount);
         const penaltyAmount = parseFloat(item.penalty_amount || 0);
@@ -532,24 +503,6 @@ function renderBillingModal(data, paymentMethods, enrollmentId, programProducts 
             <td data-label="Balance" class="admin-row-balance">&#8369;${remainingAmount.toLocaleString()}</td>
             <td data-label="Due Date">${dueDate}</td>
             <td data-label="Status"><span class="admin-billing-status ${statusClass}">${status}</span></td>
-        </tr>
-        `;
-    }).join('');
-
-    // Generate product rows
-    const productRows = programProducts.map(pp => {
-        const product = allProducts.find(p => p.product_id == pp.product_id);
-        if (!product) return '';
-        return `
-        <tr>
-            <td data-label="Payment Type">${product.product_name}</td>
-            <td data-label="Original">PHP ${parseFloat(product.price).toLocaleString()}</td>
-            ${hasPenalty ? '<td data-label="Penalty">-</td>' : ''}
-            <td data-label="Amount" class="admin-row-amount">&#8369;${parseFloat(product.price).toLocaleString()}</td>
-            <td data-label="Paid">-</td>
-            <td data-label="Balance" class="admin-row-balance">&#8369;${parseFloat(product.price).toLocaleString()}</td>
-            <td data-label="Due Date">Not Set</td>
-            <td data-label="Status"><span class="admin-billing-status item">Item</span></td>
         </tr>
         `;
     }).join('');
@@ -589,15 +542,24 @@ function renderBillingModal(data, paymentMethods, enrollmentId, programProducts 
                                 <th>Status</th>
                             </tr>
                         </thead>
-                        <tbody>${billingRows}${productRows}</tbody>
+                        <tbody>${billingRows}</tbody>
                         <tfoot>
                             <tr class="admin-total-row">
-                                <td colspan="${hasPenalty ? 4 : 3}" class="admin-total-label">Total Amount</td>
+                                <td colspan="${hasPenalty ? 4 : 3}" class="admin-total-label">Total Amount after assessment</td>
                                 <td colspan="4" class="admin-total-value">&#8369;${updatedTotalFee.toLocaleString()}</td>
                             </tr>
                         </tfoot>
                     </table>
                 </div>
+                ${discountAmount > 0 ? `
+                    <div class="admin-billing-discount" role="status">
+                        <div>
+                            <div class="admin-billing-discount-name"><i class="bi bi-tag-fill me-2" aria-hidden="true"></i>Discount applied: ${discountName}</div>
+                            <small>The assessed total already includes this discount.</small>
+                        </div>
+                        <div class="admin-billing-discount-amount">-&#8369;${discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    </div>
+                ` : ''}
             </section>
 
             <section class="admin-billing-card admin-billing-summary" aria-label="Billing summary">

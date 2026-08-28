@@ -8,6 +8,7 @@ export const ROLE_DISPLAY_ORDER = ['owner', 'secretary', 'auditor', 'branch admi
 export const SHARED_MODULE_PAGE_MAP = {
     'employee.html': 'employee',
     'role_base.html': 'employee',
+    'student_management.html': 'student_management',
     'schedule.html': 'schedule'
 };
 
@@ -35,6 +36,7 @@ const LEGACY_PROGRAM_PERMISSION_MAP = {
 
 export const MODULE_PERMISSION_EXTRAS = {
     employee: ['manage_rbac'],
+    payment: ['view_assessment', 'manage_assessment'],
     program: [
         'manage_types', 'manage_grades', 'manage_subjects', 'manage_services', 'manage_checklists', 'manage_discounts', 'manage_registration',
         ...PROGRAM_FEATURE_PERMISSION_KEYS
@@ -45,6 +47,7 @@ let rbacInitPromise = null;
 
 export const RBAC_MODULES = [
     { key: 'enrollment', label: 'Enrollment', icon: 'bi-journal-check' },
+    { key: 'student_management', label: 'Student Management', icon: 'bi-person-vcard' },
     { key: 'employee', label: 'Employee', icon: 'bi-people' },
     { key: 'schedule', label: 'Schedule', icon: 'bi-calendar3' },
     { key: 'program', label: 'Program', icon: 'bi-grid' },
@@ -97,9 +100,9 @@ export const ROLE_META = {
 
 const DEFAULT_NAV_MODULES = {
     owner: RBAC_MODULES.map(module => module.key),
-    secretary: ['enrollment', 'employee', 'schedule', 'program', 'school_calendar', 'payment', 'class', 'product', 'center', 'session'],
-    auditor: ['enrollment', 'schedule', 'program', 'payment', 'class', 'product', 'center', 'session'],
-    'branch admin': ['enrollment', 'schedule', 'payment', 'class', 'session'],
+    secretary: ['enrollment', 'student_management', 'employee', 'schedule', 'program', 'school_calendar', 'payment', 'class', 'product', 'center', 'session'],
+    auditor: ['enrollment', 'student_management', 'schedule', 'program', 'payment', 'class', 'product', 'center', 'session'],
+    'branch admin': ['enrollment', 'student_management', 'schedule', 'payment', 'class', 'session'],
     teacher: ['schedule', 'class', 'session'],
     student: ['enrollment', 'schedule', 'payment', 'session']
 };
@@ -241,6 +244,8 @@ function buildDefaultPermissionMatrix(roleKey) {
         setPermissions(matrix, ['program', 'school_calendar', 'class', 'product', 'session'], ['view', 'create', 'edit']);
         setPermissions(matrix, ['enrollment', 'employee', 'payment'], ['view', 'create', 'edit', 'approve']);
         setPermissions(matrix, ['enrollment', 'payment'], ['export']);
+        setPermissions(matrix, ['payment'], MODULE_PERMISSION_EXTRAS.payment, true);
+        setPermissions(matrix, ['student_management'], ['view', 'edit', 'export']);
         setPermissions(matrix, ['employee'], MODULE_PERMISSION_EXTRAS.employee, true);
         setPermissions(matrix, ['program'], MODULE_PERMISSION_EXTRAS.program, true);
         setPermissions(matrix, ['class'], MODULE_PERMISSION_EXTRAS.class, true);
@@ -253,6 +258,8 @@ function buildDefaultPermissionMatrix(roleKey) {
         setPermissions(matrix, ['class', 'session'], ['view', 'create', 'edit']);
         setPermissions(matrix, ['enrollment', 'payment'], ['view', 'create', 'edit', 'approve']);
         setPermissions(matrix, ['enrollment', 'payment'], ['export']);
+        setPermissions(matrix, ['payment'], MODULE_PERMISSION_EXTRAS.payment, true);
+        setPermissions(matrix, ['student_management'], ['view', 'edit', 'export']);
         setPermissions(matrix, ['class'], MODULE_PERMISSION_EXTRAS.class, true);
         return matrix;
     }
@@ -269,6 +276,8 @@ function buildDefaultPermissionMatrix(roleKey) {
     if (normalized === 'auditor') {
         setPermissions(matrix, ['schedule'], ['view']);
         setPermissions(matrix, ['enrollment', 'payment', 'product', 'center'], ['view', 'export']);
+        setPermissions(matrix, ['payment'], ['view_assessment']);
+        setPermissions(matrix, ['student_management'], ['view', 'export']);
         setPermissions(matrix, ['program'], ['view', 'view_programs', 'view_grades']);
         setPermissions(matrix, ['payment'], ['approve']);
         setPermissions(matrix, ['class'], ['view']);

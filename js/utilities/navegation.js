@@ -79,9 +79,9 @@ export function createSidebar() {
             name: 'STUDENTS',
             href: buildAppUrl(`html/${userFolder}/student_management.html`),
             icon: 'bi-person-vcard',
-            moduleKey: 'enrollment',
+            moduleKey: 'student_management',
             restrictToRoles: true,
-            roles: ['owner', 'branch admin', 'secretary', 'auditor']
+            roles: ['owner', 'branch admin', 'secretary', 'auditor', 'teacher']
         },
 
         {

@@ -4,6 +4,7 @@ import {
     getManagerScheduleModalActions,
     openScheduleDetailsModal
 } from '../utilities/schedule_details_modal.js';
+import { fitScheduleLogToRows } from '../utilities/schedule_log_scroll.js?v=20260828-five-rows';
 
 const BRANCH_SCHEDULE_ENDPOINT = '../../api/admin/branch_schedule.php';
 const SEND_NOTIFICATION_ENDPOINT = '../../api/send_schedule_notification.php';
@@ -333,6 +334,7 @@ export default class BranchAdminCalendarModule {
 
         if (daySchedules.length === 0) {
             log.innerHTML = `<p>No schedules for ${this.escapeHtml(this.formatShortDate(displayDate))}.</p>`;
+            fitScheduleLogToRows(log);
             return;
         }
 
@@ -370,6 +372,7 @@ export default class BranchAdminCalendarModule {
         `).join('');
 
         log.innerHTML = `<div style="padding-right:6px;">${cards}</div>`;
+        fitScheduleLogToRows(log);
         this.attachLogCardListeners();
     }
 

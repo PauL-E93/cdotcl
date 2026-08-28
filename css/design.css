@@ -639,11 +639,17 @@
 
 #notif-content {
     flex: 1;
-    overflow-y: auto;
+    overflow-y: visible;
     padding: 20px;
     color: #777;
     font-size: 0.9rem;
-    max-height: 700px;
+    max-height: none;
+}
+
+#notif-content.schedule-log--scrollable {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
 }
 
 #notif-content::-webkit-scrollbar {
@@ -1364,10 +1370,45 @@ body.sidebar-open::after {
 @media (max-width: 768px) {
     .filter-panel {
         display: none;
+        min-width: 0;
+        width: 100%;
     }
 
     .filter-container.filter-open .filter-panel {
         display: flex;
+    }
+
+    .filter-container:has(#enrollment-status-filter) {
+        align-items: stretch;
+        width: 100%;
+        min-width: 0;
+        padding: 12px 14px;
+        border-radius: 24px;
+        overflow: hidden;
+    }
+
+    .filter-container:has(#enrollment-status-filter) .filter-heading,
+    .filter-container:has(#enrollment-status-filter) .filter-heading > .d-flex {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .filter-container:has(#enrollment-status-filter) .filter-heading > .d-flex {
+        justify-content: space-between;
+    }
+
+    .filter-container.filter-open:has(#enrollment-status-filter) .filter-panel {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 10px !important;
+    }
+
+    #enrollment-status-filter,
+    #enrollment-subject-filter,
+    #enrollment-branch-filter {
+        width: 100% !important;
+        min-width: 0;
+        max-width: 100%;
     }
 
     .filter-toggle-btn {
@@ -1619,6 +1660,9 @@ body.sidebar-open::after {
    EMPLOYEE RBAC
 ========================================= */
 .employee-rbac-card {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     border-color: rgba(234, 154, 166, 0.22);
     background:
         radial-gradient(circle at top right, rgba(249, 231, 236, 0.85), transparent 34%),
@@ -1702,6 +1746,8 @@ body.sidebar-open::after {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .employee-rbac-summary-copy span {
@@ -1723,6 +1769,9 @@ body.sidebar-open::after {
 
 .employee-rbac-workspace {
     display: grid;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
     gap: 20px;
     align-items: start;
@@ -1732,10 +1781,15 @@ body.sidebar-open::after {
     display: flex;
     flex-direction: column;
     gap: 20px;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .employee-rbac-role-panel,
 .employee-rbac-panel-card {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     border: 1px solid rgba(226, 232, 240, 1);
     border-radius: 20px;
     background: #fff;
@@ -1897,10 +1951,33 @@ body.sidebar-open::after {
     display: flex;
     flex-direction: column;
     gap: 18px;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .employee-rbac-detail-header {
     padding: 0 4px;
+}
+
+.employee-rbac-detail-header > *,
+.employee-rbac-selected-title,
+.employee-rbac-module-toggle-main,
+.employee-rbac-module-toggle-copy,
+.employee-rbac-preview-copy {
+    min-width: 0;
+}
+
+#rbac-selected-role-description,
+.employee-rbac-helper,
+.employee-rbac-module-toggle-copy strong,
+.employee-rbac-module-toggle-copy small,
+.employee-rbac-feature-copy strong,
+.employee-rbac-feature-copy small,
+.employee-rbac-submodule-copy strong,
+.employee-rbac-submodule-copy small,
+.employee-rbac-preview-copy strong,
+.employee-rbac-preview-copy small {
+    overflow-wrap: anywhere;
 }
 
 .employee-rbac-selected-title {
@@ -1916,9 +1993,12 @@ body.sidebar-open::after {
 }
 
 .employee-rbac-users-wrap {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     min-height: 265px;
     max-height: 265px;
-    overflow-y: auto;
+    overflow: auto;
 }
 
 .employee-rbac-users-wrap .employee-rbac-users-table thead th {
@@ -1942,6 +2022,42 @@ body.sidebar-open::after {
     display: flex;
     flex-direction: column;
     gap: 12px;
+}
+
+.employee-rbac-module-bulk-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding: 14px 0 10px;
+}
+
+.employee-rbac-bulk-button {
+    min-height: 36px;
+    border: 1px solid rgba(203, 213, 225, 1);
+    border-radius: 8px;
+    background: #fff;
+    color: #334155;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 7px 12px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    white-space: nowrap;
+    transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.employee-rbac-bulk-button:hover:not(:disabled),
+.employee-rbac-bulk-button:focus-visible:not(:disabled) {
+    border-color: #e11d48;
+    background: #fff1f2;
+    color: #be123c;
+    outline: none;
+}
+
+.employee-rbac-bulk-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.62;
 }
 
 .employee-rbac-module-group {
@@ -2263,6 +2379,35 @@ body.sidebar-open::after {
 }
 
 @media (max-width: 768px) {
+    main.main-content.employee-rbac-page {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        padding: 20px 14px 36px;
+        overflow-x: clip;
+    }
+
+    .employee-rbac-page .top-bar > div,
+    .employee-rbac-page .top-bar > .d-flex.gap-3,
+    .employee-rbac-page .top-bar > .d-flex.gap-3 > * {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .employee-rbac-page .top-bar > .d-flex.gap-3 > .btn {
+        white-space: normal;
+    }
+
+    .employee-rbac-card {
+        padding: 8px !important;
+    }
+
+    .employee-rbac-card > .card-body {
+        min-width: 0;
+        padding: 8px;
+    }
+
     .employee-rbac-header,
     .employee-rbac-panel-heading,
     .employee-rbac-table-header,
@@ -2272,6 +2417,26 @@ body.sidebar-open::after {
 
     .employee-rbac-detail-header {
         padding: 0;
+    }
+
+    .employee-rbac-header,
+    .employee-rbac-workspace,
+    .employee-rbac-side-column,
+    .employee-rbac-detail-panel {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .employee-rbac-workspace,
+    .employee-rbac-side-column,
+    .employee-rbac-detail-panel {
+        gap: 14px;
+    }
+
+    .employee-rbac-role-panel,
+    .employee-rbac-panel-card {
+        padding: 14px;
     }
 
     .employee-rbac-role-list {
@@ -2293,6 +2458,18 @@ body.sidebar-open::after {
         justify-content: space-between;
     }
 
+    .employee-rbac-module-toggle {
+        padding: 14px;
+    }
+
+    .employee-rbac-module-panel {
+        padding: 0 12px 12px;
+    }
+
+    .employee-rbac-feature-panel {
+        padding: 0 10px 10px;
+    }
+
     .employee-rbac-submodule-item {
         align-items: flex-start;
     }
@@ -2305,10 +2482,50 @@ body.sidebar-open::after {
 
     .employee-rbac-summary-card {
         min-height: auto;
+        gap: 12px;
+        padding: 14px;
+    }
+
+    .employee-rbac-summary-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 14px;
+        font-size: 1.3rem;
     }
 
     .employee-rbac-role-item {
-        grid-template-columns: 1fr;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 10px 12px;
+        padding: 14px;
+    }
+
+    .employee-rbac-role-item .employee-rbac-status-pill {
+        grid-column: 2;
+        justify-self: start;
+    }
+
+    .employee-rbac-selected-title {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+    }
+
+    .employee-rbac-selected-title .employee-rbac-status-pill {
+        grid-column: 2;
+        justify-self: start;
+    }
+
+    .employee-rbac-feature-toggle {
+        padding: 12px;
+    }
+
+    .employee-rbac-feature-side small {
+        display: none;
+    }
+
+    .employee-rbac-submodule-item {
+        gap: 10px;
+        padding: 12px;
     }
 }
 

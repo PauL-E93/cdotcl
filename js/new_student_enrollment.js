@@ -1,7 +1,8 @@
 (() => {
     const API_URL = 'api/enrollment_application.php';
-    const TRACKING_KEY = 'cdoTutorEnrollmentApplications';
     const PH_ADDRESS_API_BASE = 'https://psgc.cloud/api/v2';
+    // Remove legacy browser-saved tracking tokens; tracking now uses student details.
+    try { localStorage.removeItem('cdoTutorEnrollmentApplications'); } catch (_) {}
     const NCR_ADDRESS_OPTION = { code: '1300000000', name: 'Metro Manila (NCR)' };
     const state = {
         step: 1,
@@ -40,7 +41,7 @@
             showValidationMessage(message) { window.alert(message); }
         };
     })();
-    const money = value => `PHP ${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const money = value => `₱ ${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const formatTime = value => {
         if (!value) return '';
         const [hours, minutes] = String(value).split(':').map(Number);
@@ -348,12 +349,10 @@
     function updateProgramPreferenceFields(program = selectedProgram()) {
         const tutorial = isTutorialProgram(program);
         $('tutorialPreferences').classList.toggle('d-none', !tutorial);
-        $('learningPreferenceHelp').classList.toggle('d-none', Boolean(program) && !tutorial);
+        $('learningPreferenceHelp').classList.toggle('d-none', Boolean(program));
         $('learningPreferenceHelp').textContent = !program
             ? 'Select a program first. Tutorial preferences will appear only when a Tutorial program is selected.'
-            : tutorial
-                ? 'Add the student’s tutorial preferences. The center will use these details when matching a teacher and plotting the schedule.'
-                : '';
+            : '';
         if (program && !tutorial) clearTutorialPreferences();
     }
 
@@ -492,14 +491,6 @@
         };
     }
 
-    function saveTracking(application) {
-        let items = [];
-        try { items = JSON.parse(localStorage.getItem(TRACKING_KEY) || '[]'); } catch (_) { items = []; }
-        items = items.filter(item => item.application_number !== application.application_number);
-        items.unshift(application);
-        localStorage.setItem(TRACKING_KEY, JSON.stringify(items.slice(0, 20)));
-    }
-
     function validateLearningPreferences() {
         const errors = [];
         [$('program'), $('branch'), $('gradeLevel'), $('availabilityList')].forEach(clearFieldError);
@@ -582,9 +573,9 @@
                 ${serviceMarkup}
             </div>
             <div class="billing-totals">
-                <span>Estimated program total <strong>${money(grandTotal)}</strong></span>
+                <span>Program total <strong>${money(grandTotal)}</strong></span>
                 <span class="billing-due-now">Amount due now <strong>${money(initialPayment)}</strong></span>
-                <small>Only the registration fee and downpayment are required now. Month 1, tuition, books, other fees, and selected services are billed after enrollment.</small>
+                <small>Only the registration fee and downpayment are required now.</small>
             </div>
         </section>`;
     }
@@ -632,6 +623,50 @@
         return value.replace(/^\.\//, '');
     }
 
+    async function copyGcashAccountNumber(accountNumber, button) {
+        if (!accountNumber || !button) return;
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(accountNumber);
+            } else {
+                const temporary = document.createElement('textarea');
+                temporary.value = accountNumber;
+                temporary.style.position = 'fixed';
+                temporary.style.opacity = '0';
+                document.body.appendChild(temporary);
+                temporary.select();
+                document.execCommand('copy');
+                temporary.remove();
+            }
+            const label = button.querySelector('span');
+            if (label) label.textContent = 'Copied';
+            button.classList.add('is-copied');
+            setTimeout(() => {
+                if (label) label.textContent = 'Copy';
+                button.classList.remove('is-copied');
+            }, 1800);
+        } catch (error) {
+            Swal.fire('Unable to Copy', 'Please select and copy the GCash account number manually.', 'info');
+        }
+    }
+
+    function viewGcashQrCode(method, qrUrl) {
+        if (!qrUrl) return;
+        Swal.fire({
+            title: `${method.payment_method || 'GCash'} QR Code`,
+            imageUrl: qrUrl,
+            imageAlt: `${method.payment_method || 'GCash'} QR code`,
+            confirmButtonText: 'Close',
+            buttonsStyling: false,
+            customClass: {
+                popup: 'application-qr-modal',
+                title: 'application-qr-modal__title',
+                image: 'application-qr-modal__image',
+                confirmButton: 'application-qr-modal__close'
+            }
+        });
+    }
+
     async function showPublicPaymentReceipt(application) {
         const receipt = application?.payment_receipt;
         if (!receipt) return;
@@ -668,7 +703,17 @@
         const key = `cdoTutorShownApplicationReceipt:${application.application_number}:${receiptId}`;
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, '1');
-        showPublicPaymentReceipt(application).catch(error => Swal.fire('Receipt Unavailable', error.message, 'error'));
+        Swal.fire({
+            icon: 'success',
+            title: 'Receipt Available',
+            text: 'Your official receipt is now available for viewing and downloading. Use the “View Official Receipt” button in the Payment section when you are ready.',
+            confirmButtonText: 'Got it',
+            buttonsStyling: false,
+            customClass: {
+                popup: 'application-receipt-alert',
+                confirmButton: 'application-receipt-alert__confirm'
+            }
+        });
     }
 
     function renderPaymentMethodDetail(financial) {
@@ -687,11 +732,22 @@
         }
 
         const qrUrl = resolvePublicAsset(method.qr_code);
-        target.className = 'application-payment-detail';
+        const accountName = String(method.account_name || '').trim();
+        const accountNumber = String(method.account_number || '').trim();
+        target.className = 'application-payment-detail application-payment-detail--gcash';
         target.innerHTML = `
+            <div class="application-gcash-title"><span><i class="bi bi-credit-card"></i></span><h3>Make Payment</h3></div>
             <div class="application-gcash-account">
-                <div><small class="text-muted d-block">Send the exact amount to</small><strong>${escapeHtml(method.account_name || 'CDO Tutor GCash account')}</strong>${method.account_number ? `<div>${escapeHtml(method.account_number)}</div>` : ''}</div>
-                ${qrUrl ? `<img src="${escapeHtml(qrUrl)}" alt="GCash QR code" style="width:120px;height:120px;object-fit:contain">` : ''}
+                <div class="application-gcash-account-copy">
+                    <span class="application-gcash-eyebrow"><i class="bi bi-shield-check"></i> Send payment to</span>
+                    <h4>${escapeHtml(method.payment_method || 'GCash')}</h4>
+                    <dl>
+                        ${accountName ? `<div><dt>Account name</dt><dd>${escapeHtml(accountName)}</dd></div>` : ''}
+                        ${accountNumber ? `<div><dt>Account number</dt><dd><strong>${escapeHtml(accountNumber)}</strong><button type="button" id="applicationCopyGcashAccount" class="application-gcash-copy"><i class="bi bi-copy"></i><span>Copy</span></button></dd></div>` : ''}
+                    </dl>
+                    <p><i class="bi bi-info-circle"></i> Verify the account details before sending your payment.</p>
+                </div>
+                ${qrUrl ? `<button type="button" id="applicationViewGcashQr" class="application-gcash-qr" title="View larger QR code"><img src="${escapeHtml(qrUrl)}" alt="${escapeHtml(method.payment_method || 'GCash')} QR code"><span><i class="bi bi-arrows-fullscreen"></i> View larger</span></button>` : '<div class="application-gcash-qr-empty"><i class="bi bi-qr-code"></i><span>QR code is not configured.</span></div>'}
             </div>
             <div class="alert alert-info"><strong>Amount due: ${money(expected)}</strong><br><small>Upload the receipt after sending this exact registration fee and downpayment total.</small></div>
             <label class="application-receipt-upload" for="applicationGcashScreenshot">
@@ -705,6 +761,8 @@
                 <div><label class="form-label" for="applicationPaymentAmount">Receipt amount *</label><input type="number" class="form-control" id="applicationPaymentAmount" step="0.01" min="0.01" placeholder="${expected.toFixed(2)}"></div>
                 <div><label class="form-label" for="applicationPaymentReference">GCash reference number *</label><input class="form-control" id="applicationPaymentReference" inputmode="numeric" maxlength="13" pattern="\d{13}" placeholder="13-digit reference number"></div>
             </div>`;
+        $('applicationCopyGcashAccount')?.addEventListener('click', event => copyGcashAccountNumber(accountNumber, event.currentTarget));
+        $('applicationViewGcashQr')?.addEventListener('click', () => viewGcashQrCode(method, qrUrl));
         window.attachGcashOcrAutoFill?.({
             fileInputId: 'applicationGcashScreenshot',
             actionButtonId: 'applicationRunOcr',
@@ -814,8 +872,13 @@
                 payment_reference_no: payment.payment_reference_no
             }, payment.file);
             if (result.status !== 'success') throw new Error(result.message);
-            const tracking = { application_number: result.application_number, tracking_token: result.tracking_token, student_name: `${personalPayload().first_name} ${personalPayload().last_name}` };
-            saveTracking(tracking);
+            const personal = personalPayload();
+            const tracking = {
+                application_number: result.application_number,
+                first_name: personal.first_name,
+                last_name: personal.last_name,
+                birthday: personal.birthday
+            };
             state.applicationSubmitted = true;
             await showApplicationStatus(tracking, true);
         } catch (error) {
@@ -878,24 +941,33 @@
     }
 
     async function openTracking() {
-        let saved = [];
-        try { saved = JSON.parse(localStorage.getItem(TRACKING_KEY) || '[]'); } catch (_) { saved = []; }
-        const options = saved.reduce((map, item) => { map[item.application_number] = `${item.application_number}${item.student_name ? ` — ${item.student_name}` : ''}`; return map; }, {});
         const result = await Swal.fire({
             title: 'Track Application',
-            html: `<p class="text-muted">Choose a saved application or enter its details manually.</p>${saved.length ? `<select id="savedApplication" class="swal2-select"><option value="">Enter manually</option>${Object.entries(options).map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}</select>` : ''}<input id="trackingNumber" class="swal2-input" placeholder="Application number"><input id="trackingToken" class="swal2-input" placeholder="Tracking token">`,
+            html: `<div class="tracking-modal__intro"><span class="tracking-modal__icon"><i class="bi bi-search"></i></span><p>Enter the application number and student details exactly as submitted.</p></div><div class="tracking-modal__fields"><label class="tracking-modal__field" for="trackingNumber"><span>Application number</span><div><i class="bi bi-file-earmark-text"></i><input id="trackingNumber" type="text" autocomplete="off" placeholder="APP-XXXXXX-XXXX"></div></label><div class="tracking-modal__name-grid"><label class="tracking-modal__field" for="trackingFirstName"><span>Student first name</span><div><i class="bi bi-person"></i><input id="trackingFirstName" type="text" autocomplete="given-name" placeholder="First name"></div></label><label class="tracking-modal__field" for="trackingLastName"><span>Student last name</span><div><i class="bi bi-person"></i><input id="trackingLastName" type="text" autocomplete="family-name" placeholder="Last name"></div></label></div><label class="tracking-modal__field" for="trackingBirthday"><span>Student birthdate</span><div><i class="bi bi-calendar3"></i><input id="trackingBirthday" type="date" autocomplete="bday"></div></label></div>`,
             showCancelButton: true,
-            confirmButtonText: 'Track',
-            didOpen: () => {
-                const select = $('savedApplication');
-                if (select) select.onchange = () => {
-                    const item = saved.find(entry => entry.application_number === select.value);
-                    if (item) { $('trackingNumber').value = item.application_number; $('trackingToken').value = item.tracking_token; }
-                };
+            confirmButtonText: '<i class="bi bi-search me-2"></i>Track Application',
+            cancelButtonText: 'Cancel',
+            buttonsStyling: false,
+            customClass: {
+                popup: 'tracking-modal',
+                title: 'tracking-modal__title',
+                htmlContainer: 'tracking-modal__body',
+                actions: 'tracking-modal__actions',
+                confirmButton: 'tracking-modal__confirm',
+                cancelButton: 'tracking-modal__cancel',
+                validationMessage: 'tracking-modal__validation'
             },
             preConfirm: () => {
-                const tracking = { application_number: $('trackingNumber').value.trim(), tracking_token: $('trackingToken').value.trim() };
-                if (!tracking.application_number || !tracking.tracking_token) { Swal.showValidationMessage('Application number and tracking token are required.'); return false; }
+                const tracking = {
+                    application_number: $('trackingNumber').value.trim().toUpperCase(),
+                    first_name: $('trackingFirstName').value.trim(),
+                    last_name: $('trackingLastName').value.trim(),
+                    birthday: $('trackingBirthday').value
+                };
+                if (!tracking.application_number || !tracking.first_name || !tracking.last_name || !tracking.birthday) {
+                    Swal.showValidationMessage('Application number, first name, last name, and birthdate are required.');
+                    return false;
+                }
                 return tracking;
             }
         });

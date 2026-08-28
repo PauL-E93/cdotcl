@@ -131,6 +131,10 @@ function prepareEnrollmentModalLayout() {
                     <div class="fw-bold" id="view_branch">...</div>
                 </div>
                 <div class="col-md-4 preplay-view-field">
+                    <label class="small text-muted">Enrolled By</label>
+                    <div class="fw-bold" id="view_enrolled_by">...</div>
+                </div>
+                <div class="col-md-4 preplay-view-field">
                     <label class="small text-muted">Student ID</label>
                     <div class="fw-bold" id="view_student_id">...</div>
                 </div>
@@ -233,6 +237,13 @@ function setupEnrollmentFilterPanelToggle() {
 
     toggle.dataset.filterToggleReady = 'true';
     toggle.addEventListener('click', () => container.classList.toggle('filter-open'));
+}
+
+function formatEnrolledBy(item) {
+    const name = String(item?.enrolled_by_name || '').trim();
+    const role = String(item?.enrolled_by_role || '').trim();
+    if (!name) return 'Online / not recorded';
+    return role ? `${name} (${role})` : name;
 }
 
 function shouldIncludeTutorialApplications() {
@@ -760,6 +771,7 @@ function renderEnrollments(enrollments) {
         const canCreatePayment = canUsePaymentPermission('create');
         const canApprovePayment = canUsePaymentPermission('approve');
         const canExportPayment = canUsePaymentPermission('export');
+        const canViewPaymentAssessment = canUsePaymentPermission('view') && canUsePaymentPermission('view_assessment');
 
         if (isOnlineApplicationPaymentTask) {
             const applicationPaymentMethod = String(item.application_payment_method || '').toLowerCase();
@@ -785,7 +797,7 @@ function renderEnrollments(enrollments) {
                 `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); ${payCall}"><i class="bi bi-credit-card me-2"></i>${canCreatePayment ? 'Pay' : 'View Billing'}</a></li>`,
                 `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); openPaymentHistoryModal(${item.enrollment_details_id}, ${!canApprovePayment})"><i class="bi bi-eye me-2"></i>View</a></li>`
             ];
-            if (['/owner/', '/secretary/', '/branch_admin/', '/auditor/'].some(rolePath => pagePath.includes(rolePath))) {
+            if (canViewPaymentAssessment && ['/owner/', '/secretary/', '/branch_admin/', '/auditor/', '/teacher/'].some(rolePath => pagePath.includes(rolePath))) {
                 paymentActions.push(`<li><a class="dropdown-item fw-semibold text-dark" href="#" onclick="event.preventDefault(); openPaymentAssessment(${item.enrollment_details_id})"><i class="bi bi-clipboard2-check me-2"></i>Assessment</a></li>`);
             }
             if (canExportPayment) {
@@ -1162,6 +1174,7 @@ window.viewDetails = function(id, viewOnly = true) {
             setText('view_subject_grade', (d.subject_name || 'N/A') + ' (' + (d.grade_level || '?') + ')');
             setText('view_teacher_ro', d.teacher_name || 'Not assigned');
             setText('view_branch', d.branch_name || 'N/A');
+            setText('view_enrolled_by', formatEnrolledBy(d));
             const classText = d.class_id_from_section || d.class_id;
             setText('view_class', classText ? ('Class ' + classText) : 'N/A');
             setText('view_section', d.section_name || 'N/A');
