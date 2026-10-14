@@ -179,12 +179,12 @@ export function initEnrollmentDatePicker(options = {}) {
             dayEl.onclick = () => {
                 const date = dayEl.dataset.date;
                 selectedDate = date;
-                dateInput.value = new Date(date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                dateInput.value = new Date(date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
                 hiddenDate.value = date;
                 container.style.display = 'none';
 
                 if (typeof validateCallback === 'function') {
-                    validateCallback();
+                    if (validateCallback() === false) return;
                 }
 
                 // Handle Time Slot updates
@@ -198,6 +198,7 @@ export function initEnrollmentDatePicker(options = {}) {
                         if (endTimeInput) endTimeInput.value = available[0].end;
                     }
                 }
+                if (typeof options.onDateSelected === 'function') options.onDateSelected(date);
             };
         });
     }

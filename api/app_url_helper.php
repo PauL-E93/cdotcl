@@ -1,8 +1,10 @@
 <?php
 
+require_once __DIR__ . '/config/runtime.php';
+
 function cdoBuildAppUrl($path = '') {
-    $configuredBaseUrl = getenv('APP_BASE_URL');
-    if ($configuredBaseUrl !== false && trim($configuredBaseUrl) !== '') {
+    $configuredBaseUrl = cdoTutorConfig('APP_BASE_URL', '');
+    if (trim((string) $configuredBaseUrl) !== '') {
         return rtrim(trim($configuredBaseUrl), '/') . '/' . ltrim($path, '/');
     }
 

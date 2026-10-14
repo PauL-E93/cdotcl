@@ -1,8 +1,14 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+require_once __DIR__ . '/../tutorial_validity_helper.php';
+ensureTutorialValiditySchema(AuthGuard::connection());
+
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 
 require_once __DIR__ . '/../notification_helper.php';
+require_once __DIR__ . '/../enrollment_completion_helper.php';
+require_once __DIR__ . '/../session_sequence_helper.php';
 
 class SecretarySchedule {
     private function normalizeRole($role) {
@@ -50,7 +56,7 @@ class SecretarySchedule {
                            p.name AS program_name,
                            sub.subject_name,
                            TRIM(CONCAT_WS(' ', s.first_name, s.last_name, NULLIF(TRIM(s.ext), ''))) AS student_name,
-                           ed.preferred_teacher,
+                           COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) AS preferred_teacher,
                            CONCAT(t.first_name, ' ', t.last_name) AS teacher_name,
                            eh.branch_id,
                            b.branch_name,
@@ -61,9 +67,9 @@ class SecretarySchedule {
                     LEFT JOIN program p ON ed.program_id = p.program_id
                     LEFT JOIN subject sub ON ed.subject_id = sub.subject_id
                     LEFT JOIN student s ON eh.student_id = s.student_id
-                    LEFT JOIN employee t ON ed.preferred_teacher = t.employee_id
+                    LEFT JOIN employee t ON COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = t.employee_id
                     LEFT JOIN branch b ON eh.branch_id = b.branch_id
-                    WHERE ed.status IN ('active', 'pending', 'enrolled', 'completed')
+                    WHERE ed.status IN ('pending', 'enrolled', 'completed')
                       {$branchFilterSql}
                     ORDER BY eps.date ASC, eps.start_time ASC, b.branch_name ASC";
 
@@ -162,6 +168,23 @@ class SecretarySchedule {
                 return;
             }
 
+            if ($newStatus === 'ongoing') assertTutorialScheduleStart($conn, (int) $preferenceId, (int) $enrollmentDetailsId, (string) $scheduleDate);
+            if (in_array($newStatus, ['ongoing', 'no-show'], true) && findEarlierUnresolvedSession(
+                $conn,
+                $preferenceId,
+                [],
+                $enrollmentDetailsId,
+                $scheduleDate
+            )) {
+                echo json_encode([
+                    'status' => 'error',
+                    'message' => $newStatus === 'no-show'
+                        ? 'Complete all earlier sessions before marking this session as no-show.'
+                        : 'Complete all earlier sessions before starting this session.'
+                ]);
+                return;
+            }
+
             if ($preferenceId) {
                 $sql = "UPDATE enrollment_preferred_schedule
                         SET status = :new_status
@@ -189,12 +212,15 @@ class SecretarySchedule {
             if ($result && $affectedRows > 0) {
                 $notifications = new NotificationService($conn);
                 $schedule = $notifications->getScheduleContext($preferenceId, $enrollmentDetailsId, $scheduleDate);
+                $resolvedEnrollmentId = (int) ($schedule['enrollment_details_id'] ?? $enrollmentDetailsId ?? 0);
+                $completion = syncEnrollmentCompletionStatus($conn, $resolvedEnrollmentId);
                 $notifications->notifyScheduleStatus($schedule, $newStatus, 'employee', $_SESSION['employee_id'] ?? 0);
 
                 echo json_encode([
                     'status' => 'success',
                     'message' => 'Schedule status updated successfully',
                     'new_status' => $newStatus,
+                    'enrollment_completed' => $completion['completed'],
                     'affected_rows' => $affectedRows
                 ]);
             } else {

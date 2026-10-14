@@ -1,6 +1,8 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 
 class StudentSchedule {
     private function normalizeRole($role) {
@@ -252,7 +254,7 @@ class StudentSchedule {
         }
 
         $sql = "SELECT ed.enrollment_details_id,
-                       ed.preferred_teacher,
+                       COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) AS preferred_teacher,
                        eps.date,
                        eps.day,
                        eps.start_time,
@@ -272,12 +274,12 @@ class StudentSchedule {
                 LEFT JOIN program p ON ed.program_id = p.program_id
                 LEFT JOIN subject sub ON ed.subject_id = sub.subject_id
                 LEFT JOIN sections sec ON ed.section_id = sec.section_id
-                LEFT JOIN employee pref_t ON ed.preferred_teacher = pref_t.employee_id
+                LEFT JOIN employee pref_t ON COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = pref_t.employee_id
                 LEFT JOIN employee sec_t ON sec.employee_id = sec_t.employee_id
                 LEFT JOIN branch b ON eh.branch_id = b.branch_id
                 LEFT JOIN school_years sy ON eh.school_year_id = sy.school_year_id
                 WHERE eh.student_id = :student_id
-                  AND COALESCE(NULLIF(eh.status, ''), ed.status) IN ('active', 'pending', 'enrolled', 'completed')
+                  AND COALESCE(NULLIF(eh.status, ''), ed.status) IN ('pending', 'approved', 'enrolled', 'completed')
                   {$monthFilter}
                 ORDER BY eps.date ASC, eps.start_time ASC";
 
@@ -330,7 +332,7 @@ class StudentSchedule {
                 LEFT JOIN branch b ON eh.branch_id = b.branch_id
                 LEFT JOIN school_years sy ON eh.school_year_id = sy.school_year_id
                 WHERE eh.student_id = :student_id
-                  AND COALESCE(NULLIF(eh.status, ''), ed.status) IN ('active', 'pending', 'enrolled', 'completed')
+                  AND COALESCE(NULLIF(eh.status, ''), ed.status) IN ('pending', 'approved', 'enrolled', 'completed')
                   AND " . $this->buildPreschoolProgramFilter('p') . "
                   AND NOT EXISTS (
                       SELECT 1

@@ -29,7 +29,7 @@ function escapeHtml(value) {
     }[char]));
 }
 
-function preparePreschoolEnrollmentModal(studentName) {
+export function preparePreschoolEnrollmentModal(studentName) {
     const modal = document.getElementById('enrollmentDetailsModal');
     if (!modal) return;
 
@@ -323,7 +323,7 @@ export function renderPreschoolEnrollment(studentName, globalLookups, saveHandle
             <div class="row g-4">
             <div class="col-md-6">
                 <label class="form-label">School Year <span class="text-danger" aria-hidden="true">*</span></label>
-                <input type="text" class="form-control" disabled value="${globalLookups.active_school_year ? globalLookups.active_school_year.school_year : 'No active school year'}">
+                <input type="text" class="form-control" disabled value="${escapeHtml(globalLookups.active_school_year ? globalLookups.active_school_year.school_year : 'No active school year')}">
             </div>
             <div class="col-md-6">
                 <label class="form-label" for="preschoolProgram">Program</label>
@@ -356,9 +356,33 @@ export function renderPreschoolEnrollment(studentName, globalLookups, saveHandle
     const classSelect = document.getElementById('preschoolClass');
     const sectionSelect = document.getElementById('preschoolSection');
     const sectionContainer = document.getElementById('sectionContainer');
+    const saveBtn = document.getElementById('finalizeEnrollment');
 
     const allClasses = globalLookups.classes || [];
     const allSections = globalLookups.sections || [];
+    let capacityRequestId = 0;
+    const getSectionState = (section) => {
+        const max = Number(section?.max || 0);
+        const enrolled = Number(section?.enrolled_count || 0);
+        const status = String(section?.status || '').trim().toLowerCase();
+        const atCapacity = max > 0 && enrolled >= max;
+        return {
+            max,
+            enrolled,
+            full: status === 'full' || atCapacity,
+            available: status === 'open' && !atCapacity
+        };
+    };
+    const getClassState = (classId) => {
+        const sections = allSections.filter(section => section.class_id == classId);
+        return {
+            available: sections.some(section => getSectionState(section).available),
+            full: sections.length > 0 && sections.every(section => getSectionState(section).full)
+        };
+    };
+    const setFinalizeAvailable = (available) => {
+        if (saveBtn) saveBtn.disabled = !available;
+    };
 
     programSelect.addEventListener('change', function() {
         const currentProgramId = this.value;
@@ -367,10 +391,14 @@ export function renderPreschoolEnrollment(studentName, globalLookups, saveHandle
         sectionSelect.innerHTML = '<option value="">-- Select Class First --</option>';
         sectionSelect.disabled = true;
         sectionContainer.style.display = 'none';
+        setFinalizeAvailable(false);
 
         if (currentProgramId) {
             const openClasses = allClasses.filter(c =>
-                c.program_id == currentProgramId && c.status && c.status.toLowerCase() === 'open'
+                c.program_id == currentProgramId &&
+                c.status &&
+                c.status.toLowerCase() === 'open' &&
+                getClassState(c.class_id).available
             );
 
             if (openClasses.length > 0) {
@@ -392,15 +420,21 @@ export function renderPreschoolEnrollment(studentName, globalLookups, saveHandle
         sectionSelect.innerHTML = '<option value="">-- Select Section --</option>';
         sectionSelect.disabled = true;
         sectionContainer.style.display = 'none';
+        document.getElementById('sectionCount').textContent = '';
+        setFinalizeAvailable(false);
 
         if (selectedClassId) {
             const openSections = allSections.filter(s =>
-                s.class_id == selectedClassId && s.status && s.status.toLowerCase() === 'open'
+                s.class_id == selectedClassId && getSectionState(s).available
             );
 
             if (openSections.length > 0) {
                 sectionSelect.innerHTML = '<option value="">-- Select Section --</option>' +
-                    openSections.map(s => `<option value="${s.section_id}">${escapeHtml(s.section_name)}</option>`).join('');
+                    openSections.map(s => {
+                        const state = getSectionState(s);
+                        const capacity = state.max > 0 ? ` (${state.enrolled}/${state.max})` : '';
+                        return `<option value="${s.section_id}">${escapeHtml(s.section_name)}${capacity}</option>`;
+                    }).join('');
                 sectionSelect.disabled = false;
                 sectionContainer.style.display = 'block';
             } else {
@@ -410,32 +444,66 @@ export function renderPreschoolEnrollment(studentName, globalLookups, saveHandle
         }
     });
 
-    sectionSelect.addEventListener('change', function() {
+    sectionSelect.addEventListener('change', async function() {
         const selectedSectionId = this.value;
         const countEl = document.getElementById('sectionCount');
+        const requestId = ++capacityRequestId;
+        countEl.classList.remove('text-danger');
+        setFinalizeAvailable(false);
+
         if (selectedSectionId) {
-            axios.get(`../../api/admin/enrollment.php?operation=getSectionEnrollmentCount&section_id=${selectedSectionId}`)
-                .then(res => {
-                    const data = res.data;
-                    if (data.status === 'success') {
-                        countEl.textContent = `Enrolled: ${data.count} / ${data.max}`;
-                    } else {
-                        countEl.textContent = 'Error loading count';
+            countEl.textContent = 'Checking available slots...';
+            try {
+                const res = await axios.get(`../../api/admin/enrollment.php?operation=getSectionEnrollmentCount&section_id=${encodeURIComponent(selectedSectionId)}`);
+                if (requestId !== capacityRequestId || sectionSelect.value !== selectedSectionId) return;
+
+                const data = res.data;
+                if (data.status !== 'success') throw new Error(data.message || 'Unable to verify section capacity.');
+
+                const max = Number(data.max || 0);
+                const count = Number(data.count || 0);
+                const available = data.available === true || data.available === 1 || data.available === '1';
+                countEl.textContent = max > 0 ? `Enrolled: ${count} / ${max}` : `Enrolled: ${count}`;
+
+                const lookupSection = allSections.find(section => section.section_id == selectedSectionId);
+                if (lookupSection) {
+                    lookupSection.enrolled_count = count;
+                    lookupSection.max = max;
+                    lookupSection.status = data.section_status || lookupSection.status;
+                }
+
+                if (!available) {
+                    const selectedOption = [...sectionSelect.options]
+                        .find(option => option.value === String(selectedSectionId));
+                    if (selectedOption) {
+                        selectedOption.remove();
                     }
-                })
-                .catch(err => {
-                    console.error('Error fetching count:', err);
-                    countEl.textContent = 'Error loading count';
-                });
+                    sectionSelect.value = '';
+                    if (![...sectionSelect.options].some(option => option.value)) {
+                        sectionSelect.innerHTML = '<option value="">No open sections available</option>';
+                        sectionSelect.disabled = true;
+                    }
+                    countEl.textContent = `This section is full (${count}/${max}). Please choose another section.`;
+                    countEl.classList.add('text-danger');
+                    return;
+                }
+
+                setFinalizeAvailable(true);
+            } catch (err) {
+                if (requestId !== capacityRequestId) return;
+                console.error('Error fetching count:', err);
+                countEl.textContent = 'Unable to verify available slots. Please try again.';
+                countEl.classList.add('text-danger');
+            }
         } else {
             countEl.textContent = '';
         }
     });
 
-    const saveBtn = document.getElementById("finalizeEnrollment");
     if (saveBtn) {
         saveBtn.onclick = saveHandler;
         saveBtn.innerHTML = '<i class="bi bi-lock"></i><span>Finalize Enrollment</span>';
         saveBtn.style.display = canUseEnrollmentPermission(selectedProgramId ? 'approve' : 'create') ? 'inline-flex' : 'none';
+        setFinalizeAvailable(false);
     }
 }

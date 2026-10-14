@@ -1,7 +1,8 @@
-﻿<?php
+<?php
 // api/landing_page.php
+require_once __DIR__ . '/security/AuthGuard.php';
+if (($_REQUEST['operation'] ?? '') !== 'getLandingPage') AuthGuard::requireRoles(['owner']);
 header('Content-Type: application/json');
-header('Access-Control-Allow-Origin: *');
 
 class LandingPage {
     private $conn;
@@ -9,6 +10,38 @@ class LandingPage {
     public function __construct() {
         include "admin/connection-pdo.php";
         $this->conn = $conn;
+        $this->ensureEditableContentColumns();
+    }
+
+    /**
+     * Keep local/XAMPP installations compatible without requiring a separate
+     * migration command before the expanded landing-page editor is opened.
+     */
+    private function ensureEditableContentColumns() {
+        $columns = [
+            'hero_eyebrow' => "VARCHAR(255) NULL AFTER `landingpage_id`",
+            'hero_title' => "TEXT NULL AFTER `hero_eyebrow`",
+            'hero_tagline' => "VARCHAR(255) NULL AFTER `hero_title`",
+            'hero_description' => "TEXT NULL AFTER `hero_tagline`",
+            'highlight_1_value' => "VARCHAR(100) NULL AFTER `hero_description`",
+            'highlight_1_label' => "VARCHAR(255) NULL AFTER `highlight_1_value`",
+            'highlight_2_value' => "VARCHAR(100) NULL AFTER `highlight_1_label`",
+            'highlight_2_label' => "VARCHAR(255) NULL AFTER `highlight_2_value`",
+            'highlight_3_value' => "VARCHAR(100) NULL AFTER `highlight_2_label`",
+            'highlight_3_label' => "VARCHAR(255) NULL AFTER `highlight_3_value`",
+            'highlight_4_value' => "VARCHAR(100) NULL AFTER `highlight_3_label`",
+            'highlight_4_label' => "VARCHAR(255) NULL AFTER `highlight_4_value`"
+        ];
+
+        $existingColumns = array_fill_keys(
+            $this->conn->query("SHOW COLUMNS FROM landingpage")->fetchAll(PDO::FETCH_COLUMN),
+            true
+        );
+        foreach ($columns as $name => $definition) {
+            if (!isset($existingColumns[$name])) {
+                $this->conn->exec("ALTER TABLE landingpage ADD COLUMN `{$name}` {$definition}");
+            }
+        }
     }
 
     public function getLandingPage($json = "") {
@@ -31,6 +64,18 @@ class LandingPage {
         $data = json_decode($json, true);
 
         $sql = "INSERT INTO landingpage(
+                    hero_eyebrow,
+                    hero_title,
+                    hero_tagline,
+                    hero_description,
+                    highlight_1_value,
+                    highlight_1_label,
+                    highlight_2_value,
+                    highlight_2_label,
+                    highlight_3_value,
+                    highlight_3_label,
+                    highlight_4_value,
+                    highlight_4_label,
                     announcement_1,
                     announcement_2,
                     announcement_3,
@@ -46,6 +91,18 @@ class LandingPage {
                     created_at,
                     updated_at
                 ) VALUES(
+                    :hero_eyebrow,
+                    :hero_title,
+                    :hero_tagline,
+                    :hero_description,
+                    :highlight_1_value,
+                    :highlight_1_label,
+                    :highlight_2_value,
+                    :highlight_2_label,
+                    :highlight_3_value,
+                    :highlight_3_label,
+                    :highlight_4_value,
+                    :highlight_4_label,
                     :announcement_1,
                     :announcement_2,
                     :announcement_3,
@@ -63,6 +120,7 @@ class LandingPage {
                 )";
 
         $stmt = $this->conn->prepare($sql);
+        $this->bindExpandedContent($stmt, $data);
         $stmt->bindParam(':announcement_1', $data['announcement_1']);
         $stmt->bindParam(':announcement_2', $data['announcement_2']);
         $stmt->bindParam(':announcement_3', $data['announcement_3']);
@@ -84,6 +142,18 @@ class LandingPage {
         $data = json_decode($json, true);
 
         $sql = "UPDATE landingpage SET
+                    hero_eyebrow = :hero_eyebrow,
+                    hero_title = :hero_title,
+                    hero_tagline = :hero_tagline,
+                    hero_description = :hero_description,
+                    highlight_1_value = :highlight_1_value,
+                    highlight_1_label = :highlight_1_label,
+                    highlight_2_value = :highlight_2_value,
+                    highlight_2_label = :highlight_2_label,
+                    highlight_3_value = :highlight_3_value,
+                    highlight_3_label = :highlight_3_label,
+                    highlight_4_value = :highlight_4_value,
+                    highlight_4_label = :highlight_4_label,
                     announcement_1 = :announcement_1,
                     announcement_2 = :announcement_2,
                     announcement_3 = :announcement_3,
@@ -100,6 +170,7 @@ class LandingPage {
                 WHERE landingpage_id = :landingpage_id";
 
         $stmt = $this->conn->prepare($sql);
+        $this->bindExpandedContent($stmt, $data);
         $stmt->bindParam(':announcement_1', $data['announcement_1']);
         $stmt->bindParam(':announcement_2', $data['announcement_2']);
         $stmt->bindParam(':announcement_3', $data['announcement_3']);
@@ -116,6 +187,17 @@ class LandingPage {
 
         $stmt->execute();
         echo json_encode($stmt->rowCount() > 0 ? 1 : 0);
+    }
+
+    private function bindExpandedContent($stmt, $data) {
+        $fields = [
+            'hero_eyebrow', 'hero_title', 'hero_tagline', 'hero_description',
+            'highlight_1_value', 'highlight_1_label', 'highlight_2_value', 'highlight_2_label',
+            'highlight_3_value', 'highlight_3_label', 'highlight_4_value', 'highlight_4_label'
+        ];
+        foreach ($fields as $field) {
+            $stmt->bindValue(':' . $field, $data[$field] ?? null, PDO::PARAM_STR);
+        }
     }
 }
 

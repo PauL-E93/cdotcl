@@ -17,7 +17,7 @@ import {
     validatePlaySchoolInterpretations,
     validatePlaySchoolTransmutationRows
 } from './card_mangplay.js';
-import { canUseProgramPermission, guardProgramPermission, initProgramPermissions } from './program_rbac.js';
+import { canUseProgramPermission, guardProgramPermission, initProgramPermissions } from './program_rbac.js?v=20261001-payment-view-only';
 import { getApiErrorMessage, isHostedBrowserChallenge, normalizeApiResponse } from '../utilities/api_response.js?v=20260812-hosted-json5';
 import {
     getQuarterLabel,

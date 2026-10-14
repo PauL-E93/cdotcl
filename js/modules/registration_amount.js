@@ -1,5 +1,5 @@
 // js/modules/registration_amount.js
-import { canUseProgramPermission, guardProgramPermission } from './program_rbac.js';
+import { canUseProgramPermission, guardProgramPermission } from './program_rbac.js?v=20261001-payment-view-only';
 
 export function loadRegistrationAmounts() {
     if (!canUseProgramPermission('view_registration')) return;

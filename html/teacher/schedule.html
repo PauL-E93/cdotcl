@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script src="../../js/utilities/upload_url.js?v=20261006-upload-images-r2"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CDO Enrollment</title>
@@ -9,10 +10,11 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">  
     <link rel="stylesheet" href="../../css/design.css?v=20260828-five-schedule-rows">
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="../../css/schedule_add.css?v=20261012-themed-picker">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js?v=20261006-upload-images"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js?v=20261006-upload-images"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <script type="module" src="../../js/index.js?v=20260828-five-schedule-rows"></script>
+    <script type="module" src="../../js/index.js?v=20261012-device-clock"></script>
 
 </head>
 <body>
@@ -24,6 +26,9 @@
             <h1 class="page-title">Schedule</h1>
 
             <div class="d-flex gap-3">
+                <button type="button" id="add-schedule-button" class="btn btn-add shadow-sm px-4 d-none" disabled>
+                    <i class="bi bi-plus-lg"></i> Add Schedule
+                </button>
                 <div class="search-wrapper">
                     <input type="text" class="form-control shadow-sm" placeholder="Search student name or ID..." id="search-input">
                     <i class="bi bi-search search-icon"></i>
@@ -103,7 +108,7 @@
     </div>
 
     <script type="module">
-        import TeacherCalendarModule from '../../js/modules/schedule.js?v=20260828-five-schedule-rows';
+        import TeacherCalendarModule from '../../js/modules/schedule.js?v=20261012-start-window';
         document.addEventListener('DOMContentLoaded', () => {
             if (window.__scheduleRbacLocked) return;
             new TeacherCalendarModule('calendar-container');

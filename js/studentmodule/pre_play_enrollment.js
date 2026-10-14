@@ -1,3 +1,5 @@
+import { preparePreschoolEnrollmentModal } from '../modules/pre_play_enrollment.js?v=20261006-upload-images-r2';
+
 export function renderPreschoolEnrollment(studentName, globalLookups, saveHandler, selectedProgramId = null) {
     const form = document.getElementById("enrollmentForm");
     const title = document.getElementById("enrollmentDetailsModalLabel");
@@ -6,7 +8,7 @@ export function renderPreschoolEnrollment(studentName, globalLookups, saveHandle
         throw new Error('Pre-play enrollment UI is not available on this page.');
     }
 
-    title.textContent = `Pre-school Enrollment: ${studentName}`;
+    preparePreschoolEnrollmentModal(studentName);
 
     // Get all programs first - debug what we have
     const allPrograms = (globalLookups.programs || []);
@@ -18,68 +20,56 @@ export function renderPreschoolEnrollment(studentName, globalLookups, saveHandle
     console.log('Program Types:', programTypes);
     console.log('ALL PROGRAM NAMES:', allPrograms.map(p => `"${p.name}"`).join(', '));
     
-    // Prefer the database program type for pre-school / play-school, with name matching as fallback.
-    let preschoolPrograms = allPrograms.filter(p => p.program_type == 3);
-
-    if (preschoolPrograms.length === 0) {
-        preschoolPrograms = allPrograms.filter(p =>
-            p.name && (
-            p.name.toLowerCase().includes('preschool') || 
-            p.name.toLowerCase().includes('play') || 
-            p.name.toLowerCase().includes('pre-school') ||
-            p.name.toLowerCase().includes('playschool') ||
-            p.name.toLowerCase().includes('pre school') ||
-            p.name.toLowerCase().includes('play school')
-            )
-        );
-    }
+    const preschoolPrograms = getPreschoolPrograms(globalLookups);
     
     console.log('Filtered Preschool Programs:', preschoolPrograms);
     console.log('Number of preschool programs found:', preschoolPrograms.length);
     
-    // If no programs found, show all programs as fallback
-    if (preschoolPrograms.length === 0) {
-        console.warn('WARNING: No preschool programs found. Showing all programs instead.');
-        preschoolPrograms = allPrograms;
-    }
-
     let html = `
-        <div class="alert alert-info">Academic Year Enrollment</div>
-        <div class="row">
-            <div class="col-md-6 mb-3">
-                <label class="form-label">School Year</label>
-                <input type="text" class="form-control" disabled value="${globalLookups.active_school_year ? globalLookups.active_school_year.school_year : 'No active school year'}">
+        <div class="preschool-enrollment-alert">
+            <i class="bi bi-info-circle"></i>
+            <span>Academic Year Enrollment</span>
+        </div>
+
+        <section class="preschool-program-card">
+            <h3 class="preschool-section-title">
+                <span class="preschool-section-icon"><i class="bi bi-mortarboard-fill"></i></span>
+                <span>Program Details</span>
+            </h3>
+            <div class="row g-4">
+            <div class="col-md-6">
+                <label class="form-label">School Year <span class="text-danger" aria-hidden="true">*</span></label>
+                <input type="text" class="form-control" disabled value="${escapeHtml(globalLookups.active_school_year ? globalLookups.active_school_year.school_year : 'No active school year')}">
             </div>
-            <div class="col-md-6 mb-3">
-                <label class="form-label">Program</label>
-                <select class="form-control" id="preschoolProgram" required ${selectedProgramId ? 'disabled' : ''}>
+            <div class="col-md-6">
+                <label class="form-label" for="preschoolProgram">Program</label>
+                <select class="form-select" id="preschoolProgram" required ${selectedProgramId ? 'disabled' : ''}>
                     <option value="">-- Select Program --</option>
-                    ${preschoolPrograms.length > 0 ? preschoolPrograms.map(p => `<option value="${p.program_id}"${p.program_id == selectedProgramId ? ' selected' : ''}>${p.name}</option>`).join('') : '<option disabled>No programs available</option>'}
+                    ${preschoolPrograms.length > 0 ? preschoolPrograms.map(p => `<option value="${p.program_id}"${p.program_id == selectedProgramId ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('') : '<option disabled>No programs available</option>'}
                 </select>
-                ${selectedProgramId ? '<small class="text-muted">Program locked from the saved downpayment.</small>' : ''}
+                ${selectedProgramId ? '<small class="preschool-help-text"><i class="bi bi-lock me-1"></i>Program locked from the saved downpayment.</small>' : ''}
             </div>
-            <div class="col-md-6 mb-3">
-                <label class="form-label">Branch</label>
-                <select class="form-control" id="preschoolBranch" required disabled>
+            <div class="col-md-6">
+                <label class="form-label" for="preschoolBranch">Branch</label>
+                <select class="form-select" id="preschoolBranch" required disabled>
                     <option value="">-- Select Program First --</option>
                 </select>
             </div>
-            <div class="col-md-6 mb-3">
-                <label class="form-label">Class</label>
-                <select class="form-control" id="preschoolClass" required disabled>
+            <div class="col-md-6">
+                <label class="form-label" for="preschoolClass">Class</label>
+                <select class="form-select" id="preschoolClass" required disabled>
                     <option value="">-- Select Branch First --</option>
                 </select>
             </div>
-        </div>
-        <div class="row">
-            <div class="col-md-6 mb-3" id="sectionContainer" style="display:none;">
-                <label class="form-label">Section</label>
-                <select class="form-control" id="preschoolSection" required disabled>
+            <div class="col-md-6" id="sectionContainer" style="display:none;">
+                <label class="form-label" for="preschoolSection">Section</label>
+                <select class="form-select" id="preschoolSection" required disabled>
                     <option value="">-- Select Class First --</option>
                 </select>
-                <small id="sectionCount" class="text-muted"></small>
+                <small id="sectionCount" class="preschool-section-count"></small>
             </div>
-        </div>
+            </div>
+        </section>
     `;
     form.innerHTML = html;
     markRequiredFieldLabels(form);
@@ -90,14 +80,43 @@ export function renderPreschoolEnrollment(studentName, globalLookups, saveHandle
     const classSelect = document.getElementById('preschoolClass');
     const sectionSelect = document.getElementById('preschoolSection');
     const sectionContainer = document.getElementById('sectionContainer');
+    const saveBtn = document.getElementById('finalizeEnrollment');
 
     // Ensure classes and sections arrays exist
     const allClasses = globalLookups.classes || [];
     const allSections = globalLookups.sections || [];
+    let capacityRequestId = 0;
+    const getSectionState = (section) => {
+        const max = Number(section?.max || 0);
+        const enrolled = Number(section?.enrolled_count || 0);
+        const status = String(section?.status || '').trim().toLowerCase();
+        const atCapacity = max > 0 && enrolled >= max;
+        const operationallyOpen = status === 'open';
+
+        return {
+            max,
+            enrolled,
+            full: status === 'full' || atCapacity,
+            available: operationallyOpen && !atCapacity
+        };
+    };
+    const getClassState = (classId) => {
+        const sections = allSections.filter(section => section.class_id == classId);
+        const available = sections.some(section => getSectionState(section).available);
+        const full = sections.length > 0 && sections.every(section => getSectionState(section).full);
+        return { available, full };
+    };
+    const setFinalizeAvailable = (available) => {
+        if (saveBtn) saveBtn.disabled = !available;
+    };
     const getOpenBranchesForProgram = (programId) => {
         const branchesById = new Map();
         allClasses
-            .filter(c => c.program_id == programId && c.status && c.status.toLowerCase() === 'open')
+            .filter(c =>
+                c.program_id == programId &&
+                String(c.status || '').toLowerCase() === 'open' &&
+                getClassState(c.class_id).available
+            )
             .forEach(c => {
                 if (c.branch_id) {
                     branchesById.set(String(c.branch_id), c.branch_name || `Branch ${c.branch_id}`);
@@ -120,6 +139,7 @@ export function renderPreschoolEnrollment(studentName, globalLookups, saveHandle
         sectionSelect.innerHTML = '<option value="">-- Select Class First --</option>';
         sectionSelect.disabled = true;
         sectionContainer.style.display = 'none';
+        setFinalizeAvailable(false);
 
         if (selectedProgramId) {
             const openBranches = getOpenBranchesForProgram(selectedProgramId);
@@ -145,20 +165,22 @@ export function renderPreschoolEnrollment(studentName, globalLookups, saveHandle
         sectionSelect.innerHTML = '<option value="">-- Select Class First --</option>';
         sectionSelect.disabled = true;
         sectionContainer.style.display = 'none';
+        setFinalizeAvailable(false);
 
         if (selectedProgramId && selectedBranchId) {
             const openClasses = allClasses.filter(c =>
                 c.program_id == selectedProgramId &&
                 String(c.branch_id) === String(selectedBranchId) &&
                 c.status &&
-                c.status.toLowerCase() === 'open'
+                c.status.toLowerCase() === 'open' &&
+                getClassState(c.class_id).available
             );
 
             console.log('Filtered classes for program and branch', selectedProgramId, selectedBranchId, ':', openClasses);
 
             if (openClasses.length > 0) {
                 classSelect.innerHTML = '<option value="">-- Select Class --</option>' +
-                    openClasses.map(c => `<option value="${c.class_id}">${c.program_name}</option>`).join('');
+                    openClasses.map(c => `<option value="${c.class_id}">${escapeHtml(c.program_name)}</option>`).join('');
                 classSelect.disabled = false;
             } else {
                 classSelect.innerHTML = '<option value="">No open classes available</option>';
@@ -176,18 +198,23 @@ export function renderPreschoolEnrollment(studentName, globalLookups, saveHandle
         sectionSelect.innerHTML = '<option value="">-- Select Section --</option>';
         sectionSelect.disabled = true;
         sectionContainer.style.display = 'none';
+        document.getElementById('sectionCount').textContent = '';
+        setFinalizeAvailable(false);
 
         if (selectedClassId) {
-            // Filter sections for selected class and with status 'open'
             const openSections = allSections.filter(s =>
-                s.class_id == selectedClassId && s.status && s.status.toLowerCase() === 'open'
+                s.class_id == selectedClassId && getSectionState(s).available
             );
 
-            console.log('Filtered sections for class', selectedClassId, ':', openSections);
+            console.log('Open sections for class', selectedClassId, ':', openSections);
 
             if (openSections.length > 0) {
                 sectionSelect.innerHTML = '<option value="">-- Select Section --</option>' +
-                    openSections.map(s => `<option value="${s.section_id}">${s.section_name}</option>`).join('');
+                    openSections.map(s => {
+                        const state = getSectionState(s);
+                        const capacity = state.max > 0 ? ` (${state.enrolled}/${state.max})` : '';
+                        return `<option value="${s.section_id}">${escapeHtml(s.section_name)}${capacity}</option>`;
+                    }).join('');
                 sectionSelect.disabled = false;
                 sectionContainer.style.display = 'block';
             } else {
@@ -198,33 +225,68 @@ export function renderPreschoolEnrollment(studentName, globalLookups, saveHandle
     });
 
     // Handle section selection
-    sectionSelect.addEventListener('change', function() {
+    sectionSelect.addEventListener('change', async function() {
         const selectedSectionId = this.value;
         const countEl = document.getElementById('sectionCount');
+        const requestId = ++capacityRequestId;
+        countEl.classList.remove('text-danger');
+        setFinalizeAvailable(false);
+
         if (selectedSectionId) {
-            // Fetch enrollment count
-            axios.get(`../../api/admin/enrollment.php?operation=getSectionEnrollmentCount&section_id=${selectedSectionId}`)
-            .then(res => {
+            countEl.textContent = 'Checking available slots...';
+            try {
+                const res = await axios.get(`../../api/admin/enrollment.php?operation=getSectionEnrollmentCount&section_id=${encodeURIComponent(selectedSectionId)}`);
+                if (requestId !== capacityRequestId || sectionSelect.value !== selectedSectionId) return;
+
                 const data = res.data;
-                if (data.status === 'success') {
-                    countEl.textContent = `Enrolled: ${data.count} / ${data.max}`;
-                } else {
-                    countEl.textContent = 'Error loading count';
+                if (data.status !== 'success') {
+                    throw new Error(data.message || 'Unable to verify section capacity.');
                 }
-            })
-            .catch(err => {
+
+                const max = Number(data.max || 0);
+                const count = Number(data.count || 0);
+                const available = data.available === true || data.available === 1 || data.available === '1';
+                countEl.textContent = max > 0 ? `Enrolled: ${count} / ${max}` : `Enrolled: ${count}`;
+
+                const lookupSection = allSections.find(section => section.section_id == selectedSectionId);
+                if (lookupSection) {
+                    lookupSection.enrolled_count = count;
+                    lookupSection.max = max;
+                    lookupSection.status = data.section_status || lookupSection.status;
+                }
+
+                if (!available) {
+                    const selectedOption = [...sectionSelect.options]
+                        .find(option => option.value === String(selectedSectionId));
+                    if (selectedOption) {
+                        selectedOption.remove();
+                    }
+                    sectionSelect.value = '';
+                    if (![...sectionSelect.options].some(option => option.value)) {
+                        sectionSelect.innerHTML = '<option value="">No open sections available</option>';
+                        sectionSelect.disabled = true;
+                    }
+                    countEl.textContent = `This section is full (${count}/${max}). Please choose another section.`;
+                    countEl.classList.add('text-danger');
+                    return;
+                }
+
+                setFinalizeAvailable(true);
+            } catch (err) {
+                if (requestId !== capacityRequestId) return;
                 console.error('Error fetching count:', err);
-                countEl.textContent = 'Error loading count';
-            });
+                countEl.textContent = 'Unable to verify available slots. Please try again.';
+                countEl.classList.add('text-danger');
+            }
         } else {
             countEl.textContent = '';
         }
     });
 
     // Attach save handler to finalize button
-    const saveBtn = document.getElementById("finalizeEnrollment");
     if (saveBtn) {
         saveBtn.onclick = saveHandler;
+        setFinalizeAvailable(false);
     }
 }
 
@@ -372,15 +434,6 @@ function getBootstrapModal(element) {
     return bootstrap.Modal.getInstance(element) || new bootstrap.Modal(element);
 }
 
-function getStudentReceiptHandler() {
-    return typeof window.showPaymentReceipt === 'function'
-        ? (receipt) => window.showPaymentReceipt({
-            ...receipt,
-            copyLabels: ['CUSTOMER COPY']
-        })
-        : null;
-}
-
 function ensurePrePlayPaymentOcrHelpers() {
     if (typeof window.attachGcashOcrAutoFill === 'function') {
         return Promise.resolve();
@@ -477,7 +530,25 @@ function submitStudentPrePlayEnrollment() {
         Swal.close();
 
         if (res.data.status !== 'success') {
-            Swal.fire('Error', res.data.message || 'Unable to complete enrollment.', 'error');
+            const message = res.data.message || 'Unable to complete enrollment.';
+            if (/section.*full|full.*section/i.test(message)) {
+                const sectionSelect = document.getElementById('preschoolSection');
+                const selectedOption = sectionSelect?.options?.[sectionSelect.selectedIndex];
+                if (selectedOption?.value) selectedOption.remove();
+                if (sectionSelect) sectionSelect.value = '';
+                if (sectionSelect && ![...sectionSelect.options].some(option => option.value)) {
+                    sectionSelect.innerHTML = '<option value="">No open sections available</option>';
+                    sectionSelect.disabled = true;
+                }
+                const countEl = document.getElementById('sectionCount');
+                if (countEl) {
+                    countEl.textContent = message;
+                    countEl.classList.add('text-danger');
+                }
+                const finalizeBtn = document.getElementById('finalizeEnrollment');
+                if (finalizeBtn) finalizeBtn.disabled = true;
+            }
+            Swal.fire('Enrollment Not Available', message, 'warning');
             return;
         }
 
@@ -510,10 +581,7 @@ function submitStudentPrePlayEnrollment() {
 }
 
 function resolvePrePlayDownpaymentQrUrl(qrPath) {
-    const value = String(qrPath || '').trim();
-    if (!value) return '';
-    if (/^(?:https?:|data:|blob:|\/)/i.test(value) || value.startsWith('../')) return value;
-    return `../../${value.replace(/^\.\//, '')}`;
+    return window.resolveUploadUrl(qrPath);
 }
 
 function buildPrePlayDownpaymentMethodDetails(method) {
@@ -785,12 +853,12 @@ function renderStudentPrePlayDownpayment() {
                     <p class="dp-card-description mb-3">We've read the information from your receipt. You can still edit if needed.</p>
                     <div class="dp-field-grid">
                         <div class="dp-field">
-                            <label class="form-label" for="downpaymentAmountInput">Amount</label>
+                            <label class="form-label" for="downpaymentAmountInput">Amount Paid</label>
                             <div class="input-group">
                                 <span class="input-group-text">&#8369;</span>
                                 <input type="number" class="form-control" id="downpaymentAmountInput" value="0.00" step="0.01" min="0" required>
                             </div>
-                            <small class="dp-help">Auto-filled from your receipt.</small>
+                            <small class="dp-help">Pay at least the required downpayment. You may enter a higher amount or pay in full.</small>
                         </div>
                         <div class="dp-field" id="referenceField">
                             <label class="form-label" for="transactionReferenceInput">GCash Reference Number</label>
@@ -841,7 +909,8 @@ function renderStudentPrePlayDownpayment() {
 function submitStudentPrePlayDownpayment() {
     const student = getLoggedInStudent();
     const programId = document.getElementById('downpaymentProgramInput')?.value;
-    const amount = parseFloat(document.getElementById('downpaymentAmountInput')?.value);
+    const amount = Number(document.getElementById('downpaymentAmountInput')?.value);
+    const minimum = Number(document.getElementById('downpaymentProgramInput')?.selectedOptions?.[0]?.dataset.downpayment || 0);
     const methodInput = document.getElementById('paymentMethodInput');
     const reference = document.getElementById('transactionReferenceInput')?.value.trim();
     const screenshotFile = document.getElementById('downpaymentScreenshotInput')?.files?.[0] || null;
@@ -857,8 +926,13 @@ function submitStudentPrePlayDownpayment() {
         return;
     }
 
-    if (!amount || amount <= 0) {
+    if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) {
         Swal.fire('Invalid Amount', 'Please enter a valid downpayment amount.', 'warning');
+        return;
+    }
+
+    if (Math.round(amount * 100) < Math.round(minimum * 100)) {
+        Swal.fire('Insufficient Downpayment', `Payment must be at least PHP ${minimum.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. You may enter a higher amount or pay in full.`, 'warning');
         return;
     }
 
@@ -923,31 +997,12 @@ function submitStudentPrePlayDownpayment() {
 
         getBootstrapModal(document.getElementById('downpaymentModal'))?.hide();
 
-        const receiptData = {
-            enrollmentId: res.data.enrollment_id,
-            studentName: res.data.student_name || 'Student',
-            programName: res.data.program_display_name || res.data.program_name || '',
-            programType: res.data.program_type || '',
-            paymentFor: 'Enrollment Downpayment',
-            paymentMethod: res.data.payment_method || methodInput.dataset.methodName || 'GCash',
-            referenceNo: res.data.reference_no || reference,
-            paymentScreenshotPath: res.data.payment_screenshot_path || null,
-            receiptNo: res.data.receipt_id || null,
-            amountPaid: amount,
-            balance: parseFloat(res.data.balance || 0),
-            totalAmount: amount,
-            paymentDate: new Date(),
-            lineItems: [
-                ...(parseFloat(res.data.downpayment_amount || 0) > 0 ? [{ label: 'Downpayment', amount: parseFloat(res.data.downpayment_amount || 0) }] : [])
-            ]
-        };
-        const receiptHandler = getStudentReceiptHandler();
-
-        Promise.resolve(
-            typeof receiptHandler === 'function'
-                ? receiptHandler(receiptData)
-                : Swal.fire('Downpayment Submitted', res.data.message || 'You may now continue enrollment details.', 'success')
-        ).then(() => {
+        Swal.fire({
+            title: 'Payment submitted for review',
+            text: 'Your payment is awaiting approval. Your receipt will be generated after your payment is approved. Continue with your enrollment details for center review.',
+            icon: 'info',
+            confirmButtonText: 'Continue to Enrollment Details'
+        }).then(() => {
             const studentName = res.data.student_name || student.username || 'Student';
             renderPreschoolEnrollment(studentName, studentPrePlayLookups, submitStudentPrePlayEnrollment);
 
@@ -960,7 +1015,7 @@ function submitStudentPrePlayDownpayment() {
 
             const finalizeBtn = document.getElementById('finalizeEnrollment');
             if (finalizeBtn) {
-                finalizeBtn.textContent = 'Submit Enrollment';
+                finalizeBtn.innerHTML = '<i class="bi bi-lock"></i><span>Finalize Enrollment</span>';
             }
 
             getBootstrapModal(document.getElementById('enrollmentDetailsModal'))?.show();
@@ -977,23 +1032,13 @@ function getProgramTypeLabel(program) {
     return programType ? programType.type : (program.type_name || '');
 }
 
-function getPreschoolPrograms() {
-    const allPrograms = studentPrePlayLookups.programs || [];
-    let preschoolPrograms = allPrograms.filter(p => p.program_type == 3);
-
-    if (preschoolPrograms.length === 0) {
-        preschoolPrograms = allPrograms.filter(p => {
-            const name = (p.name || '').toLowerCase();
-            return name.includes('preschool') ||
-                name.includes('playschool') ||
-                name.includes('pre-school') ||
-                name.includes('play-school') ||
-                name.includes('pre school') ||
-                name.includes('play school');
-        });
-    }
-
-    return preschoolPrograms;
+function getPreschoolPrograms(lookups = studentPrePlayLookups) {
+    return (lookups.programs || []).filter(program => {
+        if ([3, 4].includes(Number(program.program_type))) return true;
+        const type = (lookups.program_types || []).find(item => item.program_type_id == program.program_type);
+        const description = `${program.name || ''} ${type?.type || program.type_name || ''} ${program.program_type || ''}`;
+        return /(?:pre|play)[\s-]*school/i.test(description);
+    });
 }
 
 function updatePrePlayDownpaymentPreview() {
@@ -1010,7 +1055,10 @@ function updatePrePlayDownpaymentPreview() {
 
     if (feeInput) feeInput.value = `PHP ${tuition.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     if (downpaymentPreview) downpaymentPreview.value = `PHP ${downpayment.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    if (amountInput) amountInput.value = downpayment.toFixed(2);
+    if (amountInput) {
+        amountInput.value = downpayment.toFixed(2);
+        amountInput.min = downpayment.toFixed(2);
+    }
     loadProgramProductsPreview(programId, 'downpaymentProgramProductsPreview');
 }
 
@@ -1069,7 +1117,7 @@ async function openPendingPrePlayEnrollmentCompletion(enrollmentId) {
 
         const finalizeBtn = document.getElementById('finalizeEnrollment');
         if (finalizeBtn) {
-            finalizeBtn.textContent = 'Submit Enrollment';
+            finalizeBtn.innerHTML = '<i class="bi bi-lock"></i><span>Finalize Enrollment</span>';
         }
 
         getBootstrapModal(document.getElementById('enrollmentDetailsModal'))?.show();

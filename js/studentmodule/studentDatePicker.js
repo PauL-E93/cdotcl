@@ -174,7 +174,7 @@ export function initStudentDatePicker(options = {}) {
                 container.style.display = 'none';
 
                 if (typeof validateCallback === 'function') {
-                    validateCallback();
+                    if (validateCallback() === false) return;
                 }
 
                 // Handle Time Slot updates
@@ -188,6 +188,7 @@ export function initStudentDatePicker(options = {}) {
                         if (endTimeInput) endTimeInput.value = available[0].end;
                     }
                 }
+                if (typeof options.onDateSelected === 'function') options.onDateSelected(date);
             };
         });
     }

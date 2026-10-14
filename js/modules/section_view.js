@@ -1,5 +1,5 @@
 import { openAddSectionModal, openEditSectionModal } from './section.js';
-import { openSectionReportCards, openStudentEccdChecklist } from './preschool_report_card.js?v=20260814-school-year-curriculum';
+import { openSectionReportCards, openStudentEccdChecklist } from './preschool_report_card.js?v=20261012-domain-select-all';
 import { navigateToSectionAttendancePage } from './section_attendance.js';
 import { canUseClassPermission, guardClassPermission } from './class_rbac.js';
 import { getApiErrorMessage, normalizeApiResponse } from '../utilities/api_response.js?v=20260812-hosted-json5';
@@ -488,7 +488,7 @@ function renderOwnerSection(section) {
         canViewAttendance ? '<button type="button" data-section-tab="attendance">Attendance</button>' : ''
     ].filter(Boolean).join('');
     const initialSectionContent = canViewStudents
-        ? `<div class="table-responsive${isOwnerClassPage ? '' : ' section-students-table-scroll'}"><table class="table class-students-table"><thead><tr><th>#</th><th>Student ID Number</th><th>Student Name</th><th>Status</th><th>Email</th></tr></thead><tbody id="owner-section-students"><tr><td colspan="5" class="text-center text-muted py-4">Loading students...</td></tr></tbody></table></div>`
+        ? `<div class="table-responsive${isOwnerClassPage ? ' section-records-scroll' : ' section-students-table-scroll'}"><table class="table class-students-table"><thead><tr><th>#</th><th>Student ID Number</th><th>Student Name</th><th>Status</th><th>Email</th></tr></thead><tbody id="owner-section-students"><tr><td colspan="5" class="text-center text-muted py-4">Loading students...</td></tr></tbody></table></div>`
         : `<div class="section-tab-panel"><h3>Section overview</h3><div class="section-info-grid"><div><span>Class</span><strong>${escapeHtml(className)}</strong></div><div><span>Section</span><strong>${escapeHtml(section.section_name || 'N/A')}</strong></div><div><span>Instructor</span><strong>${escapeHtml(getInstructorDisplayName(section))}</strong></div><div><span>Schedule</span><strong>${escapeHtml(section.schedule_info || 'No schedule set')}</strong></div></div></div>`;
     view.innerHTML = `
         <div class="section-overview">
@@ -670,6 +670,26 @@ function bindSectionStudentSearch(students, render) {
     };
 }
 
+function limitTableToVisibleRows(tbody, visibleRows = 10) {
+    if (!tbody) return;
+
+    const scrollContainer = tbody.closest('.section-records-scroll');
+    if (!scrollContainer) return;
+
+    // Recalculate after every render/search so exactly ten current records are
+    // visible before the remaining records become vertically scrollable.
+    scrollContainer.style.maxHeight = 'none';
+    scrollContainer.style.overflowY = '';
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    if (rows.length <= visibleRows) return;
+
+    const containerTop = scrollContainer.getBoundingClientRect().top;
+    const lastVisibleRowBottom = rows[visibleRows - 1].getBoundingClientRect().bottom;
+    const horizontalScrollbarHeight = scrollContainer.offsetHeight - scrollContainer.clientHeight;
+    scrollContainer.style.maxHeight = `${Math.ceil(lastVisibleRowBottom - containerTop + horizontalScrollbarHeight + 1)}px`;
+    scrollContainer.style.overflowY = 'auto';
+}
+
 function bindOwnerSectionTabs(section, className) {
     document.querySelectorAll('[data-section-tab]').forEach(button => button.addEventListener('click', () => {
         const tab = button.dataset.sectionTab;
@@ -724,15 +744,16 @@ function renderOwnerStudentProfiles(sectionId) {
                 return { ...student, ...(profileResponse.data?.status === 'success' ? profileResponse.data.data : {}) };
             }));
             content.innerHTML = `
-                <div class="table-responsive"><table class="table class-students-table profile-students-table"><thead><tr><th>#</th><th>Student ID Number</th><th>Student Name</th><th>Nickname</th><th>Gender</th><th>Birthday</th><th>School Year</th><th>Email</th><th>Guardian Name</th><th>Relationship</th><th>Guardian Contact</th><th>Street</th><th>Barangay</th><th>City / Municipality</th><th>Province</th><th>Address Note</th><th>Health Notes</th></tr></thead><tbody id="owner-profile-students"></tbody></table></div>`;
+                <div class="table-responsive${isOwnerClassPage ? ' section-records-scroll' : ''}"><table class="table class-students-table profile-students-table"><thead><tr><th>NO.</th><th>Student ID Number</th><th>LRN</th><th>Student Name</th><th>Nickname</th><th>Gender</th><th>Birthday</th><th>School Year</th><th>Email</th><th>Guardian Name</th><th>Relationship</th><th>Guardian Contact</th><th>Street</th><th>Barangay</th><th>City / Municipality</th><th>Province</th><th>Address Note</th><th>Health Notes</th></tr></thead><tbody id="owner-profile-students"></tbody></table></div>`;
             const value = (item) => escapeHtml(String(item || '—'));
             const render = (items) => {
                 const tbody = document.getElementById('owner-profile-students');
                 if (!tbody) return;
                 tbody.innerHTML = items.length ? items.map((student, index) => {
                     const name = [student.first_name, student.middle_name, student.last_name, student.ext].filter(Boolean).join(' ');
-                    return `<tr><td data-label="#">${index + 1}</td><td data-label="Student ID Number">${value(getDisplayStudentId(student))}</td><td data-label="Student Name"><strong>${value(name)}</strong></td><td data-label="Nickname">${value(student.nickname)}</td><td data-label="Gender">${value(genderNames.get(String(student.gender_id)) || 'N/A')}</td><td data-label="Birthday">${value(formatProfileBirthday(student.birthday))}</td><td data-label="School Year">${value(student.school_year)}</td><td data-label="Email">${value(student.email)}</td><td data-label="Guardian Name">${value(student.guardian_name)}</td><td data-label="Relationship">${value(student.guardian_relationship)}</td><td data-label="Guardian Contact">${value(student.guardian_contact)}</td><td data-label="Street">${value(student.adr_street)}</td><td data-label="Barangay">${value(student.adr_barangay)}</td><td data-label="City / Municipality">${value(student.adr_city)}</td><td data-label="Province">${value(student.adr_province)}</td><td data-label="Address Note">${value(student.adr_note)}</td><td data-label="Health Notes">${value(student.health_note)}</td></tr>`;
-                }).join('') : '<tr><td colspan="17" class="text-center text-muted py-4">No students enrolled in this section.</td></tr>';
+                    return `<tr><td data-label="NO.">${index + 1}</td><td data-label="Student ID Number">${value(getDisplayStudentId(student))}</td><td data-label="LRN">${value(student.lrn)}</td><td data-label="Student Name"><strong>${value(name)}</strong></td><td data-label="Nickname">${value(student.nickname)}</td><td data-label="Gender">${value(genderNames.get(String(student.gender_id)) || 'N/A')}</td><td data-label="Birthday">${value(formatProfileBirthday(student.birthday))}</td><td data-label="School Year">${value(student.school_year)}</td><td data-label="Email">${value(student.email)}</td><td data-label="Guardian Name">${value(student.guardian_name)}</td><td data-label="Relationship">${value(student.guardian_relationship)}</td><td data-label="Guardian Contact">${value(student.guardian_contact)}</td><td data-label="Street">${value(student.adr_street)}</td><td data-label="Barangay">${value(student.adr_barangay)}</td><td data-label="City / Municipality">${value(student.adr_city)}</td><td data-label="Province">${value(student.adr_province)}</td><td data-label="Address Note">${value(student.adr_note)}</td><td data-label="Health Notes">${value(student.health_note)}</td></tr>`;
+                }).join('') : '<tr><td colspan="18" class="text-center text-muted py-4">No students enrolled in this section.</td></tr>';
+                limitTableToVisibleRows(tbody);
             };
             render(profiles);
             bindSectionStudentSearch(profiles, render);
@@ -764,11 +785,12 @@ function renderOwnerGrades(sectionId) {
                 student_name: [student.first_name, student.last_name, student.ext].filter(Boolean).join(' ')
             }));
             content.innerHTML = `
-                <div class="table-responsive"><table class="table class-students-table"><thead><tr><th>#</th><th>Student ID Number</th><th>Student Name</th><th>Program</th><th>School Year</th><th class="text-end">Action</th></tr></thead><tbody id="owner-grade-students"></tbody></table></div>`;
+                <div class="table-responsive${isOwnerClassPage ? ' section-records-scroll' : ''}"><table class="table class-students-table"><thead><tr><th>#</th><th>Student ID Number</th><th>Student Name</th><th>Program</th><th>School Year</th><th class="text-end">Action</th></tr></thead><tbody id="owner-grade-students"></tbody></table></div>`;
             const render = (items) => {
                 const tbody = document.getElementById('owner-grade-students');
                 if (!tbody) return;
                 tbody.innerHTML = items.length ? items.map((student, index) => `<tr><td data-label="#">${index + 1}</td><td data-label="Student ID Number">${escapeHtml(String(getDisplayStudentId(student)))}</td><td data-label="Student Name">${escapeHtml(student.student_name || 'Student')}</td><td data-label="Program">${escapeHtml(student.program_name || 'N/A')}</td><td data-label="School Year"><span class="d-block">${escapeHtml(student.school_year || 'N/A')}</span>${Number(student.quarter_count) > 0 ? `<small class="text-muted">${Number(student.quarter_count)} quarter${Number(student.quarter_count) === 1 ? '' : 's'}</small>` : ''}</td><td data-label="Action" class="text-end"><button class="btn btn-sm eccd-open-btn" type="button" data-enrollment-id="${escapeHtml(String(student.enrollment_details_id || ''))}"><i class="bi bi-clipboard2-check me-1"></i>Open</button></td></tr>`).join('') : '<tr><td colspan="6" class="text-center text-muted py-4">No enrolled students in this section.</td></tr>';
+                limitTableToVisibleRows(tbody);
                 tbody.querySelectorAll('.eccd-open-btn').forEach(button => button.addEventListener('click', () => openStudentEccdChecklist(sectionId, button.dataset.enrollmentId)));
                 return;
                 tbody.innerHTML = items.length ? items.map((student, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(student.student_name || 'Student')}</td><td>${escapeHtml(student.program_name || '—')}</td><td>${escapeHtml(student.school_year || '—')}</td><td class="text-end"><button class="btn btn-sm eccd-open-btn" type="button" data-enrollment-id="${escapeHtml(String(student.enrollment_details_id || ''))}"><i class="bi bi-clipboard2-check me-1"></i>Open ECCD Checklist</button></td></tr>`).join('') : '<tr><td colspan="5" class="text-center text-muted py-4">No enrolled students in this section.</td></tr>';
@@ -802,6 +824,7 @@ function loadOwnerStudents(sectionId) {
                     const statusClass = String(status).trim().toLowerCase() === 'pending' ? 'student-status-pending' : 'student-status-enrolled';
                     return `<tr><td data-label="#">${index + 1}</td><td data-label="Student ID Number">${escapeHtml(String(getDisplayStudentId(student)))}</td><td data-label="Student Name">${escapeHtml(name || student.student_name || 'Unnamed student')}</td><td data-label="Status"><span class="student-status ${statusClass}">${escapeHtml(status)}</span></td><td data-label="Email">${escapeHtml(student.email || 'N/A')}</td></tr>`;
                 }).join('') : '<tr><td colspan="5" class="text-center text-muted py-4">No students enrolled in this section.</td></tr>';
+                limitTableToVisibleRows(tbody);
                 return;
                 tbody.innerHTML = items.length ? items.map((student, index) => {
                     const name = [student.last_name, student.first_name, student.ext].filter(Boolean).join(', ').replace(/, ([^,]+)(, .+)?$/, ', $1$2');

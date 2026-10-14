@@ -1,17 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script src="../../js/utilities/upload_url.js?v=20261006-upload-images-r2"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Teacher Dashboard</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="../../css/design.css">
-    <link rel="stylesheet" href="../../css/teacher_dashboard.css">
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-    <script type="module" src="../../js/index.js"></script>
-    <script type="module" src="../../js/modules/dashbaord_teacher.js"></script>
+    <link rel="stylesheet" href="../../css/teacher_dashboard.css?v=20261013-summary">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js?v=20261006-upload-images"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js?v=20261006-upload-images"></script>
+    <script type="module" src="../../js/index.js?v=20261012-all-user-session"></script>
+    <script type="module" src="../../js/modules/dashbaord_teacher.js?v=20261013-summary"></script>
+    <link rel="stylesheet" href="../../css/dashboard_birthdays.css">
+    <script type="module" src="../../js/modules/dashboard_birthdays.js?v=20261006-upload-images"></script>
 </head>
 <body>
     <header id="dynamic-header"></header>
@@ -39,15 +42,6 @@
                     </div>
                 </article>
 
-                <article class="teacher-stat-card teacher-stat-blue" data-detail-type="students" role="button" tabindex="0" aria-label="View student details">
-                    <div class="teacher-stat-icon"><i class="bi bi-people-fill"></i></div>
-                    <div>
-                        <p>Total Students</p>
-                        <strong id="total-students-count">0</strong>
-                        <span>Tutorial students from enrollment</span>
-                    </div>
-                </article>
-
                 <article class="teacher-stat-card teacher-stat-green" data-detail-type="classes-handled" role="button" tabindex="0" aria-label="View handled classes details">
                     <div class="teacher-stat-icon"><i class="bi bi-bookmark-fill"></i></div>
                     <div>
@@ -56,6 +50,25 @@
                         <span>Classes assigned to you</span>
                     </div>
                 </article>
+            </section>
+
+            <section class="dashboard-birthday-card" data-student-birthday-card aria-labelledby="student-birthday-title">
+                <div class="birthday-card-heading">
+                    <div class="birthday-card-title"><i class="bi bi-gift" aria-hidden="true"></i><h2 id="student-birthday-title">Student Birthdays</h2><span class="birthday-count" data-birthday-count>0</span></div>
+                    <select class="birthday-period-select" data-birthday-period aria-label="Birthday period">
+                        <option value="year">This Year</option>
+                        <option value="month" selected>This Month</option>
+                        <option value="week">This Week</option>
+                        <option value="day">Today</option>
+                    </select>
+                </div>
+                <p class="birthday-range" data-birthday-range></p>
+                <div class="birthday-table-wrap" aria-live="polite">
+                    <table class="birthday-table">
+                        <thead><tr><th scope="col">Student</th><th scope="col">Birthday</th><th scope="col">Turning</th><th scope="col">Center</th></tr></thead>
+                        <tbody data-birthday-rows><tr><td colspan="4" class="birthday-empty">Loading birthdays...</td></tr></tbody>
+                    </table>
+                </div>
             </section>
 
             <section class="teacher-dashboard-main-grid">

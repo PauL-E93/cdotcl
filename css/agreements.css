@@ -1,0 +1,203 @@
+.agreement-manager-page,
+.agreement-records-page,
+.agreement-form-panel,
+.agreement-record,
+.agreement-view-link,
+.agreement-preview {
+    --agreement-pink: var(--primary-pink, #ea9aa6);
+    --agreement-dark: var(--dark-pink, #d7768e);
+    --agreement-soft: var(--soft-pink, #f9e7ec);
+    --agreement-ink: #633746;
+    --agreement-border: #efd1d9;
+}
+.agreement-view-link.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border: 1px solid var(--agreement-pink);
+    border-radius: 10px;
+    background: var(--agreement-soft);
+    color: var(--agreement-ink);
+    font-weight: 600;
+    text-decoration: none;
+}
+.agreement-view-link.btn:hover {
+    background: var(--agreement-pink);
+    border-color: var(--agreement-dark);
+    color: #35212a;
+}
+.agreement-view-link.btn:focus-visible {
+    outline: 2px solid var(--agreement-dark);
+    outline-offset: 3px;
+    box-shadow: 0 0 0 3px var(--agreement-soft);
+}
+.agreement-records-toolbar {
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 22px 24px;
+    border: 1px solid var(--agreement-border);
+    border-radius: 16px;
+    background: var(--agreement-soft);
+    color: var(--agreement-ink);
+}
+.agreement-records-toolbar h1 { margin: 0; font-weight: 700; }
+.agreement-records-toolbar p { margin: 6px 0 0; font-size: .875rem; color: #776672; }
+.agreement-records-page #agreementRecords { max-width: 1100px; margin: 0 auto; }
+.agreement-manager-page .agreement-list-card,
+.agreement-manager-page #agreementEditor,
+.agreement-form-panel,
+.agreement-record {
+    border: 1px solid var(--agreement-border) !important;
+    border-radius: 16px !important;
+    background: #fff;
+    box-shadow: 0 4px 18px rgba(99, 55, 70, .05);
+}
+.agreement-manager-page .agreement-list-card { padding: 24px !important; }
+.agreement-manager-page #editorHeading,
+.agreement-form-panel h3,
+.agreement-record h3 { color: var(--agreement-ink); font-weight: 700; }
+.agreement-manager-page #editorHeading {
+    padding-bottom: 16px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--agreement-border);
+}
+.agreement-manager-page .form-label,
+.agreement-form-panel .form-label { color: var(--agreement-ink); font-weight: 600; }
+.agreement-manager-page .form-control,
+.agreement-manager-page .form-select,
+.agreement-form-panel .form-control,
+.agreement-form-panel .form-select {
+    border-color: var(--agreement-border);
+    border-radius: 10px;
+    padding: 11px 13px;
+    margin-top: 6px;
+    font-weight: 400;
+}
+.agreement-manager-page .form-control:focus,
+.agreement-manager-page .form-select:focus,
+.agreement-form-panel .form-control:focus,
+.agreement-form-panel .form-select:focus {
+    border-color: var(--agreement-dark);
+    box-shadow: 0 0 0 3px var(--agreement-soft);
+}
+.agreement-manager-page .btn,
+.agreement-records-page .btn { border-radius: 9px; padding: 9px 15px; font-weight: 600; }
+.agreement-manager-page .btn-outline-primary,
+.agreement-manager-page .btn-outline-secondary,
+.agreement-records-page .btn-outline-secondary,
+.agreement-preview .swal2-confirm {
+    color: var(--agreement-ink);
+    border: 1px solid var(--agreement-pink);
+    background: #fff8fa;
+}
+.agreement-manager-page .btn-outline-primary:hover,
+.agreement-manager-page .btn-outline-secondary:hover,
+.agreement-records-page .btn-outline-secondary:hover {
+    background: var(--agreement-soft);
+    border-color: var(--agreement-dark);
+    color: var(--agreement-ink);
+}
+.agreement-manager-page #newAgreement {
+    background: var(--agreement-pink);
+    border-color: var(--agreement-pink);
+    color: #35212a;
+}
+.agreement-manager-page #newAgreement:hover { background: var(--agreement-dark); }
+.agreement-manager-page #agreementList .table-responsive { border-radius: 12px; border: 1px solid var(--agreement-border); }
+.agreement-manager-page #agreementList th { color: #35212a; border-bottom: 0; }
+.agreement-manager-page #agreementList td { border-color: #f5e6eb; }
+.agreement-manager-page #agreementList .table { --bs-table-hover-bg: #fff5f8; }
+.agreement-manager-page [data-clause-row] {
+    border-color: var(--agreement-border) !important;
+    border-radius: 12px !important;
+    background: #fff8fa;
+    margin-bottom: 14px !important;
+}
+.agreement-manager-page [data-clause-number] { color: var(--agreement-ink); }
+.agreement-manager-page input[type="checkbox"],
+.agreement-form-panel input[type="checkbox"] { accent-color: #a44d65; }
+.agreement-form-panel .form-check-input:checked,
+.agreement-form-panel .form-check-input:indeterminate { background-color: #a44d65; border-color: #a44d65; }
+.agreement-form-panel .form-check-input:focus { border-color: var(--agreement-dark); box-shadow: 0 0 0 3px var(--agreement-soft); }
+.agreement-form-panel { padding: 24px !important; }
+.agreement-form-panel h3 { border-bottom: 1px solid var(--agreement-border); padding-bottom: 14px; margin-bottom: 18px; }
+.agreement-form-panel h4 { color: var(--agreement-ink); font-weight: 600; }
+.agreement-form-panel [data-agreement-clauses] > section { padding: 18px; background: #fff8fa; border: 1px solid var(--agreement-border); border-radius: 12px; }
+.agreement-form-panel [data-agreement-clauses] label { line-height: 1.7; }
+.agreement-form-panel [data-guardian-label] { display: block; }
+.agreement-form-panel small { display: block; margin-top: 8px; color: #776672; font-weight: 400; }
+.agreement-record { padding: 24px !important; }
+.agreement-record > .text-muted { padding: 12px 14px; background: var(--agreement-soft); border-radius: 9px; font-size: .875rem; line-height: 1.6; }
+.agreement-record > p { line-height: 1.8; overflow-wrap: anywhere; }
+.agreement-preview.swal2-popup { border-radius: 16px; border: 1px solid var(--agreement-border); }
+.agreement-preview .swal2-title { color: var(--agreement-ink); }
+.agreement-preview .swal2-html-container { line-height: 1.8; }
+.agreement-preview .swal2-confirm { background: var(--agreement-pink); color: #35212a; border-radius: 9px; }
+.agreement-manager-page #agreementManagerMessage:not(:empty) { padding: 12px 16px; margin-bottom: 16px; border: 1px solid var(--agreement-border); border-radius: 10px; background: var(--agreement-soft); color: var(--agreement-ink); }
+@media (max-width: 576px) {
+    .agreement-manager-page .agreement-list-card,
+    .agreement-manager-page #agreementEditor,
+    .agreement-form-panel,
+    .agreement-record { padding: 16px !important; }
+    .agreement-manager-page #newAgreement { width: 100%; }
+    .agreement-form-panel [data-agreement-clauses] > section { padding: 12px; }
+}
+@media print {
+    .agreement-record { box-shadow: none; border-color: #ccc !important; padding: 16px !important; }
+    .agreement-record > .text-muted { background: transparent; color: #333 !important; }
+}
+.agreement-manager-page .btn-add {
+    background-color: #ea9aa6;
+    border-color: #ea9aa6;
+    color: #fff;
+    font-weight: 600;
+}
+.agreement-manager-page .btn-add:hover,
+.agreement-manager-page .btn-add:focus-visible {
+    background-color: #d68190;
+    border-color: #d68190;
+    color: #fff;
+}
+.agreement-manager-page .agreement-list-card {
+    border: 1px solid #d2d2d2;
+    border-radius: .375rem;
+    background: #fff;
+}
+.agreement-manager-page #agreementList .table { margin-bottom: 0; }
+.agreement-manager-page #agreementList th {
+    background-color: #ea9aa6;
+    padding: 1rem;
+    white-space: nowrap;
+}
+.agreement-manager-page #agreementList td { padding: .9rem 1rem; }
+.agreement-manager-page #agreementList th:last-child,
+.agreement-manager-page #agreementList td:last-child { width: 110px; }
+.agreement-manager-page .clause-drag-handle {
+    cursor: grab;
+    touch-action: none;
+    color: #72535a;
+    border: 1px solid #ddd;
+    background: #fff;
+}
+.agreement-manager-page .clause-drag-handle:active { cursor: grabbing; }
+.agreement-manager-page [data-clause-row] {
+    position: relative;
+    transition: scale .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.agreement-manager-page .clause-dragging {
+    z-index: 1;
+    scale: 1.008;
+    background: #fff2f6;
+    border-color: #ea9aa6 !important;
+    box-shadow: 0 6px 20px rgba(114, 53, 75, .18);
+}
+.agreement-manager-page .clause-sorting { user-select: none; }
+@media (prefers-reduced-motion: reduce) {
+    .agreement-manager-page [data-clause-row] { transition: none; }
+    .agreement-manager-page .clause-dragging { scale: 1; }
+}
+@media (max-width: 576px) {
+    .agreement-manager-page main > .d-flex { flex-wrap: wrap; gap: 1rem; }
+}

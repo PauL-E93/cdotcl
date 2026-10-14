@@ -1,5 +1,29 @@
+import { getResolvedRolePermissions, normalizeRbacRoleKey } from '../utilities/rbac_navigation.js';
+
 const APPLICATION_API = '../../api/enrollment_application.php';
-const applicationReadOnly = window.location.pathname.includes('/auditor/');
+
+function getCurrentOnlineApplicationPermissions() {
+    if (window.location.pathname.includes('/student/')) return {};
+
+    try {
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        const role = normalizeRbacRoleKey(user?.role_name);
+        return getResolvedRolePermissions(role).enrollment || {};
+    } catch (error) {
+        console.error('Error reading online application permissions:', error);
+        return {};
+    }
+}
+
+export function canUseOnlineApplicationPermission(permissionKey) {
+    return Boolean(getCurrentOnlineApplicationPermissions()?.[permissionKey]);
+}
+
+function guardOnlineApplicationPermission(permissionKey, message) {
+    if (canUseOnlineApplicationPermission(permissionKey)) return true;
+    Swal.fire('Access Restricted', message, 'warning');
+    return false;
+}
 
 function ensureEnrollmentApplicationStyles() {
     if (document.getElementById('enrollmentApplicationStyles')) return;
@@ -196,6 +220,10 @@ function ensureEnrollmentApplicationStyles() {
         .application-session-table thead th { padding: 13px 8px; border-bottom-color: var(--application-pink-border); color: var(--application-ink); background: var(--application-pink-soft); font-size: .78rem; text-transform: uppercase; letter-spacing: .025em; }
         .application-session-table tbody td { padding: 12px 8px; vertical-align: middle; }
         .application-session-table .form-control { border-radius: 8px; }
+        .application-session-date { position: relative; min-width: 190px; }
+        .application-session-date .schedule-date { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+        .application-session-date:focus-within { outline: 2px solid var(--application-pink); outline-offset: 2px; border-radius: 8px; }
+        .application-session-date .schedule-date-display { display: block; border: 1px solid var(--application-pink-border); border-radius: 8px; padding: 8px 10px; font-size: 13px; background: #fff; }
         .application-detail-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
         .application-inline-button { min-height: 44px; padding: 9px 17px; border-radius: 9px; font-weight: 700; }
         .application-inline-button--primary { border: 1px solid var(--application-pink); color: #fff; background: var(--application-pink); }
@@ -210,6 +238,36 @@ function ensureEnrollmentApplicationStyles() {
         .application-list-table tbody td { padding: 14px 12px; border-top: 1px solid var(--application-pink-border); border-bottom: 1px solid var(--application-pink-border); background: #fff; }
         .application-list-table tbody td:first-child { border-left: 1px solid var(--application-pink-border); border-radius: 11px 0 0 11px; }
         .application-list-table tbody td:last-child { border-right: 1px solid var(--application-pink-border); border-radius: 0 11px 11px 0; }
+        .application-edit-form .application-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 0; gap: 20px; }
+        .application-edit-form .application-flow-field { min-width: 0; }
+        .application-edit-subjects { width: 100%; }
+        .application-edit-subjects summary {
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            min-height: 50px; padding: 12px 14px; border: 1px solid #d8dde5; border-radius: 9px;
+            background: #fff; color: var(--application-ink); cursor: pointer; list-style: none;
+        }
+        .application-edit-subjects summary::-webkit-details-marker { display: none; }
+        .application-edit-subjects summary > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .application-edit-subjects summary > i { flex-shrink: 0; color: var(--application-muted); transition: transform .15s ease; }
+        .application-edit-subjects[open] summary { border-color: var(--application-pink); box-shadow: 0 0 0 3px rgba(239, 79, 131, .12); }
+        .application-edit-subjects[open] summary > i { transform: rotate(180deg); }
+        .application-edit-subject-options { max-height: 230px; overflow-y: auto; margin-top: 8px; padding: 6px; border: 1px solid #d8dde5; border-radius: 9px; background: #fff; }
+        .application-edit-form .application-edit-subject-option { display: flex; align-items: center; gap: 11px; margin: 0; padding: 11px 12px; border-radius: 7px; font-weight: 500; cursor: pointer; }
+        .application-edit-subject-option:hover, .application-edit-subject-option:has(input:checked) { background: var(--application-pink-soft); }
+        .application-edit-subject-option:has(input:checked) { color: var(--application-pink-dark); }
+        .application-edit-subject-option input { appearance: none; width: 18px; height: 18px; flex: 0 0 18px; margin: 0; border: 1.5px solid #aeb5c0; border-radius: 50%; background: #fff; cursor: pointer; }
+        .application-edit-subject-option input:checked { border-color: var(--application-pink); background: radial-gradient(circle, #fff 0 3px, var(--application-pink) 4px); }
+        .application-edit-subject-option input:focus-visible, .application-edit-subjects summary:focus-visible { outline: 2px solid var(--application-pink); outline-offset: 3px; }
+        .application-edit-availability-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+        .application-edit-availability-heading > span { color: var(--application-ink); font-size: .9rem; font-weight: 750; }
+        .application-edit-availability-heading .application-inline-button { min-height: 38px; padding: 7px 12px; font-size: .82rem; }
+        .application-edit-availability-shell { border: 1px solid #d8dde5; border-radius: 10px; overflow-x: auto; }
+        .application-edit-availability-table { width: 100%; min-width: 510px; margin: 0; border-collapse: collapse; }
+        .application-edit-availability-table th { padding: 12px 14px; color: var(--application-ink); background: var(--application-pink-soft); font-size: .82rem; font-weight: 700; }
+        .application-edit-availability-table td { padding: 12px 14px; border-top: 1px solid #edf0f4; vertical-align: middle; }
+        .application-edit-availability-table th:last-child, .application-edit-availability-table td:last-child { width: 70px; text-align: center; }
+        .application-edit-availability-table .form-select, .application-edit-availability-table .form-control { width: 100%; min-height: 44px; }
+        .application-edit-availability-table .edit-remove-slot { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; min-height: 38px; padding: 0; border-radius: 8px; }
         @media (max-width: 767px) {
             .application-flow-popup .swal2-title { padding: 20px 62px 10px 18px; font-size: 1.3rem; }
             .application-modal-title { gap: 10px; }
@@ -224,6 +282,7 @@ function ensureEnrollmentApplicationStyles() {
             .application-form-grid,
             .application-list-toolbar { grid-template-columns: 1fr; }
             .application-detail-line { grid-template-columns: 1fr; gap: 1px; }
+            .application-edit-form .application-form-grid { grid-template-columns: 1fr; gap: 16px; }
             .application-flow-confirm, .application-flow-cancel { width: 100%; }
         }
     `;
@@ -301,6 +360,7 @@ function applicationListRows(items) {
 }
 
 export async function openNewStudentApplications(filters = {}) {
+    if (!guardOnlineApplicationPermission('view_online_applications', 'You do not have permission to view online enrollment applications.')) return;
     ensureEnrollmentApplicationStyles();
     Swal.fire({ title: 'Loading applications…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
     try {
@@ -311,7 +371,7 @@ export async function openNewStudentApplications(filters = {}) {
         if (badge) { badge.textContent = pending; badge.classList.toggle('d-none', pending === 0); }
 
         await Swal.fire({
-            title: applicationModalTitle('bi-file-earmark-text', 'New Student Applications'),
+            title: applicationModalTitle('bi-file-earmark-text', 'Online Enrollment Applications'),
             width: 'min(1180px, 96vw)',
             showConfirmButton: false,
             showCloseButton: true,
@@ -330,9 +390,9 @@ export async function openNewStudentApplications(filters = {}) {
 
 function applicationDetailHtml(item) {
     const fullName = [item.first_name, item.middle_name, item.last_name, item.ext].filter(Boolean).join(' ');
-    const submittedGcash = String(item.application_payment?.payment_method || '').toLowerCase() === 'gcash';
+    const submittedOnlinePayment = item.application_payment?.payment_status === 'pending_review';
     const paymentProofUrl = item.application_payment?.proof_pic
-        ? `../../${String(item.application_payment.proof_pic).replace(/^\/+/, '')}`
+        ? window.resolveUploadUrl(item.application_payment.proof_pic)
         : '';
     const availability = (item.availability || []).map(slot => `<span class="application-chip application-chip--neutral"><i class="bi bi-calendar3"></i>${applicationEscape(slot.day)} ${applicationTime(slot.start_time)}–${applicationTime(slot.end_time)}</span>`).join('');
     const subjects = (item.subjects || []).map(subject => `<span class="application-chip">${applicationEscape(subject.subject_name)}</span>`).join('') || '<span class="text-muted">To be confirmed during enrollment proper</span>';
@@ -340,17 +400,40 @@ function applicationDetailHtml(item) {
     const selectedService = item.financial?.service_id && item.financial?.service_name
         ? `${applicationEscape(item.financial.service_name)} (${applicationMoney(item.financial.service_amount)} monthly)`
         : 'Not included';
-    const actions = applicationReadOnly ? '' : item.status === 'pending_review'
-        ? `<button class="application-inline-button application-inline-button--danger" id="rejectApplication"><i class="bi bi-x-circle me-2"></i>Reject</button><button class="application-inline-button application-inline-button--primary" id="approveApplication"><i class="bi bi-check-circle me-2"></i>${submittedGcash ? (preschoolApplication ? 'Approve Payment &amp; Assign Class' : 'Approve Payment &amp; Assign Teacher') : 'Accept &amp; Continue to Payment'}</button>`
-        : item.status === 'approved_for_payment'
-            ? `<button class="application-inline-button application-inline-button--primary" id="receiveApplicationPayment"><i class="bi bi-cash-coin me-2"></i>Receive Downpayment</button>`
-            : item.status === 'ready_for_scheduling'
-                ? (preschoolApplication
-                    ? `<button class="application-inline-button application-inline-button--primary" id="placePrePlayApplication"><i class="bi bi-diagram-3 me-2"></i>Assign Class &amp; Section</button>`
-                    : `<button class="application-inline-button application-inline-button--primary" id="scheduleApplication"><i class="bi bi-calendar2-check me-2"></i>Assign Teacher &amp; Plot Schedule</button>`)
-                : item.status === 'enrolled'
-                    ? `<button class="application-inline-button application-inline-button--outline" id="showApplicationBilling"><i class="bi bi-receipt me-2"></i>Billing Statement</button>` : '';
+    const canApprove = canUseOnlineApplicationPermission('approve_online_applications');
+    const canReject = canUseOnlineApplicationPermission('reject_online_applications');
+    const canReceivePayment = canUseOnlineApplicationPermission('receive_online_application_payment');
+    const canFinalize = canUseOnlineApplicationPermission('finalize_online_applications');
+    let actions = '';
+
+    if (item.status === 'pending_review') {
+        const pendingActions = [];
+        if (canReject) {
+            pendingActions.push('<button class="application-inline-button application-inline-button--danger" id="rejectApplication"><i class="bi bi-x-circle me-2"></i>Reject</button>');
+        }
+        if (canApprove && (!submittedOnlinePayment || canReceivePayment)) {
+            const approveLabel = submittedOnlinePayment
+                ? (canFinalize ? (preschoolApplication ? 'Approve Payment &amp; Assign Class' : 'Approve Payment &amp; Assign Teacher') : 'Approve Online Payment')
+                : 'Accept &amp; Continue to Payment';
+            pendingActions.push(`<button class="application-inline-button application-inline-button--primary" id="approveApplication"><i class="bi bi-check-circle me-2"></i>${approveLabel}</button>`);
+        }
+        actions = pendingActions.join('');
+    } else if (item.status === 'approved_for_payment' && canReceivePayment) {
+        actions = '<button class="application-inline-button application-inline-button--primary" id="receiveApplicationPayment"><i class="bi bi-cash-coin me-2"></i>Receive Downpayment</button>';
+    } else if (item.status === 'ready_for_scheduling' && canFinalize) {
+        actions = preschoolApplication
+            ? '<button class="application-inline-button application-inline-button--primary" id="placePrePlayApplication"><i class="bi bi-diagram-3 me-2"></i>Assign Class &amp; Section</button>'
+            : '<button class="application-inline-button application-inline-button--primary" id="scheduleApplication"><i class="bi bi-calendar2-check me-2"></i>Assign Teacher &amp; Plot Schedule</button>';
+    } else if (item.status === 'enrolled') {
+        actions = '<button class="application-inline-button application-inline-button--outline" id="showApplicationBilling"><i class="bi bi-receipt me-2"></i>Billing Statement</button>';
+    }
+    if (canUseOnlineApplicationPermission('edit_online_applications')
+        && ['pending_review', 'approved_for_payment', 'ready_for_scheduling'].includes(item.status)
+        && (item.submission_stage || 'submitted') === 'submitted') {
+        actions = '<button class="application-inline-button application-inline-button--outline" id="editApplication"><i class="bi bi-pencil-square me-2"></i>Edit Application</button>' + actions;
+    }
     return `<div class="text-start">
+        <a class="btn agreement-view-link mb-3" href="../shared/agreements.html?application_id=${Number(item.application_id)}">View accepted agreements</a>
         <div class="application-summary-card">
             <div class="application-summary-head"><div class="application-student-identity"><span class="application-avatar"><i class="bi bi-person-fill"></i></span><div><span class="application-eyebrow">Student</span><span class="application-student-name">${applicationEscape(fullName)}</span></div></div><div class="text-end"><span class="application-eyebrow">Application</span><span class="application-number-pill">${applicationEscape(item.application_number)}</span><div class="mt-2">${applicationStatusBadge(item.status, item)}</div></div></div>
             <div class="application-meta-grid"><div><span class="application-meta-label">Program</span><span class="application-meta-value">${applicationEscape(item.program_name)}</span></div><div><span class="application-meta-label">Center</span><span class="application-meta-value">${applicationEscape(item.branch_name)}</span></div><div><span class="application-meta-label">Submitted</span><span class="application-meta-value">${new Date(item.created_at).toLocaleString()}</span></div></div>
@@ -358,8 +441,8 @@ function applicationDetailHtml(item) {
         <div class="application-detail-grid">
             <section class="application-section-card"><h3 class="application-section-title"><i class="bi bi-person-vcard"></i>Student Information</h3><div class="application-detail-line"><span>Birthdate</span><strong>${applicationEscape(item.birthday)}</strong></div><div class="application-detail-line"><span>Email</span><strong>${applicationEscape(item.email)}</strong></div><div class="application-detail-line"><span>Student ID</span><strong>${applicationEscape(item.student_id_number)}</strong></div><div class="application-detail-line"><span>Portal account</span><strong>${applicationEscape(item.username || 'Created after enrollment')}</strong></div></section>
             <section class="application-section-card"><h3 class="application-section-title"><i class="bi bi-people"></i>Parent / Guardian</h3><div class="application-detail-line"><span>Name</span><strong>${applicationEscape(item.guardian_name)}</strong></div><div class="application-detail-line"><span>Relationship</span><strong>${applicationEscape(item.guardian_relationship)}</strong></div><div class="application-detail-line"><span>Contact</span><strong>${applicationEscape(item.guardian_contact)}</strong></div><div class="application-detail-line"><span>Address</span><strong>${applicationEscape([item.adr_street, item.adr_barangay, item.adr_city, item.adr_province].filter(Boolean).join(', ') || 'No address provided')}</strong></div></section>
-            <section class="application-section-card application-section-card--wide"><h3 class="application-section-title"><i class="bi bi-mortarboard"></i>Learning Preferences</h3><div class="application-meta-grid"><div><span class="application-meta-label">Grade level</span><span class="application-meta-value">${applicationEscape(item.grade_level || 'Not selected')}</span></div><div class="application-meta-item--wide"><span class="application-meta-label">Selected subjects</span><div class="application-chip-list">${subjects}</div></div>${item.goal ? `<div class="application-meta-item--wide"><span class="application-meta-label">Learning goal</span><span>${applicationEscape(item.goal)}</span></div>` : ''}<div class="application-meta-item--wide"><span class="application-meta-label">Student's weekly availability</span><div class="application-chip-list">${availability || '<span class="text-muted">No availability recorded.</span>'}</div></div></div></section>
-            <div class="application-section-card application-section-card--wide"><div class="application-flow-callout ${submittedGcash ? 'application-flow-callout--success' : ''}"><i class="bi bi-wallet2"></i><div><strong>Required payment: ${applicationMoney(item.financial?.initial_payment)}</strong><div class="text-muted small mt-1">Registration ${applicationMoney(item.financial?.registration_fee)} + Downpayment ${applicationMoney(item.financial?.downpayment_amount)}</div><div class="mt-2"><strong>Selected method:</strong> ${applicationEscape(item.application_payment?.payment_method || 'Not recorded')} · ${applicationEscape(String(item.application_payment?.payment_status || '').replaceAll('_', ' '))}</div>${item.application_payment?.reference_no ? `<div class="small mt-1"><strong>GCash reference:</strong> ${applicationEscape(item.application_payment.reference_no)}</div>` : ''}${paymentProofUrl ? '<button type="button" class="application-inline-button application-inline-button--outline d-inline-block mt-3" id="viewApplicationGcashProof"><i class="bi bi-image me-2"></i>View GCash Payment Proof</button>' : ''}${item.review_notes ? `<div class="mt-2"><strong>Review notes:</strong> ${applicationEscape(item.review_notes)}</div>` : ''}</div></div></div>
+            ${preschoolApplication ? '' : `<section class="application-section-card application-section-card--wide"><h3 class="application-section-title"><i class="bi bi-mortarboard"></i>Learning Preferences</h3><div class="application-meta-grid"><div><span class="application-meta-label">Grade level</span><span class="application-meta-value">${applicationEscape(item.grade_level || 'Not selected')}</span></div><div><span class="application-meta-label">Preferred teacher</span><span class="application-meta-value">${applicationEscape(item.preferred_teacher_name || 'None')}</span></div><div class="application-meta-item--wide"><span class="application-meta-label">Selected subjects</span><div class="application-chip-list">${subjects}</div></div>${item.goal ? `<div class="application-meta-item--wide"><span class="application-meta-label">Learning goal</span><span>${applicationEscape(item.goal)}</span></div>` : ''}<div class="application-meta-item--wide"><span class="application-meta-label">Student's weekly availability</span><div class="application-chip-list">${availability || '<span class="text-muted">No availability recorded.</span>'}</div></div>${item.applicant_type === 'existing_student' ? `<div class="application-meta-item--wide"><div class="application-flow-callout"><i class="bi bi-info-circle"></i><div>${item.preferred_teacher_name ? `The student prefers <strong>${applicationEscape(item.preferred_teacher_name)}</strong>. This is a preference only; the center still makes the final teacher assignment.` : 'The student selected no preferred teacher. The center may choose the best available match.'}</div></div></div>` : ''}</div></section>`}
+            <div class="application-section-card application-section-card--wide"><div class="application-flow-callout ${submittedOnlinePayment ? 'application-flow-callout--success' : ''}"><i class="bi bi-wallet2"></i><div><strong>Required payment: ${applicationMoney(item.financial?.initial_payment)}</strong><div class="text-muted small mt-1">Registration ${applicationMoney(item.financial?.registration_fee)} + Downpayment ${applicationMoney(item.financial?.downpayment_amount)}</div><div class="mt-2"><strong>Selected method:</strong> ${applicationEscape(item.application_payment?.payment_method || 'Not recorded')} · ${applicationEscape(String(item.application_payment?.payment_status || '').replaceAll('_', ' '))}</div>${item.application_payment?.reference_no ? `<div class="small mt-1"><strong>Reference:</strong> ${applicationEscape(item.application_payment.reference_no)}</div>` : ''}${paymentProofUrl ? '<button type="button" class="application-inline-button application-inline-button--outline d-inline-block mt-3" id="viewApplicationGcashProof"><i class="bi bi-image me-2"></i>View Payment Proof</button>' : ''}${item.review_notes ? `<div class="mt-2"><strong>Review notes:</strong><div class="mt-1" style="white-space: pre-wrap; overflow-wrap: anywhere;">${applicationEscape(item.review_notes)}</div></div>` : ''}</div></div></div>
             ${item.financial?.available_service ? `<section class="application-section-card application-section-card--wide"><h3 class="application-section-title"><i class="bi bi-bag-check"></i>Monthly Service</h3><div class="application-detail-line"><span>Applicant selection</span><strong>${selectedService}</strong></div></section>` : ''}
         </div>
         <div class="application-detail-actions">${actions}</div>
@@ -369,13 +452,13 @@ function applicationDetailHtml(item) {
 async function showApplicationGcashProof(item) {
     const proofPath = String(item.application_payment?.proof_pic || '').replace(/^\/+/, '');
     if (!proofPath) {
-        await Swal.fire('Payment Proof Unavailable', 'No GCash screenshot was uploaded for this application.', 'info');
+        await Swal.fire('Payment Proof Unavailable', 'No payment screenshot was uploaded for this application.', 'info');
         return;
     }
     await Swal.fire({
-        title: applicationModalTitle('bi-image', 'GCash Payment Proof'),
+        title: applicationModalTitle('bi-image', 'Payment Proof'),
         width: 'min(760px, 96vw)',
-        html: `<div class="text-start"><div class="application-flow-callout mb-3"><i class="bi bi-receipt"></i><div><strong>${applicationMoney(item.application_payment?.amount)}</strong><div class="small text-muted mt-1">Reference: ${applicationEscape(item.application_payment?.reference_no || 'Not provided')}</div></div></div><div class="text-center"><img src="../../${applicationEscape(proofPath)}" alt="Uploaded GCash payment proof" class="img-fluid rounded-3" style="max-height:70vh;object-fit:contain"></div></div>`,
+        html: `<div class="text-start"><div class="application-flow-callout mb-3"><i class="bi bi-receipt"></i><div><strong>${applicationMoney(item.application_payment?.amount)}</strong><div class="small text-muted mt-1">Reference: ${applicationEscape(item.application_payment?.reference_no || 'Not provided')}</div></div></div><div class="text-center"><img src="${applicationEscape(window.resolveUploadUrl(proofPath))}" alt="Uploaded payment proof" class="img-fluid rounded-3" style="max-height:70vh;object-fit:contain"></div></div>`,
         showCloseButton: true,
         confirmButtonText: 'Close',
         customClass: applicationModalClasses(),
@@ -384,6 +467,7 @@ async function showApplicationGcashProof(item) {
 }
 
 export async function viewNewStudentApplication(applicationId) {
+    if (!guardOnlineApplicationPermission('view_online_applications', 'You do not have permission to view online enrollment applications.')) return;
     ensureEnrollmentApplicationStyles();
     Swal.fire({ title: 'Loading application…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
     try {
@@ -395,6 +479,7 @@ export async function viewNewStudentApplication(applicationId) {
             customClass: applicationModalClasses(), buttonsStyling: false,
             html: applicationDetailHtml(item),
             didOpen: popup => {
+                popup.querySelector('#editApplication')?.addEventListener('click', () => editOnlineApplication(item));
                 popup.querySelector('#approveApplication')?.addEventListener('click', () => reviewNewStudentApplication(item, 'approve'));
                 popup.querySelector('#rejectApplication')?.addEventListener('click', () => reviewNewStudentApplication(item, 'reject'));
                 popup.querySelector('#receiveApplicationPayment')?.addEventListener('click', () => receiveApplicationDownpayment(item));
@@ -418,9 +503,160 @@ export async function viewNewStudentApplication(applicationId) {
     }
 }
 
+export async function openApplicationScheduling(applicationId) {
+    if (!guardOnlineApplicationPermission('finalize_online_applications', 'You do not have permission to schedule online applications.')) return;
+    try {
+        const result = await applicationApi('getApplication', { application_id: applicationId });
+        if (result.status !== 'success') throw new Error(result.message || 'Unable to load the application.');
+        if (result.data?.status !== 'ready_for_scheduling') {
+            await viewNewStudentApplication(applicationId);
+            return;
+        }
+        await scheduleNewStudentApplication(result.data);
+    } catch (error) {
+        Swal.fire('Scheduling Unavailable', error.response?.data?.message || error.message, 'error');
+    }
+}
+
+window.openApplicationScheduling = openApplicationScheduling;
+
+function applicationEditAvailabilityRow(slot = {}) {
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    return `<tr class="application-edit-slot">
+        <td><select class="form-select edit-availability-day" aria-label="Available day">${days.map(day => `<option${day === slot.day ? ' selected' : ''}>${day}</option>`).join('')}</select></td>
+        <td><input type="time" class="form-control edit-availability-start" aria-label="Availability start time" value="${applicationEscape(slot.start_time || '13:00')}"></td>
+        <td><input type="time" class="form-control edit-availability-end" aria-label="Availability end time" value="${applicationEscape(slot.end_time || '17:00')}"></td>
+        <td><button type="button" class="application-inline-button application-inline-button--danger edit-remove-slot" aria-label="Remove availability" title="Remove availability"><i class="bi bi-trash3" aria-hidden="true"></i></button></td>
+    </tr>`;
+}
+
+async function editOnlineApplication(item) {
+    if (!guardOnlineApplicationPermission('edit_online_applications', 'You do not have permission to edit online applications.')) return;
+    try {
+        Swal.fire({ title: 'Loading edit form…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+        const result = await applicationApi('getLookups');
+        if (result.status !== 'success') throw new Error(result.message);
+        const lookups = result.data;
+        const preschool = isPreschoolApplication(item);
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        const branchRestricted = normalizeRbacRoleKey(user.role_name) === 'branch admin';
+        const branches = branchRestricted ? lookups.branches.filter(branch => Number(branch.branch_id) === Number(item.branch_id)) : [...lookups.branches];
+        if (!branches.some(branch => Number(branch.branch_id) === Number(item.branch_id))) {
+            branches.push({ branch_id: item.branch_id, branch_name: `${item.branch_name || 'Previous branch'} (inactive — choose an active branch)` });
+        }
+        const options = (rows, key, label, selected) => rows.map(row => `<option value="${row[key]}"${Number(row[key]) === Number(selected) ? ' selected' : ''}>${applicationEscape(row[label])}</option>`).join('');
+        const selectedSubjects = new Set((item.subjects || []).map(subject => Number(subject.subject_id)));
+        const grades = [...lookups.grades];
+        if (item.grade_level_id && !grades.some(grade => Number(grade.grade_level_id) === Number(item.grade_level_id))) {
+            grades.push({ grade_level_id: item.grade_level_id, grade_level: `${item.grade_level || 'Previous grade'} (inactive — choose an active grade)` });
+        }
+        const choice = await Swal.fire({
+            title: applicationModalTitle('bi-pencil-square', 'Edit Application'), width: 'min(980px, 96vw)',
+            showCancelButton: true, showCloseButton: true, reverseButtons: true,
+            confirmButtonText: 'Save Corrections', cancelButtonText: 'Back to Application Details',
+            customClass: applicationModalClasses(), buttonsStyling: false,
+            html: `<div class="text-start application-edit-form">
+                <div class="application-flow-callout mb-3"><i class="bi bi-info-circle"></i><div>Correct the preferences requested by the parent or guardian. Payment approval and receipts will be preserved. Branch changes that affect fees require auditor/owner billing review before they can be saved.</div></div>
+                <div class="application-form-grid">
+                    <div class="application-flow-field"><label for="editApplicationBranch">Branch</label><select id="editApplicationBranch" class="form-select">${options(branches, 'branch_id', 'branch_name', item.branch_id)}</select></div>
+                    ${!preschool ? `<div class="application-flow-field"><label for="editApplicationGrade">Grade level</label><select id="editApplicationGrade" class="form-select"><option value="">Select grade</option>${options(grades, 'grade_level_id', 'grade_level', item.grade_level_id)}</select></div>` : ''}
+                </div>
+                ${!preschool ? `<div class="application-flow-field mt-3"><label id="editApplicationSubjectsLabel">Subjects</label><details class="application-edit-subjects" id="editApplicationSubjects"><summary aria-labelledby="editApplicationSubjectsLabel editApplicationSubjectSummary"><span id="editApplicationSubjectSummary">${applicationEscape((item.subjects || []).map(subject => subject.subject_name).join(', ') || 'Select one or more subjects')}</span><i class="bi bi-chevron-down" aria-hidden="true"></i></summary><div class="application-edit-subject-options" role="group" aria-labelledby="editApplicationSubjectsLabel">${lookups.subjects.map(subject => `<label class="application-edit-subject-option"><input type="checkbox" class="edit-application-subject" value="${subject.subject_id}"${selectedSubjects.has(Number(subject.subject_id)) ? ' checked' : ''}><span class="edit-subject-name">${applicationEscape(subject.subject_name)}</span></label>`).join('')}</div></details></div>
+                <div class="application-flow-field mt-3"><label for="editApplicationGoal">Learning goal</label><textarea id="editApplicationGoal" class="form-control" rows="2">${applicationEscape(item.goal || '')}</textarea></div>
+                <div class="application-flow-field mt-3"><label for="editApplicationDuration">How long should each session last?</label><select id="editApplicationDuration" class="form-select">${[[1, '1 hour'], [1.5, '1 hour and 30 minutes'], [2, '2 hours']].map(([hours, label]) => `<option value="${hours}"${hours === (Number(item.preferred_session_hours) || 1) ? ' selected' : ''}>${label}</option>`).join('')}</select><div class="application-flow-help">The program includes ${Number(item.total_units) || 12} consumable hours in total. Each session uses its duration from that balance.</div></div>
+                <div class="application-flow-field mt-3"><div class="application-edit-availability-heading"><span id="editApplicationAvailabilityLabel">Weekly availability</span><button type="button" class="application-inline-button application-inline-button--outline" id="editAddAvailability"><i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Add Availability</button></div><div class="application-edit-availability-shell"><table class="application-edit-availability-table" aria-labelledby="editApplicationAvailabilityLabel"><thead><tr><th scope="col">Day</th><th scope="col">Start time</th><th scope="col">End time</th><th scope="col">Action</th></tr></thead><tbody id="editApplicationAvailability">${(item.availability?.length ? item.availability : [{}]).map(applicationEditAvailabilityRow).join('')}</tbody></table></div></div>` : ''}
+                <div class="application-flow-help mt-3">Changing the branch or subjects clears the previous preferred teacher. Teacher matching and schedule validation will use the corrected details.</div>
+                <div class="application-flow-field mt-3"><label for="editApplicationReason">Reason for correction *</label><textarea id="editApplicationReason" class="form-control" rows="2" maxlength="1000" placeholder="Example: Parent called to correct the grade level."></textarea></div>
+            </div>`,
+            didOpen: popup => {
+                const subjectField = popup.querySelector('#editApplicationSubjects');
+                subjectField?.addEventListener('change', () => {
+                    const names = [...subjectField.querySelectorAll('.edit-application-subject:checked')].map(input => input.closest('label').querySelector('.edit-subject-name').textContent);
+                    popup.querySelector('#editApplicationSubjectSummary').textContent = names.join(', ') || 'Select one or more subjects';
+                });
+                popup.addEventListener('click', event => {
+                    if (subjectField && !subjectField.contains(event.target)) subjectField.open = false;
+                });
+                subjectField?.addEventListener('keydown', event => {
+                    if (event.key === 'Escape' && subjectField.open) {
+                        event.preventDefault(); event.stopPropagation(); subjectField.open = false;
+                        subjectField.querySelector('summary').focus();
+                    }
+                });
+                popup.querySelector('#editAddAvailability')?.addEventListener('click', () => popup.querySelector('#editApplicationAvailability').insertAdjacentHTML('beforeend', applicationEditAvailabilityRow()));
+                popup.querySelector('#editApplicationAvailability')?.addEventListener('click', event => {
+                    if (event.target.closest('.edit-remove-slot')) event.target.closest('.application-edit-slot').remove();
+                });
+            },
+            preConfirm: async () => {
+                const popup = Swal.getPopup();
+                const reason = popup.querySelector('#editApplicationReason').value.trim();
+                const data = { application_id: item.application_id, edit_version: item.edit_version,
+                    branch_id: Number(popup.querySelector('#editApplicationBranch').value), reason };
+                if (!reason) { Swal.showValidationMessage('Enter the reason for this correction.'); return false; }
+                if (!preschool) {
+                    data.grade_level_id = Number(popup.querySelector('#editApplicationGrade').value);
+                    data.subject_ids = [...popup.querySelectorAll('.edit-application-subject:checked')].map(input => Number(input.value));
+                    data.goal = popup.querySelector('#editApplicationGoal').value.trim();
+                    data.preferred_session_hours = Number(popup.querySelector('#editApplicationDuration').value);
+                    data.availability = [...popup.querySelectorAll('.application-edit-slot')].map(row => ({
+                        day: row.querySelector('.edit-availability-day').value,
+                        start_time: row.querySelector('.edit-availability-start').value,
+                        end_time: row.querySelector('.edit-availability-end').value
+                    }));
+                    if (!data.grade_level_id || !data.subject_ids.length || !data.availability.length) {
+                        Swal.showValidationMessage('Select a grade, at least one subject, and at least one availability window.'); return false;
+                    }
+                    if (data.availability.some(slot => !slot.start_time || !slot.end_time || slot.end_time <= slot.start_time)) {
+                        Swal.showValidationMessage('Every availability window must have an end time later than its start time.'); return false;
+                    }
+                    for (let index = 0; index < data.availability.length; index++) {
+                        const slot = data.availability[index];
+                        for (let earlier = 0; earlier < index; earlier++) {
+                            const other = data.availability[earlier];
+                            if (slot.day !== other.day) continue;
+                            const duplicate = slot.start_time === other.start_time && slot.end_time === other.end_time;
+                            const overlaps = slot.start_time < other.end_time && slot.end_time > other.start_time;
+                            if (duplicate || overlaps) {
+                                Swal.showValidationMessage(`Warning: availability rows ${earlier + 1} and ${index + 1} ${duplicate ? 'have the same schedule' : 'overlap'} on ${slot.day}. ${duplicate ? 'Remove the duplicate row' : 'Adjust the times'} before saving corrections.`);
+                                return false;
+                            }
+                        }
+                    }
+                }
+                try {
+                    const saved = await applicationApi('updateApplication', data);
+                    if (saved.status !== 'success') throw new Error(saved.message);
+                    return saved;
+                } catch (error) {
+                    Swal.showValidationMessage(error.response?.data?.message || error.message); return false;
+                }
+            },
+            showLoaderOnConfirm: true, allowOutsideClick: () => !Swal.isLoading()
+        });
+        if (choice.isConfirmed) {
+            await Swal.fire('Application Updated', choice.value.message, 'success');
+            window.loadEnrollments?.();
+        }
+        await viewNewStudentApplication(item.application_id);
+    } catch (error) {
+        Swal.fire('Unable to Edit Application', error.response?.data?.message || error.message, 'error');
+    }
+}
+
 async function reviewNewStudentApplication(item, decision) {
+    const permissionKey = decision === 'approve' ? 'approve_online_applications' : 'reject_online_applications';
+    const permissionMessage = decision === 'approve'
+        ? 'You do not have permission to approve online enrollment applications.'
+        : 'You do not have permission to reject online enrollment applications.';
+    if (!guardOnlineApplicationPermission(permissionKey, permissionMessage)) return;
+
     const applicationId = Number(item.application_id);
-    const submittedGcash = String(item.application_payment?.payment_method || '').toLowerCase() === 'gcash';
+    const submittedOnlinePayment = item.application_payment?.payment_status === 'pending_review';
+    const canReceivePayment = canUseOnlineApplicationPermission('receive_online_application_payment');
+    const canFinalize = canUseOnlineApplicationPermission('finalize_online_applications');
+    if (decision === 'approve' && submittedOnlinePayment
+        && !guardOnlineApplicationPermission('receive_online_application_payment', 'You need payment-receiving permission to approve a submitted online payment.')) return;
     const preschoolApplication = isPreschoolApplication(item);
     const answer = await Swal.fire({
         title: applicationModalTitle(decision === 'approve' ? 'bi-check2-circle' : 'bi-x-circle', decision === 'approve' ? 'Accept This Application?' : 'Reject This Application?'),
@@ -428,8 +664,8 @@ async function reviewNewStudentApplication(item, decision) {
         inputValidator: value => decision === 'reject' && !value.trim() ? 'A reason is required when rejecting an application.' : undefined,
         showCancelButton: true, showCloseButton: true, reverseButtons: true,
         confirmButtonText: decision === 'approve'
-            ? (submittedGcash
-                ? `<i class="bi bi-check2-circle me-2"></i>Approve GCash & ${preschoolApplication ? 'Assign Class' : 'Continue'}`
+            ? (submittedOnlinePayment
+                ? `<i class="bi bi-check2-circle me-2"></i>${canFinalize ? `Approve Payment & ${preschoolApplication ? 'Assign Class' : 'Continue'}` : 'Approve Online Payment'}`
                 : '<i class="bi bi-arrow-right-circle me-2"></i>Accept & Continue to Payment')
             : '<i class="bi bi-x-circle me-2"></i>Reject Application',
         customClass: applicationModalClasses(), buttonsStyling: false
@@ -444,6 +680,10 @@ async function reviewNewStudentApplication(item, decision) {
             if (application.status !== 'success') throw new Error(application.message);
             if (result.payment_confirmed) {
                 await Swal.fire('Approved', result.message, 'success');
+                if (!canFinalize) {
+                    await viewNewStudentApplication(applicationId);
+                    return;
+                }
                 if (isPreschoolApplication(application.data)) {
                     if (typeof window.openPrePlayApplicationPlacement !== 'function') {
                         await viewNewStudentApplication(applicationId);
@@ -453,6 +693,11 @@ async function reviewNewStudentApplication(item, decision) {
                 } else {
                     await scheduleNewStudentApplication(application.data);
                 }
+                return;
+            }
+            if (!canReceivePayment) {
+                await Swal.fire('Application Approved', 'The application is ready for payment. A staff member with payment-receiving permission can continue.', 'success');
+                await viewNewStudentApplication(applicationId);
                 return;
             }
             Swal.fire({ title: 'Opening center payment…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
@@ -467,6 +712,7 @@ async function reviewNewStudentApplication(item, decision) {
 }
 
 async function receiveApplicationDownpayment(item) {
+    if (!guardOnlineApplicationPermission('receive_online_application_payment', 'You do not have permission to receive online application payments.')) return;
     try {
         if (typeof window.openApplicationDownpaymentModal !== 'function') {
             throw new Error('The shared downpayment modal is not available on this page.');
@@ -482,71 +728,72 @@ async function receiveApplicationDownpayment(item) {
     }
 }
 
-function mergeConsecutiveScheduleRows(rows, maximumGroupSize = 1) {
-    const merged = [];
-    rows.forEach((row, index) => {
-        const previous = merged[merged.length - 1];
-        const isConsecutive = previous
-            && previous.date === row.date
-            && previous.end_time === row.start_time
-            && previous.session_count < maximumGroupSize;
-        if (isConsecutive) {
-            previous.end_time = row.end_time;
-            previous.session_end = index + 1;
-            previous.session_count += 1;
-            return;
-        }
-        merged.push({ ...row, session_start: index + 1, session_end: index + 1, session_count: 1 });
-    });
-    return merged;
+function formatScheduleHours(hours) {
+    const value = Number(hours);
+    return `${Number.isInteger(value) ? value : value.toFixed(1)} ${value === 1 ? 'hour' : 'hours'}`;
+}
+
+function scheduleDurationHours(startTime, endTime) {
+    const [startHour, startMinute] = String(startTime).split(':').map(Number);
+    const [endHour, endMinute] = String(endTime).split(':').map(Number);
+    return (((endHour * 60) + endMinute) - ((startHour * 60) + startMinute)) / 60;
+}
+
+function applicationLongDate(value) {
+    const date = new Date(value + 'T00:00:00Z');
+    return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
 function scheduleRowsHtml(rows) {
-    return rows.map(row => {
-        const sessionLabel = row.session_start === row.session_end
-            ? `Session ${row.session_start}`
-            : `Sessions ${row.session_start}&ndash;${row.session_end}`;
-        return `<tr data-schedule-row data-session-count="${row.session_count}"><td><strong>${sessionLabel}</strong><small class="d-block text-muted">${row.session_count} ${row.session_count === 1 ? 'hour' : 'hours'}</small></td><td><input type="date" class="form-control form-control-sm schedule-date" value="${applicationEscape(row.date)}"></td><td>${applicationEscape(row.day)}</td><td><input type="time" class="form-control form-control-sm schedule-start" value="${applicationEscape(row.start_time)}"></td><td><input type="time" class="form-control form-control-sm schedule-end" value="${applicationEscape(row.end_time)}"></td></tr>`;
+    return rows.map((row, index) => {
+        const durationHours = Number(row.duration_hours) || scheduleDurationHours(row.start_time, row.end_time);
+        return `<tr data-schedule-row><td><strong>Session ${index + 1}</strong><small class="d-block text-muted">${formatScheduleHours(durationHours)}</small></td><td><div class="application-session-date"><span class="schedule-date-display" aria-hidden="true">${applicationLongDate(row.date)}</span><input type="date" class="form-control form-control-sm schedule-date" aria-label="Session ${index + 1} date" value="${applicationEscape(row.date)}"></div></td><td>${applicationEscape(row.day)}</td><td><input type="time" step="1800" class="form-control form-control-sm schedule-start" value="${applicationEscape(row.start_time)}"></td><td><input type="time" step="1800" class="form-control form-control-sm schedule-end" value="${applicationEscape(row.end_time)}"></td></tr>`;
     }).join('');
 }
 
-function expandMergedScheduleRows() {
+function collectScheduleRows(requiredHours) {
     const schedule = [];
     const rows = [...document.querySelectorAll('#applicationScheduleRows [data-schedule-row]')];
+    let totalMinutes = 0;
     for (const row of rows) {
         const date = row.querySelector('.schedule-date').value;
         const startTime = row.querySelector('.schedule-start').value;
         const endTime = row.querySelector('.schedule-end').value;
-        const sessionCount = Number(row.dataset.sessionCount || 1);
         const [startHour, startMinute] = startTime.split(':').map(Number);
         const [endHour, endMinute] = endTime.split(':').map(Number);
         const startMinutes = (startHour * 60) + startMinute;
         const endMinutes = (endHour * 60) + endMinute;
-        if (!date || !startTime || !endTime || endMinutes - startMinutes !== sessionCount * 60) {
-            Swal.showValidationMessage(`Each merged meeting must remain exactly ${sessionCount} ${sessionCount === 1 ? 'hour' : 'hours'}.`);
+        const durationMinutes = endMinutes - startMinutes;
+        if (!date || !startTime || !endTime || durationMinutes < 30 || durationMinutes % 30 !== 0) {
+            Swal.showValidationMessage('Each session must be at least 30 minutes and use 30-minute increments.');
             return false;
         }
-        for (let session = 0; session < sessionCount; session++) {
-            const sessionStart = startMinutes + (session * 60);
-            const sessionEnd = sessionStart + 60;
-            const formatTime = minutes => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
-            schedule.push({ date, start_time: formatTime(sessionStart), end_time: formatTime(sessionEnd) });
-        }
+        totalMinutes += durationMinutes;
+        schedule.push({ date, start_time: startTime, end_time: endTime });
+    }
+    const requiredMinutes = Math.round(Number(requiredHours) * 60);
+    if (totalMinutes !== requiredMinutes) {
+        Swal.showValidationMessage(`The plotted sessions must total exactly ${formatScheduleHours(requiredHours)}. Current total: ${formatScheduleHours(totalMinutes / 60)}.`);
+        return false;
     }
     return schedule;
 }
 
 function applicationSchedulingGuideHtml(item) {
+    const programLabel = item.program_name + (item.program_type ? ` (${item.program_type})` : '');
     const subjects = (item.subjects || []).map(subject => `<span class="application-chip">${applicationEscape(subject.subject_name)}</span>`).join('') || '<span class="text-muted">No subjects selected</span>';
     const availability = (item.availability || []).map(slot => `<span class="application-chip application-chip--neutral"><i class="bi bi-calendar3"></i>${applicationEscape(slot.day)} ${applicationTime(slot.start_time)}–${applicationTime(slot.end_time)}</span>`).join('') || '<span class="text-danger">No student availability recorded.</span>';
     return `<div class="application-summary-card text-start mb-3">
         <div class="application-summary-head"><div class="application-student-identity"><span class="application-avatar"><i class="bi bi-person-fill"></i></span><div><span class="application-eyebrow">Student</span><span class="application-student-name">${applicationEscape([item.first_name, item.middle_name, item.last_name, item.ext].filter(Boolean).join(' '))}</span></div></div><div class="text-end"><span class="application-eyebrow">Application</span><span class="application-number-pill">${applicationEscape(item.application_number)}</span></div></div>
         <div class="application-meta-grid">
-            <div><span class="application-meta-label">Program</span><span class="application-meta-value">${applicationEscape(item.program_name)}</span></div>
+            <div><span class="application-meta-label">Program</span><span class="application-meta-value">${applicationEscape(programLabel)}</span></div>
             <div><span class="application-meta-label">Center</span><span class="application-meta-value">${applicationEscape(item.branch_name)}</span></div>
             <div><span class="application-meta-label">Grade</span><span class="application-meta-value">${applicationEscape(item.grade_level || 'Not selected')}</span></div>
+            <div><span class="application-meta-label">Preferred teacher</span><span class="application-meta-value">${applicationEscape(item.preferred_teacher_name || 'None')}</span></div>
+            ${String(item.unit_type || '').toLowerCase() === 'session' ? `<div><span class="application-meta-label">Preferred session duration</span><span class="application-meta-value">${item.preferred_session_hours ? formatScheduleHours(Number(item.preferred_session_hours)) : 'Not recorded — confirm with student or guardian'}</span></div>` : ''}
             <div class="application-meta-item--wide"><span class="application-meta-label">Selected subjects</span><div class="application-chip-list">${subjects}</div></div>
             ${item.goal ? `<div class="application-meta-item--wide"><span class="application-meta-label">Learning goal</span><span>${applicationEscape(item.goal)}</span></div>` : ''}
+            ${item.applicant_type === 'existing_student' ? `<div class="application-meta-item--wide"><div class="application-flow-callout"><i class="bi bi-person-heart"></i><div>${item.preferred_teacher_name ? `Student preference: <strong>${applicationEscape(item.preferred_teacher_name)}</strong>. You may still assign another qualified teacher.` : 'No preferred teacher was selected.'}</div></div></div>` : ''}
             <div class="application-meta-item--wide"><span class="application-meta-label">Student’s submitted availability</span><div class="application-chip-list">${availability}</div></div>
         </div>
     </div>`;
@@ -569,6 +816,7 @@ function teacherSchedulePreviewHtml(teacher, manualOverride) {
 }
 
 async function scheduleNewStudentApplication(item) {
+    if (!guardOnlineApplicationPermission('finalize_online_applications', 'You do not have permission to assign teachers or finalize online applications.')) return;
     ensureEnrollmentApplicationStyles();
     try {
         Swal.fire({ title: 'Matching teachers…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
@@ -596,10 +844,15 @@ async function scheduleNewStudentApplication(item) {
         }).join('');
         const hasSelectableTeacher = teachers.length || manualOnly.some(teacher => (teacher.matching_slots || []).length);
         if (!hasSelectableTeacher) {
+            const hasAssignedTeacher = manualTeachers.length > 0;
+            const programLabel = item.program_name + (item.program_type ? ` (${item.program_type})` : '');
+            const unavailableReason = hasAssignedTeacher
+                ? 'Active teachers assigned to this program in this branch have no saved working hours overlapping the student’s submitted availability. Check their weekly working schedules before continuing.'
+                : `No active teacher in ${applicationEscape(item.branch_name)} is assigned to ${applicationEscape(programLabel)}. A teacher may have matching subjects and free hours but still be excluded because they are assigned to a different program. Check the teacher’s program assignments and the student’s enrolled program.`;
             await Swal.fire({
-                title: applicationModalTitle('bi-calendar-x', 'No Teacher With Overlapping Time'), width: 'min(900px, 96vw)',
+                title: applicationModalTitle('bi-calendar-x', hasAssignedTeacher ? 'No Teacher With Overlapping Time' : 'No Teacher Assigned to This Program'), width: 'min(900px, 96vw)',
                 showCloseButton: true, customClass: applicationModalClasses(), buttonsStyling: false,
-                html: `${applicationSchedulingGuideHtml(item)}<div class="application-flow-callout application-flow-callout--warning"><i class="bi bi-exclamation-triangle"></i><div>There are active teachers in this branch, but none has a working schedule overlapping the student’s submitted availability. Update a teacher’s working schedule or contact the family before continuing.</div></div>`
+                html: `${applicationSchedulingGuideHtml(item)}<div class="application-flow-callout application-flow-callout--warning"><i class="bi bi-exclamation-triangle"></i><div>${unavailableReason}</div></div>`
             });
             return;
         }
@@ -608,10 +861,12 @@ async function scheduleNewStudentApplication(item) {
             : '<div class="application-flow-callout"><i class="bi bi-info-circle"></i><div>Recommended matches satisfy the branch, program, subject, and availability filters.<br>Manual Override includes only teachers assigned to this program and may be used for subject qualification differences.</div></div>';
         const isSessionProgram = String(item.unit_type || '').toLowerCase() === 'session';
         const totalProgramSessions = Math.max(1, Number(item.total_units) || 1);
-        const sessionsPerDayOptions = Array.from({ length: totalProgramSessions }, (_, index) => index + 1)
-            .map(hours => `<option value="${hours}">${hours} ${hours === 1 ? 'hour' : 'hours'} — ${hours} ${hours === 1 ? 'session' : 'sessions'}</option>`).join('');
+        const preferredSessionHours = Number(item.preferred_session_hours) || 1;
+        const sessionDurationOptions = [[1, '1 hour'], [1.5, '1 hour and 30 minutes'], [2, '2 hours']]
+            .filter(([hours]) => hours <= totalProgramSessions)
+            .map(([hours, label]) => `<option value="${hours}"${hours === preferredSessionHours ? ' selected' : ''}>${label}</option>`).join('');
         const sessionsPerDayField = isSessionProgram
-            ? `<div class="application-flow-field"><label for="applicationSessionsPerDay">Hours / sessions on the same day</label><select id="applicationSessionsPerDay" class="form-select">${sessionsPerDayOptions}</select><div class="application-flow-help">Each hour uses one consecutive session from the student’s ${totalProgramSessions}-session package.</div></div>`
+            ? `<div class="application-flow-field"><label for="applicationSessionsPerDay">Session duration</label><select id="applicationSessionsPerDay" class="form-select">${sessionDurationOptions}</select><div class="application-flow-help">The program includes ${totalProgramSessions} consumable hours in total. Each session uses its duration from that balance. For 12 hours: 12 one-hour sessions, 8 sessions of 1 hour and 30 minutes, or 6 two-hour sessions. Confirm any change to the student's preference with the student or guardian.</div></div>`
             : '';
         const chooser = await Swal.fire({
             title: applicationModalTitle('bi-calendar2-week', 'Select Teacher & Plot Schedule'), width: 'min(1180px, 96vw)',
@@ -638,8 +893,8 @@ async function scheduleNewStudentApplication(item) {
                 if (!value) { Swal.showValidationMessage('Select a teacher.'); return false; }
                 const [mode, teacherId] = value.split(':');
                 const sessionsPerDay = isSessionProgram ? Number(document.getElementById('applicationSessionsPerDay')?.value || 1) : 1;
-                if (!Number.isInteger(sessionsPerDay) || sessionsPerDay < 1 || sessionsPerDay > totalProgramSessions) {
-                    Swal.showValidationMessage(`Enter a whole number of hours from 1 to ${totalProgramSessions}.`);
+                if (![1, 1.5, 2].includes(sessionsPerDay) || sessionsPerDay > totalProgramSessions) {
+                    Swal.showValidationMessage('Select a session duration of 1 hour, 1 hour and 30 minutes, or 2 hours within the program total.');
                     return false;
                 }
                 return { teacherId: Number(teacherId), manualOverride: mode === 'manual', sessionsPerDay };
@@ -655,22 +910,44 @@ async function scheduleNewStudentApplication(item) {
         const suggestionsResult = await applicationApi('getScheduleSuggestions', { application_id: item.application_id, teacher_id: chooser.value.teacherId, manual_override: chooser.value.manualOverride, sessions_per_day: chooser.value.sessionsPerDay });
         if (suggestionsResult.status !== 'success') throw new Error(suggestionsResult.message);
         const suggestions = suggestionsResult.data || [];
-        const mergedSuggestions = mergeConsecutiveScheduleRows(suggestions, chooser.value.sessionsPerDay);
         const sessionPlan = isSessionProgram
-            ? `<div class="application-flow-callout"><i class="bi bi-link-45deg"></i><div><strong>Selected meeting length:</strong> ${chooser.value.sessionsPerDay} ${chooser.value.sessionsPerDay === 1 ? 'hour' : 'hours'}. Consecutive package sessions on the same day are merged into one meeting row below.</div></div>`
+            ? `<div class="application-flow-callout"><i class="bi bi-link-45deg"></i><div><strong>Selected session length:</strong> ${formatScheduleHours(chooser.value.sessionsPerDay)}. The final session may be shorter so the schedule totals exactly ${formatScheduleHours(totalProgramSessions)}.</div></div>`
             : '';
         const overrideWarning = chooser.value.manualOverride
             ? '<div class="application-flow-callout application-flow-callout--warning mb-3"><i class="bi bi-exclamation-triangle"></i><div><strong>Manual teacher override:</strong> The teacher is assigned to this program, but subject assignments may not fully match. Student availability, teacher working hours, and booking conflicts will still be validated.</div></div>'
             : '';
+        const validityDays = Number(suggestionsResult.validity_days) || 0;
+        const validityMessage = rows => {
+            if (!validityDays || !rows.length) return '';
+            const dates = rows.map(row => row.date).sort();
+            const end = new Date(dates[0] + 'T00:00:00Z'); end.setUTCDate(end.getUTCDate() + validityDays - 1);
+            return 'Valid for ' + validityDays + ' days: ' + applicationLongDate(dates[0]) + ' through ' + applicationLongDate(end.toISOString().slice(0, 10)) + ', inclusive.';
+        };
         const final = await Swal.fire({
             title: applicationModalTitle('bi-calendar2-check', 'Confirm Exact Sessions'), width: 'min(1100px, 96vw)',
-            html: `<div class="text-start">${applicationSchedulingGuideHtml(item)}${overrideWarning}${sessionPlan}<div class="application-section-card mt-3"><span class="application-meta-label">Selected teacher</span><span class="application-meta-value"><i class="bi bi-person-check me-2" style="color:var(--application-pink)"></i>${applicationEscape(suggestionsResult.teacher.teacher_name)}</span></div><div class="application-session-table-shell table-responsive"><table class="table application-session-table align-middle"><thead><tr><th>Package Sessions</th><th>Date</th><th>Day</th><th>Start</th><th>End</th></tr></thead><tbody id="applicationScheduleRows">${scheduleRowsHtml(mergedSuggestions)}</tbody></table></div><div class="application-flow-callout application-flow-callout--warning mt-3"><i class="bi bi-exclamation-triangle"></i><div>Keep each merged meeting at its displayed duration. Final validation still checks every included hour against the student’s availability, the teacher’s working hours, and existing bookings.</div></div></div>`,
+            html: `<div class="text-start">${applicationSchedulingGuideHtml(item)}${overrideWarning}${sessionPlan}<p class="small" id="applicationValidityPreview">${applicationEscape(validityMessage(suggestions))}</p><div class="application-section-card mt-3"><span class="application-meta-label">Selected teacher</span><span class="application-meta-value"><i class="bi bi-person-check me-2" style="color:var(--application-pink)"></i>${applicationEscape(suggestionsResult.teacher.teacher_name)}</span></div><div class="application-session-table-shell table-responsive"><table class="table application-session-table align-middle"><thead><tr><th>Session</th><th>Date</th><th>Day</th><th>Start</th><th>End</th></tr></thead><tbody id="applicationScheduleRows">${scheduleRowsHtml(suggestions)}</tbody></table></div><div class="application-flow-callout application-flow-callout--warning mt-3"><i class="bi bi-exclamation-triangle"></i><div>You may adjust dates and times in 30-minute increments, but all sessions combined must retain the program’s total hours. Final validation checks student availability, teacher working hours, and existing bookings.</div></div></div>`,
             showCancelButton: true,
             cancelButtonText: '<i class="bi bi-arrow-left me-2"></i>Back to Teacher & Schedule',
             confirmButtonText: '<i class="bi bi-check2-circle me-2"></i>Finalize Enrollment & Billing',
             showCloseButton: true, reverseButtons: true,
             customClass: applicationModalClasses(), buttonsStyling: false,
-            preConfirm: () => expandMergedScheduleRows()
+            didOpen: () => {
+                document.getElementById('applicationScheduleRows')?.addEventListener('change', event => {
+                    if (event.target.matches('.schedule-date')) event.target.closest('.application-session-date').querySelector('.schedule-date-display').textContent = applicationLongDate(event.target.value);
+                    const dates = [...document.querySelectorAll('#applicationScheduleRows input[type="date"]')].map(input => ({ date: input.value })).filter(row => row.date);
+                    document.getElementById('applicationValidityPreview').textContent = validityMessage(dates);
+                });
+            },
+            preConfirm: () => {
+                const rows = collectScheduleRows(totalProgramSessions);
+                if (!rows) return false;
+                if (validityDays && rows.length) {
+                    const dates = rows.map(row => row.date).sort();
+                    const end = new Date(dates[0] + 'T00:00:00Z'); end.setUTCDate(end.getUTCDate() + validityDays - 1);
+                    if (dates[dates.length - 1] > end.toISOString().slice(0, 10)) { Swal.showValidationMessage('All sessions must fit within ' + validityDays + ' days from the first session.'); return false; }
+                }
+                return rows;
+            }
         });
         if (!final.isConfirmed) {
             if (final.dismiss === Swal.DismissReason.cancel) {
@@ -688,7 +965,10 @@ async function scheduleNewStudentApplication(item) {
             billing: result.billing
         });
     } catch (error) {
-        Swal.fire('Scheduling Failed', error.response?.data?.message || error.message, 'error');
+        Swal.fire({
+            title: 'Scheduling Failed', icon: 'error', width: 'min(850px, 96vw)',
+            html: `<div class="text-start" style="white-space:pre-wrap">${applicationEscape(error.response?.data?.message || error.message)}</div>`
+        });
     }
 }
 
@@ -712,3 +992,4 @@ export function initNewStudentApplications() {
 
 window.openNewStudentApplications = openNewStudentApplications;
 window.viewNewStudentApplication = viewNewStudentApplication;
+window.canUseOnlineApplicationPermission = canUseOnlineApplicationPermission;

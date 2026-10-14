@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="../../js/utilities/upload_url.js?v=20261006-upload-images-r2"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Enrollment Request | CDO Tutor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="../../css/design.css?v=20260907-completed-pink">
+    <link rel="stylesheet" href="../../css/student_enrollment_request.css?v=20260915-center-review">
+    <link rel="stylesheet" href="../../css/agreements.css?v=20261014-pink-theme">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js?v=20261006-upload-images"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js?v=20261006-upload-images"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script type="module" src="../../js/index.js?v=20261012-all-user-session"></script>
+    <script src="../../js/utilities/gcash_ocr.js?v=20261006-upload-images" defer></script>
+    <script type="module" src="../../js/studentmodule/student_enrollment_request.js?v=20261014-downpayment-minimum"></script>
+</head>
+<body>
+    <header id="dynamic-header"></header>
+
+    <main class="main-content enrollment-request-page">
+        <div class="request-topbar">
+            <div>
+                <a class="request-back-link" href="./enrollement.html"><i class="bi bi-arrow-left"></i> Enrollment list</a>
+                <h1>New Enrollment Request</h1>
+                <p>Pay the initial amount, share your learning preferences, then let the center finalize the teacher and schedule.</p>
+            </div>
+            <span class="request-security-pill"><i class="bi bi-shield-check"></i> Student portal</span>
+        </div>
+
+        <nav class="request-steps" aria-label="Enrollment request progress">
+            <div class="request-step active" data-step-indicator="1"><span>1</span><div><strong>Initial payment</strong><small>Downpayment and receipt</small></div></div>
+            <div class="request-step" data-step-indicator="2"><span>2</span><div><strong>Enrollment details</strong><small>Preferences for review</small></div></div>
+            <div class="request-step" data-step-indicator="3"><span>3</span><div><strong>Center review</strong><small>Teacher and schedule</small></div></div>
+        </nav>
+
+        <section class="request-card" data-request-step="1">
+            <header class="request-section-heading">
+                <span class="request-heading-icon"><i class="bi bi-wallet2"></i></span>
+                <div><p>STEP 1</p><h2>Pay the required downpayment</h2><small>Your payment creates the enrollment record. You can continue to the enrollment details immediately after the receipt is shown.</small></div>
+            </header>
+
+            <div class="row g-4">
+                <div class="col-lg-7">
+                    <div class="request-panel">
+                        <h3>Program</h3>
+                        <label class="form-label" for="requestProgram">Tutorial program <span class="text-danger">*</span></label>
+                        <select class="form-select" id="requestProgram"><option value="">Loading programs...</option></select>
+                        <label class="form-label mt-3" for="requestBranch">Preferred center <span class="text-danger">*</span></label>
+                        <select class="form-select" id="requestBranch"><option value="">Loading centers...</option></select>
+                        <div class="request-fee-grid mt-3">
+                            <div><span>Program fee</span><strong id="requestProgramFee">PHP 0.00</strong></div>
+                            <div class="accent"><span>Required now</span><strong id="requestDownpayment">PHP 0.00</strong></div>
+                        </div>
+                    </div>
+
+                    <div class="request-panel mt-4">
+                        <h3>GCash payment receipt</h3>
+                        <input type="hidden" id="requestPaymentMethod">
+                        <div class="request-gcash-account mb-3" id="requestGcashAccount"></div>
+                        <label class="request-upload" for="requestPaymentScreenshot">
+                            <input type="file" id="requestPaymentScreenshot" accept="image/jpeg,image/png,.jpg,.jpeg,.png">
+                            <i class="bi bi-cloud-arrow-up"></i>
+                            <strong>Upload your GCash screenshot</strong>
+                            <span id="requestUploadName">JPG or PNG, up to 10MB</span>
+                        </label>
+                        <button type="button" class="btn btn-outline-primary mt-3" id="requestReadReceipt"><i class="bi bi-bounding-box me-2"></i>Read receipt</button>
+                        <p class="request-ocr-status" id="requestOcrStatus" data-ocr-busy="false">Upload a screenshot to detect its amount and reference number.</p>
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-6"><label class="form-label" for="requestPaymentAmount">Amount Paid</label><div class="input-group"><span class="input-group-text">PHP</span><input type="number" class="form-control" id="requestPaymentAmount" min="0" step="0.01"></div><small class="text-muted">Pay at least the required downpayment. You may enter a higher amount or pay in full.</small></div>
+                            <div class="col-md-6"><label class="form-label" for="requestReference">GCash reference number</label><input class="form-control" id="requestReference" maxlength="13" inputmode="numeric" pattern="(?:\d{10}|\d{12}|\d{13})" placeholder="10, 12, or 13 digits"></div>
+                        </div>
+                        <div class="d-none mt-3 text-center" id="requestScreenshotPreviewWrapper"><img class="request-proof-preview" id="requestScreenshotPreviewImage" alt="Payment screenshot preview"></div>
+                    </div>
+                </div>
+
+                <aside class="col-lg-5">
+                    <div class="request-side-note">
+                        <i class="bi bi-info-circle"></i>
+                        <div><strong>What happens next?</strong><p>Your payment proof is saved first. After you forward the details, it becomes an Online Application for center review, teacher assignment, and schedule plotting.</p></div>
+                    </div>
+                </aside>
+            </div>
+
+            <footer class="request-actions"><a class="btn btn-light" href="./enrollement.html">Cancel</a><button type="button" class="btn btn-primary" id="payAndContinue">Pay &amp; Continue <i class="bi bi-arrow-right ms-2"></i></button></footer>
+        </section>
+
+        <section class="request-card d-none" data-request-step="2">
+            <header class="request-section-heading">
+                <span class="request-heading-icon"><i class="bi bi-journal-check"></i></span>
+                <div><p>STEP 2</p><h2>Tell the center what you prefer</h2><small>These are review details, not the final class assignment. Center staff will confirm the actual tutor and plot the session schedule.</small></div>
+            </header>
+
+            <div class="request-payment-complete"><i class="bi bi-check-circle-fill"></i><div><strong>Payment proof recorded</strong><span id="paidProgramSummary">Continue with the enrollment details below.</span></div></div>
+
+            <div class="request-panel">
+                <h3>Program and learning preferences</h3>
+                <div class="row g-3">
+                    <div class="col-md-6"><label class="form-label">Paid program</label><input class="form-control" id="detailsProgram" disabled></div>
+                    <div class="col-md-6"><label class="form-label" for="detailsBranch">Selected center</label><select class="form-select" id="detailsBranch" disabled><option value="">Select center</option></select></div>
+                    <div class="col-md-5"><label class="form-label" for="detailsGrade">Grade level <span class="text-danger">*</span></label><select class="form-select" id="detailsGrade"><option value="">Select grade level</option></select></div>
+                    <div class="col-md-7">
+                        <label class="form-label">Subjects <span class="text-danger">*</span></label>
+                        <div class="request-subjects" id="detailsSubjects"></div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="detailsPreferredTeacher">Preferred teacher <span class="text-muted">(optional)</span></label>
+                        <select class="form-select" id="detailsPreferredTeacher" disabled><option value="">None — let the center choose</option></select>
+                        <div class="form-text">This is a preference only. The center will make the final assignment.</div>
+                    </div>
+                    <div class="col-12"><label class="form-label" for="detailsGoal">Learning goal</label><textarea class="form-control" id="detailsGoal" rows="3" placeholder="What would you like to improve or achieve?"></textarea></div>
+                </div>
+            </div>
+
+            <div class="request-panel mt-4">
+                <div class="mb-3">
+                    <label class="form-label" for="preferredSessionHours">How long should each session last?</label>
+                    <select class="form-select" id="preferredSessionHours" aria-describedby="sessionDurationNote">
+                        <option value="1">1 hour</option>
+                        <option value="1.5">1 hour and 30 minutes</option>
+                        <option value="2">2 hours</option>
+                    </select>
+                    <small class="text-muted" id="sessionDurationNote">The program includes 12 consumable hours in total. Each session uses the selected duration from that balance: 12 one-hour sessions, 8 sessions of 1 hour and 30 minutes, or 6 two-hour sessions. The center will confirm your final schedule.</small>
+                </div>
+                <h3>Weekly availability</h3>
+                <p class="text-muted">Add the days and times when you can attend. The center will use these windows to plot the actual sessions.</p>
+                <div class="request-availability-builder">
+                    <select class="form-select" id="availabilityDay"><option>Monday</option><option>Tuesday</option><option>Wednesday</option><option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option></select>
+                    <input type="time" class="form-control" id="availabilityStart" value="13:00">
+                    <span>to</span>
+                    <input type="time" class="form-control" id="availabilityEnd" value="17:00">
+                    <button type="button" class="btn btn-outline-primary" id="addAvailability"><i class="bi bi-plus-lg"></i> Add</button>
+                </div>
+                <div class="request-availability-list" id="availabilityList"><p>No availability added yet.</p></div>
+            </div>
+
+            <div id="existingStudentAgreements"></div>
+            <footer class="request-actions"><a class="btn btn-light" href="./enrollement.html">Finish later</a><button type="button" class="btn btn-primary" id="submitForReview">Submit for Center Review <i class="bi bi-send ms-2"></i></button></footer>
+        </section>
+
+        <section class="request-card d-none" data-request-step="3">
+            <div class="request-success">
+                <span><i class="bi bi-check2"></i></span>
+                <p class="request-eyebrow">REQUEST SUBMITTED</p>
+                <h2>Your enrollment is ready for center review.</h2>
+                <p>The center will review your payment and preferences, select the actual teacher, and plot your schedule. Your preferred teacher is a request only and is not automatically assigned.</p>
+                <div class="request-success-actions"><a class="btn btn-primary" href="./enrollement.html">View Enrollments</a><a class="btn btn-light" href="./dashboard.html">Back to Dashboard</a></div>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

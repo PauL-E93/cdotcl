@@ -1,4 +1,4 @@
-export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MIN_LENGTH = 12;
 
 export function getPasswordRequirementMessage() {
     return `Password must be at least ${PASSWORD_MIN_LENGTH} characters and include at least 1 letter, 1 uppercase letter, 1 number, and 1 symbol.`;

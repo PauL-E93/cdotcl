@@ -1,4 +1,8 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+require_once __DIR__ . '/../guardian_relationship_helper.php';
+AuthGuard::requireUser();
+
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -21,6 +25,7 @@ class StudentManagementAPI
     {
         include __DIR__ . '/connection-pdo.php';
         $this->conn = $conn;
+        ensureGuardianRelationshipSchema($this->conn);
     }
 
     private function respond(string $status, string $message = '', array $extra = [], int $httpStatus = 200): void
@@ -200,7 +205,7 @@ class StudentManagementAPI
         $placeholders = implode(',', array_fill(0, count($studentIds), '?'));
         $enrollmentParams = $studentIds;
 
-        $enrollmentSql = "SELECT eh.student_id, eh.enrollment_header_id, eh.branch_id,
+        $enrollmentSql = "SELECT eh.student_id, eh.enrollment_header_id, eh.branch_id, eh.school_year_id,
                                  eh.status AS header_status, eh.date_created AS enrollment_date,
                                  ed.enrollment_details_id, ed.program_id, ed.status AS details_status,
                                  p.name AS program_name, pt.type AS program_type_name,
@@ -220,7 +225,7 @@ class StudentManagementAPI
         }
 
         $enrollmentSql .= " ORDER BY eh.student_id ASC,
-                            CASE WHEN eh.status = 'enrolled' OR ed.status IN ('enrolled', 'active') THEN 0 ELSE 1 END ASC,
+                            CASE WHEN eh.status = 'enrolled' OR ed.status = 'enrolled' THEN 0 ELSE 1 END ASC,
                             eh.date_created DESC, ed.enrollment_details_id DESC";
 
         $stmt = $this->conn->prepare($enrollmentSql);
@@ -246,6 +251,7 @@ class StudentManagementAPI
             $activeBranchIds = [];
             $programIds = [];
             $branchIds = [];
+            $schoolYearIds = [];
 
             foreach ($enrollments as $enrollment) {
                 if (!empty($enrollment['program_id'])) {
@@ -254,9 +260,12 @@ class StudentManagementAPI
                 if (!empty($enrollment['branch_id'])) {
                     $branchIds[(string) $enrollment['branch_id']] = true;
                 }
+                if (!empty($enrollment['school_year_id'])) {
+                    $schoolYearIds[(string) $enrollment['school_year_id']] = true;
+                }
 
                 $isCurrent = $enrollment['header_status'] === 'enrolled'
-                    || in_array($enrollment['details_status'], ['enrolled', 'active'], true);
+                    || $enrollment['details_status'] === 'enrolled';
                 if (!$isCurrent) {
                     continue;
                 }
@@ -292,6 +301,7 @@ class StudentManagementAPI
 
             $student['program_ids'] = array_keys($programIds);
             $student['branch_ids'] = array_keys($branchIds);
+            $student['school_year_ids'] = array_keys($schoolYearIds);
             $student['current_program_ids'] = array_keys($activeProgramIds);
             $student['current_branch_ids'] = array_keys($activeBranchIds);
             $student['current_programs'] = array_keys($activePrograms);
@@ -360,11 +370,17 @@ class StudentManagementAPI
             'SELECT gender_id, gender FROM gender ORDER BY gender ASC'
         )->fetchAll(PDO::FETCH_ASSOC);
 
+        $schoolYears = $this->conn->query(
+            'SELECT school_year_id, school_year FROM school_years ORDER BY school_year DESC, school_year_id DESC'
+        )->fetchAll(PDO::FETCH_ASSOC);
+
         $this->respond('success', '', [
             'data' => [
                 'programs' => $programs,
                 'branches' => $branches,
-                'genders' => $genders
+                'school_years' => $schoolYears,
+                'genders' => $genders,
+                'relationships' => $this->conn->query('SELECT relationship_id, relationship_name FROM guardian_relationships ORDER BY relationship_id')->fetchAll(PDO::FETCH_ASSOC)
             ]
         ]);
     }
@@ -453,7 +469,8 @@ class StudentManagementAPI
             'data' => [
                 'student' => $student,
                 'enrollments' => $enrollments,
-                'audit' => $audit
+                'audit' => $audit,
+                'relationships' => $this->conn->query('SELECT relationship_id, relationship_name FROM guardian_relationships ORDER BY relationship_id')->fetchAll(PDO::FETCH_ASSOC)
             ]
         ]);
     }
@@ -537,6 +554,14 @@ class StudentManagementAPI
         // DDL can implicitly commit a MySQL transaction, so prepare the audit
         // table before locking and updating the student record.
         $this->ensureAuditTable();
+        $requestedRelationship = $this->normalizeOptionalText($data, 'guardian_relationship');
+        if ($requestedRelationship !== null) {
+            try {
+                $requestedRelationship = validateGuardianRelationship($requestedRelationship);
+            } catch (InvalidArgumentException $error) {
+                throw new RuntimeException($error->getMessage(), 422);
+            }
+        }
         $this->conn->beginTransaction();
         try {
             $stmt = $this->conn->prepare(
@@ -552,7 +577,7 @@ class StudentManagementAPI
             $guardianId = (int) ($before['guardian_id'] ?? 0);
             $guardianName = $this->normalizeOptionalText($data, 'guardian_name');
             $guardianContact = $this->normalizeOptionalText($data, 'guardian_contact');
-            $guardianRelationship = $this->normalizeOptionalText($data, 'guardian_relationship');
+            $guardianRelationship = $requestedRelationship !== null ? saveGuardianRelationship($this->conn, $requestedRelationship) : null;
             $hasGuardianInput = $guardianName !== null || $guardianContact !== null || $guardianRelationship !== null;
 
             if ($guardianId > 0) {

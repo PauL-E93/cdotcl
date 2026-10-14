@@ -1,8 +1,14 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+require_once __DIR__ . '/../tutorial_validity_helper.php';
+ensureTutorialValiditySchema(AuthGuard::connection());
+
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 
 require_once __DIR__ . '/../notification_helper.php';
+require_once __DIR__ . '/../enrollment_completion_helper.php';
+require_once __DIR__ . '/../session_sequence_helper.php';
 
 class TeacherSchedule {
     private function getTeacherId() {
@@ -32,7 +38,7 @@ class TeacherSchedule {
             $teacherId = $this->getTeacherId();
 
 $sql = "SELECT ed.enrollment_details_id,
-                           ed.preferred_teacher,
+                           COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) AS preferred_teacher,
                            eps.preference_id,
                            eps.date,
                            eps.day,
@@ -53,8 +59,8 @@ $sql = "SELECT ed.enrollment_details_id,
                     LEFT JOIN subject sub ON ed.subject_id = sub.subject_id
                     LEFT JOIN student s ON eh.student_id = s.student_id
                     LEFT JOIN branch b ON eh.branch_id = b.branch_id
-                    WHERE ed.preferred_teacher = :teacher_id
-                      AND ed.status IN ('active', 'pending' , 'enrolled', 'completed')
+                    WHERE COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = :teacher_id
+                      AND ed.status IN ('pending', 'enrolled', 'completed')
                     ORDER BY eps.date ASC, eps.start_time ASC";
 
             $stmt = $conn->prepare($sql);
@@ -135,7 +141,7 @@ $sql = "SELECT ed.enrollment_details_id,
                 $verifySql = "SELECT ed.preferred_teacher 
                               FROM enrollment_details ed 
                               JOIN enrollment_preferred_schedule eps ON ed.enrollment_details_id = eps.enrollment_details_id
-                              WHERE eps.preference_id = :preference_id AND ed.preferred_teacher = :teacher_id";
+                              WHERE eps.preference_id = :preference_id AND COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = :teacher_id";
                 $verifyParams = [
                     ':preference_id' => $preferenceId,
                     ':teacher_id' => $teacherId
@@ -146,7 +152,7 @@ $sql = "SELECT ed.enrollment_details_id,
                               JOIN enrollment_preferred_schedule eps ON ed.enrollment_details_id = eps.enrollment_details_id
                               WHERE eps.enrollment_details_id = :enrollment_details_id 
                                 AND eps.date = :schedule_date 
-                                AND ed.preferred_teacher = :teacher_id";
+                                AND COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = :teacher_id";
                 $verifyParams = [
                     ':enrollment_details_id' => $enrollmentDetailsId,
                     ':schedule_date' => $scheduleDate,
@@ -162,22 +168,44 @@ $sql = "SELECT ed.enrollment_details_id,
                 return;
             }
 
+            if ($newStatus === 'ongoing') assertTutorialScheduleStart($conn, (int) $preferenceId, (int) $enrollmentDetailsId, (string) $scheduleDate);
+            if (in_array($newStatus, ['ongoing', 'no-show'], true) && findEarlierUnresolvedSession(
+                $conn,
+                $preferenceId,
+                [],
+                $enrollmentDetailsId,
+                $scheduleDate
+            )) {
+                echo json_encode([
+                    'status' => 'error',
+                    'message' => $newStatus === 'no-show'
+                        ? 'Complete all earlier sessions before marking this session as no-show.'
+                        : 'Complete all earlier sessions before starting this session.'
+                ]);
+                return;
+            }
+
             if ($preferenceId) {
                 $sql = "UPDATE enrollment_preferred_schedule 
                         SET status = :new_status
-                        WHERE preference_id = :preference_id";
+                        WHERE preference_id = :preference_id
+                          AND COALESCE(substitute_teacher_id, (SELECT ed_assignment.preferred_teacher FROM enrollment_details ed_assignment WHERE ed_assignment.enrollment_details_id = enrollment_preferred_schedule.enrollment_details_id)) = :assigned_teacher_id";
                 $params = [
                     ':new_status' => $newStatus,
-                    ':preference_id' => $preferenceId
+                    ':preference_id' => $preferenceId,
+                    ':assigned_teacher_id' => $teacherId
                 ];
             } else {
                 $sql = "UPDATE enrollment_preferred_schedule 
                         SET status = :new_status
-                        WHERE enrollment_details_id = :enrollment_details_id AND date = :schedule_date";
+                        WHERE enrollment_details_id = :enrollment_details_id AND date = :schedule_date
+                          AND COALESCE(substitute_teacher_id, (SELECT preferred_teacher FROM enrollment_details WHERE enrollment_details_id = :teacher_enrollment_id)) = :assigned_teacher_id";
                 $params = [
                     ':new_status' => $newStatus,
                     ':enrollment_details_id' => $enrollmentDetailsId,
-                    ':schedule_date' => $scheduleDate
+                    ':schedule_date' => $scheduleDate,
+                    ':teacher_enrollment_id' => $enrollmentDetailsId,
+                    ':assigned_teacher_id' => $teacherId
                 ];
             }
 
@@ -188,12 +216,15 @@ $sql = "SELECT ed.enrollment_details_id,
             if ($result && $affectedRows > 0) {
                 $notifications = new NotificationService($conn);
                 $schedule = $notifications->getScheduleContext($preferenceId, $enrollmentDetailsId, $scheduleDate);
+                $resolvedEnrollmentId = (int) ($schedule['enrollment_details_id'] ?? $enrollmentDetailsId ?? 0);
+                $completion = syncEnrollmentCompletionStatus($conn, $resolvedEnrollmentId);
                 $notifications->notifyScheduleStatus($schedule, $newStatus, 'employee', $_SESSION['employee_id'] ?? 0);
 
                 echo json_encode([
                     'status' => 'success',
                     'message' => 'Schedule status updated successfully',
                     'new_status' => $newStatus,
+                    'enrollment_completed' => $completion['completed'],
                     'affected_rows' => $affectedRows
                 ]);
             } else {

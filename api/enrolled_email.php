@@ -1,20 +1,13 @@
 <?php
 header('Content-Type: application/json; charset=UTF-8');
-header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
 
-use PHPMailer\PHPMailer\Exception as MailException;
-use PHPMailer\PHPMailer\PHPMailer;
-
-require_once __DIR__ . '/PHPMailer/src/Exception.php';
-require_once __DIR__ . '/PHPMailer/src/PHPMailer.php';
-require_once __DIR__ . '/PHPMailer/src/SMTP.php';
 require_once __DIR__ . '/admin/connection-pdo.php';
+require_once __DIR__ . '/email_service.php';
+require_once __DIR__ . '/security/AuthGuard.php';
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+AuthGuard::requireRoles(['owner', 'secretary', 'branch admin']);
 
 function enrollmentEmailRespond($status, $message, $extra = [], $httpStatus = 200)
 {
@@ -53,11 +46,11 @@ function buildEnrollmentEmailBody($enrollment, $username, $password = null, $isN
                 <p><strong>Your login credentials</strong></p>
                 <div class='credentials'>
                     <p><strong>Username:</strong> <span class='credential-value'>{$safeUsername}</span></p>
-                    <p><strong>Temporary Password:</strong> <span class='credential-value'>{$safePassword}</span></p>
+                    <p><strong>Temporary password:</strong> <span class='credential-value'>{$safePassword}</span></p>
                 </div>"
         : '';
     $securityMessage = $isNewStudent
-        ? 'Your password is case-sensitive. For your security, please sign in and change this temporary password as soon as possible. Do not share your credentials with anyone.'
+        ? 'Sign in with this temporary password. You will be asked to create a new password before continuing. Do not share your password.'
         : 'Please use your current password to sign in. For security, existing passwords cannot be displayed or emailed. Use the Forgot Password option on the login page if you no longer remember it.';
 
     return "
@@ -106,39 +99,22 @@ function buildEnrollmentEmailBody($enrollment, $username, $password = null, $isN
 
 function sendEnrollmentEmail($enrollment, $username, $password = null, $isNewStudent = false)
 {
-    $mail = new PHPMailer(true);
+    global $conn;
 
-    try {
-        $mail->isSMTP();
-        $mail->Host = 'smtp.gmail.com';
-        $mail->SMTPAuth = true;
-        $mail->Username = 'espinosapaul810@gmail.com';
-        $mail->Password = 'yjds vbuo gxas knkm';
-        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        $mail->Port = 587;
-        $mail->CharSet = 'UTF-8';
-        $mail->SMTPOptions = [
-            'ssl' => [
-                'verify_peer' => false,
-                'verify_peer_name' => false,
-                'allow_self_signed' => true
-            ]
-        ];
-
-        $mail->setFrom('espinosapaul810@gmail.com', 'CDO Tutorial Center Enrollment');
-        $mail->addAddress($enrollment['email'], $enrollment['student_name']);
-        $mail->isHTML(true);
-        $mail->Subject = 'Congratulations! Your CDO Tutorial Center Enrollment';
-        $mail->Body = buildEnrollmentEmailBody($enrollment, $username, $password, $isNewStudent);
-        $mail->AltBody = $isNewStudent
-            ? "Congratulations, {$enrollment['student_name']}! Your enrollment in {$enrollment['program_name']} has been completed. Username: {$username}. Temporary password: {$password}. Please change your password after signing in."
+    $altBody = $isNewStudent
+            ? "Congratulations, {$enrollment['student_name']}! Your enrollment in {$enrollment['program_name']} has been completed. Username: {$username}. Temporary password: {$password}. Sign in with this password, then create a new password before continuing."
             : "Congratulations, {$enrollment['student_name']}! Your enrollment in {$enrollment['program_name']} has been completed. Please use your current account credentials to sign in.";
 
-        return $mail->send();
-    } catch (MailException $e) {
-        error_log('Enrollment welcome email failed: ' . $mail->ErrorInfo);
-        return false;
-    }
+    return (new EmailService($conn))->send(
+        $enrollment['email'],
+        'Congratulations! Your CDO Tutorial Center Enrollment',
+        buildEnrollmentEmailBody($enrollment, $username, $password, $isNewStudent),
+        [
+            'from_name' => 'CDO Tutorial Center Enrollment',
+            'recipient_name' => $enrollment['student_name'],
+            'alt_body' => $altBody
+        ]
+    );
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -204,7 +180,7 @@ try {
     }
 
     $username = $isNewStudent ? (string)($pendingCredentials['username'] ?? '') : '';
-    $password = $isNewStudent ? (string)($pendingCredentials['password'] ?? '') : null;
+    $password = $isNewStudent ? (string)($pendingCredentials['temporary_password'] ?? '') : null;
     if ($isNewStudent && ($username === '' || $password === '')) {
         enrollmentEmailRespond('error', 'The new-student credentials are unavailable.', [], 409);
     }

@@ -1,11 +1,12 @@
 // js/modules/employee.js
 import "../utilities/paging.js";
+import { initEmployeeScheduleModal } from "./employee_schedule_modal.js?v=20261013-theme-plus";
 import { getResolvedRolePermissions, initRbacPermissions, normalizeRbacRoleKey } from "../utilities/rbac_navigation.js";
 import { openEmployeeCredentialsModal, renderPasswordModal } from "./password.js";
 
 let employeesData = [];
 let employeePaginationManager = null;
-let currentScheduleEmpId = null; 
+
 const OTHER_OPTION_VALUE = '__others__';
 const DEFAULT_EMPLOYEE_STATUS_FILTER = 'active';
 const EMPLOYEE_PAGE_SIZE = 10;
@@ -27,8 +28,25 @@ const employeeFilters = {
     program: ''
 };
 
-function getTodayDateString() {
-    return new Date().toISOString().split('T')[0];
+function getAdultBirthdayLimit() {
+    const today = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date());
+    const part = type => Number(today.find(value => value.type === type).value);
+    const year = part('year') - 18;
+    const month = part('month');
+    const day = Math.min(part('day'), new Date(Date.UTC(year, month, 0)).getUTCDate());
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function validateEmployeeBirthday(value) {
+    const date = new Date(`${value}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(date.getTime())
+        || date.toISOString().slice(0, 10) !== value || value > getAdultBirthdayLimit()) {
+        Swal.fire('Invalid Birthday', 'Employees must be at least 18 years old. Please select a valid birthday.', 'error');
+        return false;
+    }
+    return true;
 }
 
 function getDateInputValue(value) {
@@ -94,6 +112,11 @@ function loadCurrentEmployeePermissions() {
 
 function canUseEmployeePermission(permissionKey) {
     return Boolean(employeeModulePermissions?.[permissionKey]);
+}
+
+function canManageEmployeeSchedule() {
+    loadCurrentEmployeePermissions();
+    return canUseEmployeePermission('view') && canUseEmployeePermission('approve');
 }
 
 function renderEmployeeAccessDenied() {
@@ -448,7 +471,7 @@ export async function initializeEmployeeModuleSupport() {
 
     loadCurrentEmployeePermissions();
     injectEmployeeModals();
-    injectScheduleModal();
+    initEmployeeScheduleModal(canManageEmployeeSchedule);
     renderPasswordModal();
 
     if (canUseEmployeePermission('create') || canUseEmployeePermission('edit') || canUseEmployeePermission('approve')) {
@@ -525,6 +548,9 @@ function renderEmployeeTable(data) {
                     </button>
                 </li>
             `);
+        }
+
+        if (canManageEmployeeSchedule()) {
             actionItems.push(`
                 <li>
                     <button class="dropdown-item" type="button" onclick="openScheduleModal(${emp.employee_id})">
@@ -537,8 +563,8 @@ function renderEmployeeTable(data) {
         if (currentEmployeeRole === 'owner') {
             actionItems.push(`
                 <li>
-                    <button class="dropdown-item" type="button" onclick="openEmployeeCredentialsModal(${emp.employee_id})">
-                        <i class="bi bi-key me-2"></i>Change Credentials
+                    <button class="dropdown-item" type="button" onclick="viewEmployeeLoginCredentials(${emp.employee_id})">
+                        <i class="bi bi-key me-2"></i>Login Credentials
                     </button>
                 </li>
             `);
@@ -573,6 +599,32 @@ function renderEmployeeTable(data) {
     });
 
 }
+
+window.viewEmployeeLoginCredentials = async function(employeeId) {
+    if (currentEmployeeRole !== 'owner') return;
+    try {
+        const { data } = await axios.get('../../api/admin/employee.php', {
+            params: { operation: 'getEmployeeLoginCredentials', employee_id: employeeId }
+        });
+        if (data.status !== 'success') {
+            Swal.fire('Error', data.message || 'Unable to load login credentials.', 'error');
+            return;
+        }
+        const content = document.createElement('div');
+        for (const [label, value] of [['Username', data.username], ['Password', data.password]]) {
+            const row = document.createElement('p');
+            row.textContent = `${label}: ${value || 'Unavailable'}`;
+            content.appendChild(row);
+        }
+        const note = document.createElement('small');
+        note.textContent = data.message;
+        content.appendChild(note);
+        await Swal.fire({ title: 'Login Credentials', html: content });
+        content.replaceChildren();
+    } catch (error) {
+        Swal.fire('Error', 'Unable to load login credentials.', 'error');
+    }
+};
 
 window.openEmployeeCredentialsModal = function(employeeId) {
     axios.get(`../../api/admin/employee.php?operation=getEmployeeProfile&employee_id=${employeeId}`)
@@ -730,23 +782,26 @@ function injectEmployeeModals() {
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Birthday <span class="text-danger" aria-hidden="true">*</span></label>
-                            <input type="date" id="add_birthday" class="form-control" max="${getTodayDateString()}" required>
+                            <input type="date" id="add_birthday" class="form-control" max="${getAdultBirthdayLimit()}" required>
+                            <small class="text-muted">Employee must be at least 18 years old.</small>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Role <span class="text-danger" aria-hidden="true">*</span></label>
                             <select id="add_role" class="form-control" required></select>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">Username <span class="text-danger" aria-hidden="true">*</span></label>
-                            <input type="text" id="add_username" class="form-control" required>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">Email <span class="text-danger" aria-hidden="true">*</span></label>
+                            <label class="form-label">Contact Email <span class="text-danger" aria-hidden="true">*</span></label>
                             <input type="email" id="add_email" class="form-control" required>
+                            <small class="text-muted">The generated login credentials will be sent to this address.</small>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label">Password <span class="text-danger" aria-hidden="true">*</span></label>
-                            <input type="password" id="add_password" class="form-control" required>
+                        <div class="alert border-0 rounded-4 employee-credential-preview" style="background:linear-gradient(135deg,#fff8dc,#fff0f5);">
+                            <div class="d-flex align-items-center gap-2 mb-2">
+                                <span class="fs-4" aria-hidden="true">🔐</span>
+                                <div><strong>Automatic login credentials</strong><div class="small text-muted">A unique username and a random strong password are generated when you create the account.</div></div>
+                            </div>
+                            <div class="small"><span class="text-muted">Username:</span> <strong id="add_generated_username">firstname.lastname</strong></div>
+                            <div class="small"><span class="text-muted">Temporary password:</span> <strong>Generated securely after creation</strong></div>
+                            <div class="small text-muted mt-2">The account starts as inactive. The employee must sign in with the temporary password, create a new password, and sign in again. Password setup activates the account. The owner can view the generated credentials from the Actions menu.</div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Branch</label>
@@ -810,7 +865,8 @@ function injectEmployeeModals() {
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Birthday <span class="text-danger" aria-hidden="true">*</span></label>
-                            <input type="date" id="update_birthday" class="form-control" max="${getTodayDateString()}" required>
+                            <input type="date" id="update_birthday" class="form-control" max="${getAdultBirthdayLimit()}" required>
+                            <small class="text-muted">Employee must be at least 18 years old.</small>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Role <span class="text-danger" aria-hidden="true">*</span></label>
@@ -921,149 +977,21 @@ function injectEmployeeModals() {
     </div>
     `;
     document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+    const updateCredentialPreview = () => {
+        const normalizeName = value => String(value || '')
+            .normalize('NFKD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '');
+        const firstPart = normalizeName(document.getElementById('add_first_name')?.value);
+        const lastPart = normalizeName(document.getElementById('add_last_name')?.value);
+        const usernamePreview = document.getElementById('add_generated_username');
+        if (usernamePreview) usernamePreview.textContent = firstPart && lastPart ? `${firstPart}.${lastPart}` : 'firstname.lastname';
+    };
+    document.getElementById('add_first_name')?.addEventListener('input', updateCredentialPreview);
+    document.getElementById('add_last_name')?.addEventListener('input', updateCredentialPreview);
 }
-
-// --- 4. INJECT SCHEDULE MODAL ---
-function injectScheduleModal() {
-    if (document.getElementById('scheduleModal')) return;
-    const html = `
-    <div class="modal fade" id="scheduleModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header  text-dark" , style="background-color: #ea9aa6;">
-                    <h5 class="modal-title"><i class="bi bi-clock"></i> Manage Weekly Schedule</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="alert alert-info py-2"><small>Add multiple shifts per day if needed (e.g., Morning & Afternoon).</small></div>
-                    <div class="table-responsive">
-                        <table class="table table-bordered table-sm">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Day</th>
-                                    <th>Start Time</th>
-                                    <th>End Time</th>
-                                    <th style="width:50px;"></th>
-                                </tr>
-                            </thead>
-                            <tbody id="scheduleRows"></tbody>
-                        </table>
-                    </div>
-                    <button class="btn btn-sm btn-success" onclick="addScheduleRow()"><i class="bi bi-plus"></i> Add Shift</button>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="button" class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
-                </div>
-            </div>
-        </div>
-    </div>`;
-    document.body.insertAdjacentHTML('beforeend', html);
-}
-
-// --- 5. SCHEDULE LOGIC ---
-
-window.openScheduleModal = function(id) {
-    if (!canUseEmployeePermission('edit')) {
-        showEmployeePermissionAlert('You do not have permission to manage employee schedules.');
-        return;
-    }
-
-    currentScheduleEmpId = id;
-    const rows = document.getElementById('scheduleRows');
-    rows.innerHTML = '<tr><td colspan="4" class="text-center">Loading...</td></tr>';
-
-    const modal = new bootstrap.Modal(document.getElementById('scheduleModal'));
-    modal.show();
-
-    // Fetch existing schedule
-    axios.get(`../../api/admin/employee.php?operation=getSchedule&id=${id}`)
-    .then(res => {
-        rows.innerHTML = '';
-        if (res.data.status === 'success' && res.data.data.length > 0) {
-            res.data.data.forEach(s => addScheduleRow(s));
-        } else {
-            rows.innerHTML = '<tr><td colspan="4" class="text-center text-muted" id="noScheduleMsg">No schedule set. Click "Add Shift".</td></tr>';
-        }
-    })
-    .catch(err => {
-        console.error(err);
-        rows.innerHTML = '<tr><td colspan="4" class="text-center text-danger">Error loading schedule</td></tr>';
-    });
-};
-
-window.addScheduleRow = function(data = null) {
-    const tbody = document.getElementById('scheduleRows');
-    const msg = document.getElementById('noScheduleMsg');
-    if (msg) msg.parentNode.remove(); // Remove "No schedule" message
-
-    const day = data ? data.day_of_week : 'Monday';
-    const start = data ? data.start_time : '';
-    const end = data ? data.end_time : '';
-
-    const row = document.createElement('tr');
-    row.innerHTML = `
-        <td>
-            <select class="form-select form-select-sm sched-day">
-                <option value="Monday" ${day === 'Monday' ? 'selected' : ''}>Monday</option>
-                <option value="Tuesday" ${day === 'Tuesday' ? 'selected' : ''}>Tuesday</option>
-                <option value="Wednesday" ${day === 'Wednesday' ? 'selected' : ''}>Wednesday</option>
-                <option value="Thursday" ${day === 'Thursday' ? 'selected' : ''}>Thursday</option>
-                <option value="Friday" ${day === 'Friday' ? 'selected' : ''}>Friday</option>
-                <option value="Saturday" ${day === 'Saturday' ? 'selected' : ''}>Saturday</option>
-                <option value="Sunday" ${day === 'Sunday' ? 'selected' : ''}>Sunday</option>
-            </select>
-        </td>
-        <td><input type="time" class="form-control form-control-sm sched-start" value="${start}"></td>
-        <td><input type="time" class="form-control form-control-sm sched-end" value="${end}"></td>
-        <td class="text-center">
-            <button class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove()"><i class="bi bi-trash"></i></button>
-        </td>
-    `;
-    tbody.appendChild(row);
-};
-
-window.saveSchedule = function() {
-    if (!canUseEmployeePermission('edit')) {
-        showEmployeePermissionAlert('You do not have permission to manage employee schedules.');
-        return;
-    }
-
-    if (!currentScheduleEmpId) return;
-
-    const rows = document.querySelectorAll('#scheduleRows tr');
-    const schedules = [];
-
-    rows.forEach(row => {
-        const day = row.querySelector('.sched-day').value;
-        const start = row.querySelector('.sched-start').value;
-        const end = row.querySelector('.sched-end').value;
-
-        if (day && start && end) {
-            schedules.push({ day, start, end });
-        }
-    });
-
-    axios.post("../../api/admin/employee.php", {
-        operation: "saveSchedule",
-        json: JSON.stringify({
-            employee_id: currentScheduleEmpId,
-            schedules: schedules
-        })
-    }).then(res => {
-        if (res.data.status === 'success') {
-            Swal.fire('Saved', 'Schedule updated successfully', 'success');
-            const modalEl = document.getElementById('scheduleModal');
-            const modal = bootstrap.Modal.getInstance(modalEl);
-            modal.hide();
-        } else {
-            Swal.fire('Error', res.data.message, 'error');
-        }
-    }).catch(err => {
-        console.error(err);
-        Swal.fire('Error', 'Failed to save schedule', 'error');
-    });
-};
 
 // --- 6. MODAL ACTIONS (EMPLOYEE) ---
 
@@ -1077,6 +1005,7 @@ window.openAddEmployeeModal = function() {
     // reset add form and subject list
     const form = document.getElementById('addEmployeeForm');
     if (form) form.reset();
+    document.getElementById('add_first_name')?.dispatchEvent(new Event('input'));
     const addList = document.getElementById('add_subject_list');
     if (addList) addList.innerHTML = '';
     const addProgList = document.getElementById('add_program_list');
@@ -1170,9 +1099,7 @@ window.saveNewEmployee = function() {
         last_name: document.getElementById('add_last_name').value,
         birthday: document.getElementById('add_birthday').value,
         role: document.getElementById('add_role').value,
-        username: document.getElementById('add_username').value,
         email: document.getElementById('add_email').value,
-        password: document.getElementById('add_password').value,
         branch_id: normalizeEmployeeBranchValue(document.getElementById('add_branch').value)
     };
 
@@ -1185,7 +1112,7 @@ window.saveNewEmployee = function() {
     if (addProgList) {
         data.programs = Array.from(addProgList.querySelectorAll('.program-item')).map(el => el.dataset.id);
     }
-    if(!data.first_name || !data.last_name || !data.birthday || !data.role || !data.username || !data.email || !data.password) {
+    if(!data.first_name || !data.last_name || !data.birthday || !data.role || !data.email) {
         Swal.fire('Error', 'Please fill in all required fields', 'error');
         return;
     }
@@ -1195,12 +1122,29 @@ window.saveNewEmployee = function() {
         return;
     }
 
+    if (!validateEmployeeBirthday(data.birthday)) return;
+
+    Swal.fire({
+        title: 'Creating Employee Account',
+        text: 'Generating the login credentials and sending the email. Please wait...',
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        showConfirmButton: false,
+        didOpen: () => {
+            Swal.showLoading();
+        }
+    });
+
     axios.post("../../api/admin/employee.php", {
         operation: "signup",
         json: JSON.stringify(data)
     }).then(res => {
         if (res.data.status === 'success') {
-            Swal.fire('Success', res.data.message, 'success');
+            Swal.fire({
+                icon: res.data.email_sent ? 'success' : 'warning',
+                title: res.data.email_sent ? 'Employee Added' : 'Employee Added — Email Not Sent',
+                text: `${res.data.message}\nUsername: ${res.data.username || 'Generated automatically'}`
+            });
             const modalEl = document.getElementById('addEmployeeModal');
             const modal = bootstrap.Modal.getInstance(modalEl);
             modal.hide();
@@ -1211,7 +1155,7 @@ window.saveNewEmployee = function() {
         }
     }).catch(err => {
         console.error(err);
-        Swal.fire('Error', 'Something went wrong', 'error');
+        Swal.fire('Unable to Add Employee', 'Something went wrong while creating the employee account.', 'error');
     });
 };
 
@@ -1246,6 +1190,8 @@ window.saveUpdateEmployee = function() {
         Swal.fire('Error', 'Please fill in all required fields', 'error');
         return;
     }
+
+    if (!validateEmployeeBirthday(data.birthday)) return;
 
     axios.post("../../api/admin/employee.php", {
         operation: "updateEmployee",

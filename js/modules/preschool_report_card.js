@@ -320,7 +320,16 @@ function renderReportCardModal(data) {
         currentQuarter = 1;
     }
 
-    const periodLabels = getReportQuarterLabels(!usesEccdChecklist);
+    const reportQuarterNumbers = getReportQuarterNumbers();
+    const quartersWithReportData = reportQuarterNumbers.filter(quarter =>
+        students.some(student => hasAdminQuarterReportData(getStudentQuarter(student, quarter)))
+    );
+    const visibleQuarterNumbers = quartersWithReportData.length
+        ? quartersWithReportData
+        : [reportQuarterNumbers[0] || 1];
+    if (!visibleQuarterNumbers.includes(currentQuarter)) {
+        currentQuarter = visibleQuarterNumbers[0];
+    }
 
     modal.querySelector('.modal-title').textContent = `${section.section_name || 'Section'} Report Cards`;
     modal.querySelector('.modal-body').innerHTML = `
@@ -333,9 +342,9 @@ function renderReportCardModal(data) {
                 </div>
             </div>
             <div class="btn-group" role="group" aria-label="Quarter selector">
-                ${periodLabels.map((label, index) => `
-                    <button type="button" class="btn btn-sm ${currentQuarter === index + 1 ? 'btn-danger' : 'btn-outline-danger'} report-quarter-btn" data-quarter="${index + 1}">
-                        ${label}
+                ${visibleQuarterNumbers.map(quarter => `
+                    <button type="button" class="btn btn-sm ${currentQuarter === quarter ? 'btn-danger' : 'btn-outline-danger'} report-quarter-btn" data-quarter="${quarter}">
+                        ${escapeHtml(getReportQuarterLabel(quarter, !usesEccdChecklist))}
                     </button>
                 `).join('')}
             </div>
@@ -1085,6 +1094,17 @@ function openPlaySchoolEccdEditor(student, parentModal, { reloadReportCards = tr
                 input.addEventListener('change', () => updatePlaySchoolEccdTable(popup));
             });
 
+            popup.querySelectorAll('.play-eccd-select-all').forEach(button => {
+                button.addEventListener('click', () => {
+                    const group = button.closest('.play-eccd-check-group');
+                    if (!group) return;
+                    group.querySelectorAll('.play-eccd-check:not(:disabled)').forEach(input => {
+                        input.checked = true;
+                    });
+                    updatePlaySchoolEccdTable(popup);
+                });
+            });
+
             popup.querySelectorAll('.play-eccd-date-input').forEach(input => {
                 input.addEventListener('change', () => {
                     input.classList.remove('is-invalid');
@@ -1603,7 +1623,10 @@ function createPlaySchoolChecklistPanel(evaluation, checklistGroups) {
             <div class="play-eccd-check-grid">
                 ${checklistGroups.map(group => `
                     <section class="play-eccd-check-group">
-                        <div class="play-eccd-check-group-title">${escapeHtml(group.label)} <span class="play-eccd-quarter-caption">${escapeHtml(toOrdinal(evaluation.evaluation))} Quarter items</span></div>
+                        <div class="play-eccd-check-group-header">
+                            <div class="play-eccd-check-group-title">${escapeHtml(group.label)} <span class="play-eccd-quarter-caption">${escapeHtml(toOrdinal(evaluation.evaluation))} Quarter items</span></div>
+                            <button type="button" class="btn btn-sm btn-outline-primary play-eccd-select-all" aria-label="${escapeHtml(`Select all ${group.label} items for ${toOrdinal(evaluation.evaluation)} quarter`)}" ${getItemsIntroducedInEvaluation(group.items, evaluation.evaluation).length ? '' : 'disabled'}>Select all</button>
+                        </div>
                         ${getItemsIntroducedInEvaluation(group.items, evaluation.evaluation).length ? getItemsIntroducedInEvaluation(group.items, evaluation.evaluation).map(item => createPlaySchoolCheckItem(evaluation, item)).join('') : `
                             <div class="play-eccd-empty-items">No checklist items are introduced in this quarter.</div>
                         `}
@@ -1874,8 +1897,18 @@ function createPlaySchoolEccdStyles() {
                 border-radius: 8px;
                 padding: 10px;
             }
-            .play-eccd-check-group-title {
+            .play-eccd-check-group-header {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 8px;
                 margin-bottom: 8px;
+            }
+            .play-eccd-select-all {
+                flex-shrink: 0;
+                white-space: nowrap;
+            }
+            .play-eccd-check-group-title {
                 color: #07145f;
                 font-weight: 800;
             }
@@ -2040,10 +2073,21 @@ function validatePlaySchoolEccdDates(root) {
     const dateInputs = Array.from(root?.querySelectorAll('.play-eccd-date-input') || []);
     dateInputs.forEach(input => input.classList.remove('is-invalid'));
 
-    const missingDate = dateInputs.find(input => !input.value);
+    const missingDate = dateInputs.find(input =>
+        hasPlaySchoolEccdQuarterInput(root, Number(input.dataset.evaluation)) && !input.value
+    );
     if (missingDate) missingDate.classList.add('is-invalid');
 
     return missingDate || null;
+}
+
+function hasPlaySchoolEccdQuarterInput(root, evaluation) {
+    const hasCheckedItem = Array.from(
+        root?.querySelectorAll(`.play-eccd-check[data-eval="${evaluation}"]`) || []
+    ).some(input => input.checked);
+    const comments = root?.querySelector(`#play-eccd-comments-${evaluation}`)?.value.trim() || '';
+
+    return hasCheckedItem || comments !== '';
 }
 
 function collectPlaySchoolEccdFormData(root) {
@@ -2104,6 +2148,14 @@ function getPlaySchoolEccdOverallGrade(result) {
 }
 
 async function savePlaySchoolEccdReport(enrollmentDetailsId, evaluations, { reloadReportCards = true } = {}) {
+    const evaluationsToSave = (Array.isArray(evaluations) ? evaluations : [])
+        .filter(hasMeaningfulEccdEvaluationData);
+
+    if (!evaluationsToSave.length) {
+        Swal.fire('Nothing to Save', 'Check at least one ECCD item or add a teacher comment first.', 'warning');
+        return;
+    }
+
     Swal.fire({
         title: 'Saving ECCD Record...',
         allowOutsideClick: false,
@@ -2112,7 +2164,7 @@ async function savePlaySchoolEccdReport(enrollmentDetailsId, evaluations, { relo
     });
 
     try {
-        for (const evaluation of evaluations) {
+        for (const evaluation of evaluationsToSave) {
             const response = await axios.post('../../api/admin/student_grade.php?operation=savePreschoolReportCard', {
                 enrollment_details_id: enrollmentDetailsId,
                 quarter: evaluation.quarter,
@@ -2141,6 +2193,22 @@ async function savePlaySchoolEccdReport(enrollmentDetailsId, evaluations, { relo
         console.error('Error saving ECCD record:', error);
         Swal.fire('Error', error.message || 'Network error while saving ECCD record.', 'error');
     }
+}
+
+function hasMeaningfulEccdEvaluationData(evaluation) {
+    const hasCheckedItem = (evaluation?.grades || []).some(item =>
+        isPlayChecklistChecked(item?.grade_value ?? item?.grade)
+    );
+    let comments = '';
+
+    try {
+        const remarks = JSON.parse(evaluation?.remarks || '{}');
+        comments = String(remarks?.comments || '').trim();
+    } catch (error) {
+        comments = String(evaluation?.remarks || '').trim();
+    }
+
+    return hasCheckedItem || comments !== '';
 }
 
 function getPlaySchoolChecklistGroups() {
@@ -2594,6 +2662,20 @@ async function saveQuarter(enrollmentDetailsId, formData) {
 
 function getStudentQuarter(student, quarter) {
     return student?.report_card?.quarters?.[String(quarter)] || null;
+}
+
+function hasAdminQuarterReportData(quarterData) {
+    if (!quarterData || typeof quarterData !== 'object') return false;
+
+    const hasCheckedItem = (quarterData.grades || []).some(item =>
+        isPlayChecklistChecked(item?.grade)
+        || (Number.isFinite(Number(item?.raw_score)) && Number(item.raw_score) > 0)
+    );
+    const hasAttendance = [quarterData.attendance, quarterData.total_school_days]
+        .some(value => value !== null && value !== undefined && String(value).trim() !== '');
+    const hasComments = String(getQuarterDisplayRemarks(quarterData) || '').trim() !== '';
+
+    return hasCheckedItem || hasAttendance || hasComments;
 }
 
 function updateGradebookRow(row) {

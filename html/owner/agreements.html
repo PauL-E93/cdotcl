@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+    <script src="../../js/utilities/upload_url.js?v=20261014-agreement-shell"></script>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contracts & Agreements | CDO Tutor</title>
+    <link rel="stylesheet" href="../../css/design.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="../../css/agreements.css?v=20261014-pink-theme">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script type="module" src="../../js/index.js?v=20261014-contract-menu"></script>
+    <script type="module" src="../../js/modules/agreement_manager.js?v=20261014-pink-theme"></script>
+</head><body class="agreement-manager-page"><header id="dynamic-header"></header><main class="main-content">
+    <div class="top-bar"><h1 class="page-title">CONTRACTS &amp; AGREEMENTS</h1></div>
+    <section class="card content-panel shadow-sm p-3 mb-4 agreement-list-card">
+        <div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+            <div><h2 class="fw-bold mb-1 fs-5">Contracts &amp; Agreements</h2><small class="text-muted">Manage the agreements shown during enrollment.</small></div>
+            <button id="newAgreement" type="button" class="btn btn-sm btn-outline-primary px-3"><i class="bi bi-plus-lg me-1"></i>Add Agreement</button>
+        </div>
+        <p class="small text-muted">Assign each agreement to a program. Previously accepted copies retain their original wording.</p>
+        <div id="agreementManagerMessage" role="status"></div>
+        <div id="agreementList">Loading agreements…</div>
+        <p class="small text-muted mb-0 mt-3">Inactive agreements are hidden during enrollment.</p>
+    </section>
+    <form id="agreementEditor" class="card p-4 d-none">
+        <h2 class="h4" id="editorHeading">Add agreement</h2>
+        <label class="form-label mb-3">Heading <input class="form-control" name="title" maxlength="255" required></label>
+        <div class="row g-3 mb-3">
+            <label class="col-md-8 form-label">Program <select class="form-select" name="program_id" required></select></label>
+            <label class="col-md-2 form-label">Status <select class="form-select" name="status"><option value="inactive">Inactive</option><option value="active">Active</option></select></label>
+            <label class="col-md-2 form-label">Display order <input class="form-control" type="number" name="display_order" min="0" value="0" required></label>
+        </div>
+        <h3 class="h5">Statements</h3>
+        <p class="small text-muted">Drag the grip beside a statement to change its position.</p>
+        <div id="clauseEditor"></div>
+        <div id="agreementOrderStatus" class="visually-hidden" role="status" aria-live="polite"></div>
+        <div class="d-flex flex-wrap gap-2 my-3"><button id="addClause" type="button" class="btn btn-outline-secondary">Add statement</button><button id="previewAgreement" type="button" class="btn btn-outline-secondary">Preview</button></div>
+        <div class="d-flex gap-2"><button type="submit" class="btn btn-add">Save agreement</button><button id="cancelAgreement" type="button" class="btn btn-light">Cancel</button></div>
+    </form>
+</main></body></html>

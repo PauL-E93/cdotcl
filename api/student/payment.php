@@ -1,10 +1,12 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 // api/student/payment.php
 
-session_start();
+if (session_status() === PHP_SESSION_NONE) session_start();
 
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, GET");
 header("Access-Control-Allow-Headers: Content-Type");
 
@@ -82,7 +84,7 @@ class StudentPaymentAPI {
         }
 
         if (($uploadedFile['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-            throw new Exception('Failed to upload the GCash payment screenshot.');
+            throw new Exception('Failed to upload the payment screenshot.');
         }
 
         $mimeType = mime_content_type($uploadedFile['tmp_name']) ?: '';
@@ -169,7 +171,7 @@ class StudentPaymentAPI {
     // --- GET PAYMENT METHODS (Lookup) ---
     public function getPaymentMethods() {
         try {
-            $sql = "SELECT payment_method_id, payment_method, account_name, account_number, qr_code FROM payment_method ORDER BY payment_method_id ASC";
+            $sql = "SELECT payment_method_id, payment_method, account_name, account_number, qr_code FROM payment_method WHERE status <> 'inactive' ORDER BY payment_method_id ASC";
             $stmt = $this->conn->prepare($sql);
             $stmt->execute();
             $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -256,7 +258,7 @@ class StudentPaymentAPI {
                                 bs.total_amount AS amount,
                                 bs.original_amount,
                                 bs.penalty_amount,
-                                COALESCE(pp.penalty_amount, 0) AS penalty_rate,
+                                CASE WHEN " . tuitionBillingTypeSql() . " THEN COALESCE(pp.penalty_amount, 0) ELSE 0 END AS penalty_rate,
                                 COALESCE(pp.grace_period_days, 2) AS grace_period_days,
                                 DATE_ADD(bs.due_date, INTERVAL (COALESCE(pp.grace_period_days, 2) + 1) DAY) AS penalty_effective_date,
                                 GREATEST(DATEDIFF(CURDATE(), DATE_ADD(bs.due_date, INTERVAL (COALESCE(pp.grace_period_days, 2) + 1) DAY)) + 1, 0) AS penalty_chargeable_days,
@@ -278,12 +280,13 @@ class StudentPaymentAPI {
             $stmtSchedule = $this->conn->prepare($sqlSchedule);
             $stmtSchedule->execute([$enrollment_id]);
             $schedule = $stmtSchedule->fetchAll(PDO::FETCH_ASSOC);
+            attachPenaltyAdjustments($this->conn, $schedule);
 
             // Calculate total paid across ALL schedules for overview
             $total_paid_global = 0;
 
             // Include every non-declined payment, matching the schedule aggregation
-            // and the admin billing API. Pending GCash payments are blocked in the UI
+            // and the admin billing API. Pending online payments are blocked in the UI
             // until review, so they must reserve their submitted amount here.
             $sqlGlobalPay = "SELECT SUM(amount_paid) FROM payment p
                             JOIN billing_schedule bs ON p.billing_schedule_id = bs.billing_schedule_id
@@ -633,22 +636,30 @@ class StudentPaymentAPI {
                         ed.goal,
                         COALESCE(NULLIF(eh.status, ''), ed.status) AS status,
                         COALESCE(NULLIF(eh.status, ''), ed.status) AS enrollment_status,
-                        eh.total_of_program
-                            + COALESCE((SELECT SUM(bs_penalty.penalty_amount)
-                                        FROM billing_schedule bs_penalty
-                                        WHERE bs_penalty.enrollment_details_id = ed.enrollment_details_id), 0) AS total_amount,
+                        (SELECT ea.status FROM enrollment_applications ea
+                         WHERE ea.enrollment_details_id = ed.enrollment_details_id
+                            OR (ea.student_id = eh.student_id AND ea.program_id = ed.program_id
+                                AND ea.applicant_type = 'existing_student' AND ea.enrollment_details_id IS NULL
+                                AND ea.status IN ('pending_review', 'approved_for_payment', 'ready_for_scheduling')
+                                AND COALESCE(NULLIF(eh.status, ''), ed.status) = 'incomplete'
+                                AND ed.enrollment_details_id = (
+                                    SELECT MAX(candidate_ed.enrollment_details_id)
+                                    FROM enrollment_details candidate_ed
+                                    JOIN enrollment_header candidate_eh ON candidate_eh.enrollment_header_id = candidate_ed.enrollment_header_id
+                                    WHERE candidate_eh.student_id = eh.student_id
+                                      AND candidate_ed.program_id = ed.program_id
+                                      AND COALESCE(NULLIF(candidate_eh.status, ''), candidate_ed.status) = 'incomplete'))
+                         ORDER BY (ea.enrollment_details_id = ed.enrollment_details_id) DESC, ea.application_id DESC LIMIT 1) AS application_status,
+                        CASE WHEN billing_totals.total_amount > 0 THEN billing_totals.total_amount
+                            ELSE eh.total_of_program END AS total_amount,
                         COALESCE(SUM(CASE WHEN pay.payment_status = 'Received' THEN pay.amount_paid ELSE 0 END), 0) AS total_paid,
-                        (eh.total_of_program
-                            + COALESCE((SELECT SUM(bs_penalty.penalty_amount)
-                                        FROM billing_schedule bs_penalty
-                                        WHERE bs_penalty.enrollment_details_id = ed.enrollment_details_id), 0)
+                        (CASE WHEN billing_totals.total_amount > 0 THEN billing_totals.total_amount
+                            ELSE eh.total_of_program END
                             - COALESCE(SUM(CASE WHEN pay.payment_status = 'Received' THEN pay.amount_paid ELSE 0 END), 0)) AS balance,
                         CASE
                             WHEN SUM(CASE WHEN pay.payment_status = 'Pending' THEN 1 ELSE 0 END) > 0 THEN 'Pending'
-                            WHEN (eh.total_of_program
-                                    + COALESCE((SELECT SUM(bs_penalty.penalty_amount)
-                                                FROM billing_schedule bs_penalty
-                                                WHERE bs_penalty.enrollment_details_id = ed.enrollment_details_id), 0)
+                            WHEN (CASE WHEN billing_totals.total_amount > 0 THEN billing_totals.total_amount
+                                    ELSE eh.total_of_program END
                                     - COALESCE(SUM(CASE WHEN pay.payment_status = 'Received' THEN pay.amount_paid ELSE 0 END), 0)) <= 0 THEN 'Fully Paid'
                             WHEN COALESCE(SUM(CASE WHEN pay.payment_status = 'Received' THEN pay.amount_paid ELSE 0 END), 0) > 0 THEN 'Partial'
                             ELSE 'Unpaid'
@@ -661,11 +672,20 @@ class StudentPaymentAPI {
                     LEFT JOIN employee e ON ed.preferred_teacher = e.employee_id
                     LEFT JOIN sections sec ON ed.section_id = sec.section_id
                     LEFT JOIN employee sec_e ON sec.employee_id = sec_e.employee_id
+                    -- Match the billing modal total, including registration and other fees.
+                    -- Aggregate before joining payments so multiple payments cannot duplicate fees.
+                    LEFT JOIN (
+                        SELECT enrollment_details_id,
+                               SUM(CASE WHEN LOWER(COALESCE(status, '')) = 'cancelled' THEN 0
+                                        ELSE total_amount END) AS total_amount
+                        FROM billing_schedule
+                        GROUP BY enrollment_details_id
+                    ) billing_totals ON ed.enrollment_details_id = billing_totals.enrollment_details_id
                     LEFT JOIN billing_schedule bs ON ed.enrollment_details_id = bs.enrollment_details_id
                     LEFT JOIN payment pay ON bs.billing_schedule_id = pay.billing_schedule_id
                     WHERE eh.student_id = ?
                     $programFilterSql
-                    GROUP BY ed.enrollment_details_id, p.name, esub.subject_names, sub.subject_name, e.first_name, e.last_name, sec_e.first_name, sec_e.last_name, ed.goal, eh.total_of_program, eh.status, ed.status
+                    GROUP BY ed.enrollment_details_id, p.name, esub.subject_names, sub.subject_name, e.first_name, e.last_name, sec_e.first_name, sec_e.last_name, ed.goal, eh.total_of_program, billing_totals.total_amount, eh.status, ed.status
                     ORDER BY ed.enrollment_details_id DESC";
 
             $stmt = $this->conn->prepare($sql);
@@ -678,7 +698,7 @@ class StudentPaymentAPI {
         }
     }
 
-    // --- PROCESS STUDENT PAYMENT (GCash only) ---
+    // --- PROCESS STUDENT ONLINE PAYMENT ---
     public function processPayment($json) {
         $input = json_decode($json, true);
         $student_id = $_SESSION['student_id'] ?? null;
@@ -719,21 +739,26 @@ class StudentPaymentAPI {
             refreshBillingSchedulePenalties($this->conn, $enrollment_id);
 
             // Verify payment method exists and determine status behavior
-            $stmtMethod = $this->conn->prepare("SELECT LOWER(payment_method) FROM payment_method WHERE payment_method_id = ?");
+            $stmtMethod = $this->conn->prepare("SELECT payment_method FROM payment_method WHERE payment_method_id = ? AND status <> 'inactive'");
             $stmtMethod->execute([$method_id]);
-            $methodName = strtolower($stmtMethod->fetchColumn() ?: '');
+            $methodName = trim((string) ($stmtMethod->fetchColumn() ?: ''));
             if (!$methodName) {
                 throw new Exception("Invalid payment method selected");
             }
-
-            $payment_status = $methodName === 'gcash' ? 'Pending' : 'Received';
-            $isPendingPayment = $payment_status === 'Pending';
-
-            if ($methodName === 'gcash' && (!$uploadedScreenshot || ($uploadedScreenshot['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE)) {
-                throw new Exception("GCash payment screenshot is required.");
+            if (strcasecmp($methodName, 'cash') === 0) {
+                throw new Exception("Cash cannot be submitted through online payment.");
             }
-            if ($methodName === 'gcash' && !preg_match('/^\d{13}$/', trim((string)$ref))) {
-                throw new Exception("GCash reference number must contain exactly 13 digits.");
+            $payment_status = 'Pending';
+            $isPendingPayment = true;
+
+            if (!$uploadedScreenshot || ($uploadedScreenshot['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+                throw new Exception("A payment screenshot is required.");
+            }
+            if (trim((string)$ref) === '') {
+                throw new Exception("Payment reference number is required.");
+            }
+            if (strcasecmp($methodName, 'gcash') === 0 && !preg_match('/^(?:\d{10}|\d{12}|\d{13})$/', trim((string)$ref))) {
+                throw new Exception("GCash reference number must contain 10, 12, or 13 digits.");
             }
 
             // --- VALIDATE PAYMENT AMOUNT ---
@@ -875,8 +900,8 @@ class StudentPaymentAPI {
                 $reference = $ref ? " Reference: {$ref}." : '';
                 $this->notifications->notifyRole(
                     'auditor',
-                    'GCash Payment Awaiting Review',
-                    "{$studentName} submitted a GCash payment of PHP " . number_format($amount, 2) . " for {$programName}.{$reference} Please review the payment."
+                    'Online Payment Awaiting Review',
+                    "{$studentName} submitted a {$methodName} payment of PHP " . number_format($amount, 2) . " for {$programName}.{$reference} Please review the payment."
                 );
             }
 

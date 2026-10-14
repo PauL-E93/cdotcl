@@ -223,7 +223,7 @@ function createReportCardHtml(data) {
     setStudentSchoolYearContext(reportCard.school_year);
     const learningAreas = normalizeLearningAreas(reportCard.learning_areas);
     const quarters = reportCard.quarters || {};
-    const hasAnyQuarter = Object.values(quarters).some(Boolean);
+    const hasAnyQuarter = Object.values(quarters).some(hasStudentQuarterReportData);
     const usesEccdChecklist = true;
 
     if (!hasAnyQuarter) {
@@ -283,7 +283,7 @@ function createPlaySchoolReportCardHtml(details, learningAreas, quarters, report
     const reportQuarters = createPlaySchoolReportQuarters(learningAreas, quarters);
     const savedQuarters = [...getStudentQuarterNumbers(), getStudentFinalQuarter()]
         .map(quarter => ({ quarter, data: reportQuarters[String(quarter)] }))
-        .filter(item => item.data);
+        .filter(item => hasStudentQuarterReportData(item.data));
     const transmutationTables = normalizePlaySchoolTransmutationTables(reportCard.play_school_transmutation);
     const standardScoreRows = normalizePlaySchoolStandardScoreRows(reportCard.play_school_standard_scores);
     const interpretations = {
@@ -663,6 +663,20 @@ function isPlayChecklistChecked(grade) {
     return ['A+', 'A', 'B', 'C'].includes(String(grade || '').toUpperCase());
 }
 
+function hasStudentQuarterReportData(quarterData) {
+    if (!quarterData || typeof quarterData !== 'object') return false;
+
+    const hasCheckedItem = (quarterData.grades || []).some(item =>
+        isPlayChecklistChecked(item?.grade)
+        || (Number.isFinite(Number(item?.raw_score)) && Number(item.raw_score) > 0)
+    );
+    const hasAttendance = [quarterData.attendance, quarterData.total_school_days]
+        .some(value => value !== null && value !== undefined && String(value).trim() !== '');
+    const hasComments = String(getQuarterRemarksText(quarterData) || '').trim() !== '';
+
+    return hasCheckedItem || hasAttendance || hasComments;
+}
+
 function getPlaySchoolProgressLabel(grade) {
     const value = String(grade || '').toUpperCase();
     if (value === 'A+' || value === 'A') return 'Very Good';
@@ -732,10 +746,12 @@ function getAreaIntroducedQuarter(area) {
 // Final is a cumulative report: every question uses the score saved in the
 // quarter where that question was actually assessed.
 function createPlaySchoolReportQuarters(learningAreas, quarters) {
-    const reportQuarters = { ...quarters };
+    const reportQuarters = Object.fromEntries(
+        Object.entries(quarters || {}).filter(([, quarterData]) => hasStudentQuarterReportData(quarterData))
+    );
     const lastQuarter = getStudentQuarterNumbers().at(-1) || 1;
     const finalQuarter = getStudentFinalQuarter();
-    const finalSource = quarters[String(lastQuarter)];
+    const finalSource = reportQuarters[String(lastQuarter)];
 
     if (!finalSource) return reportQuarters;
 

@@ -1,10 +1,13 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+require_once __DIR__ . '/../security/PaymentPermission.php';
+
 // api/payment.php
 
-session_start();
+if (session_status() === PHP_SESSION_NONE) session_start();
 
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, GET");
 header("Access-Control-Allow-Headers: Content-Type");
 
@@ -133,7 +136,7 @@ class PaymentAPI {
     // --- GET PAYMENT METHODS (Lookup) ---
     public function getPaymentMethods() {
         try {
-            $sql = "SELECT payment_method_id, payment_method FROM payment_method";
+            $sql = "SELECT payment_method_id, payment_method FROM payment_method WHERE status <> 'inactive'";
             $stmt = $this->conn->prepare($sql);
             $stmt->execute();
             $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -146,26 +149,46 @@ class PaymentAPI {
     // --- PROCESS PAYMENT ---
     public function processPayment($json) {
         $input = json_decode($json, true);
+        if (!is_array($input)) {
+            AuthGuard::deny(400, 'Invalid payment request.');
+        }
 
         // --- INPUTS ---
-        $enrollment_id = $input['enrollment_id']; // Changed from billing_id
-        $amount = $input['amount'];
-        $method_id = $input['method'];
+        $enrollment_id = filter_var($input['enrollment_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $amount = $input['amount'] ?? null;
+        $method_id = filter_var($input['method'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         $ref = $input['ref'] ?? null;
         $pay_type = $input['payment_type'] ?? 'Tuition Fee';
-        $employee_id = $_SESSION['employee_id'] ?? 1;
+        $employee_id = (int) ($_SESSION['user_id'] ?? 0);
+        if (!$enrollment_id || !$method_id || $employee_id <= 0 || !is_numeric($amount)
+            || !is_finite((float) $amount) || (float) $amount <= 0
+            || abs((float) $amount - round((float) $amount, 2)) > 0.000001) {
+            AuthGuard::deny(422, 'A valid enrollment, payment method, and positive amount with at most two decimal places are required.');
+        }
+        $amount = round((float) $amount, 2);
         
         // --- DETERMINE PAYMENT STATUS BASED ON PAYMENT METHOD ---
-        $sqlGetMethod = "SELECT payment_method FROM payment_method WHERE payment_method_id = ?";
+        $sqlGetMethod = "SELECT payment_method FROM payment_method WHERE payment_method_id = ? AND status <> 'inactive'";
         $stmtGetMethod = $this->conn->prepare($sqlGetMethod);
         $stmtGetMethod->execute([$method_id]);
         $payment_method = $stmtGetMethod->fetchColumn();
+        if ($payment_method === false) {
+            AuthGuard::deny(422, 'Payment method not found.');
+        }
         
         // Cash payments are immediately 'Received', Online payments are 'Pending'
         $payment_status = (strtolower($payment_method) === 'cash') ? 'Received' : 'Pending';
 
         try {
             $this->conn->beginTransaction();
+            $stmtLock = $this->conn->prepare("SELECT eh.enrollment_header_id
+                FROM enrollment_header eh
+                JOIN enrollment_details ed ON ed.enrollment_header_id = eh.enrollment_header_id
+                WHERE ed.enrollment_details_id = ? FOR UPDATE");
+            $stmtLock->execute([$enrollment_id]);
+            if (!$stmtLock->fetchColumn()) {
+                throw new Exception('Enrollment not found.');
+            }
             $this->assertEnrollmentAccessibleToCurrentUser($enrollment_id);
             refreshBillingSchedulePenalties($this->conn, $enrollment_id);
 
@@ -439,7 +462,7 @@ class PaymentAPI {
             $this->assertPaymentAccessibleToCurrentUser($payment_id);
 
             $receiptIdSelect = $this->columnExists('payment', 'receipt_id') ? ", receipt_id" : ", NULL AS receipt_id";
-            $stmtCheck = $this->conn->prepare("SELECT payment_id, payment_status, billing_schedule_id $receiptIdSelect FROM payment WHERE payment_id = ?");
+            $stmtCheck = $this->conn->prepare("SELECT payment_id, payment_status, billing_schedule_id $receiptIdSelect FROM payment WHERE payment_id = ? FOR UPDATE");
             $stmtCheck->execute([$payment_id]);
             $payment = $stmtCheck->fetch(PDO::FETCH_ASSOC);
 
@@ -454,11 +477,17 @@ class PaymentAPI {
             $paymentsToUpdate = [$payment];
             if (!empty($payment['receipt_id'])) {
                 $stmtReceiptPayments = $this->conn->prepare("
-                    SELECT payment_id, billing_schedule_id
-                    FROM payment
-                    WHERE receipt_id = ? AND payment_status = 'Pending'
+                    SELECT p.payment_id, p.billing_schedule_id
+                    FROM payment p
+                    JOIN billing_schedule bs ON bs.billing_schedule_id = p.billing_schedule_id
+                    WHERE p.receipt_id = ? AND p.payment_status = 'Pending'
+                      AND bs.enrollment_details_id = (
+                          SELECT target_bs.enrollment_details_id
+                          FROM billing_schedule target_bs
+                          WHERE target_bs.billing_schedule_id = ?
+                      )
                 ");
-                $stmtReceiptPayments->execute([$payment['receipt_id']]);
+                $stmtReceiptPayments->execute([$payment['receipt_id'], $payment['billing_schedule_id']]);
                 $paymentsToUpdate = $stmtReceiptPayments->fetchAll(PDO::FETCH_ASSOC) ?: $paymentsToUpdate;
             }
 
@@ -559,6 +588,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET') {
     $postData = json_decode($content, true);
     $op = $postData['operation'] ?? null;
     $json = $postData['json'] ?? "";
+}
+
+$requiredPermission = [
+    'getPaymentMethods' => 'view',
+    'getPaymentHistory' => 'view',
+    'processPayment' => 'create',
+    'updatePaymentOrNo' => 'edit',
+    'updatePaymentStatus' => 'approve',
+][$op] ?? null;
+if ($requiredPermission !== null) {
+    PaymentPermission::requirePermission($requiredPermission);
 }
 
 $api = new PaymentAPI();

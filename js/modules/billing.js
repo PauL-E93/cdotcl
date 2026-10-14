@@ -1,7 +1,15 @@
 // js/modules/billing.js
 import { showPaymentReceipt } from "./receipt.js";
 import { canUsePaymentPermission, isPaymentModulePage } from "./payment_rbac.js";
+import { canUseOnlineApplicationPermission } from "./enrollment_applications.js?v=20261006-upload-images-r2";
 import { chooseBillingStatementExportFormat, exportBillingStatementData } from "../utilities/billing_statement_export.js";
+import { penaltyAdjustmentCard, bindPenaltyAdjustments } from './penalty_adjustment.js';
+
+function escapeBillingHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+    }[char]));
+}
 
     /**
      * GLOBAL BILLING CONTROLLER
@@ -87,9 +95,9 @@ window.openBillingModal = function(enrollmentId, viewOnly = false) {
 
         // 2. Fetch Billing Details AND Payment Methods in parallel
         Promise.all([
-            axios.get(`../../api/admin/billing.php?operation=getBillingDetails&enrollment_id=${enrollmentId}`),
+            axios.get(`../../api/admin/billing.php?operation=getBillingDetails&enrollment_id=${encodeURIComponent(enrollmentId)}`),
             axios.get(`../../api/admin/billing.php?operation=getPaymentMethods`),
-            axios.get(`../../api/admin/enrollment.php?operation=getEnrollmentDetails&id=${enrollmentId}`).catch(() => ({ data: { status: 'error', data: {} } }))
+            axios.get(`../../api/admin/enrollment.php?operation=getEnrollmentDetails&id=${encodeURIComponent(enrollmentId)}`).catch(() => ({ data: { status: 'error', data: {} } }))
         ])
         .then(([billingRes, methodsRes, enrollmentRes]) => {
             console.log("Billing Response:", billingRes);
@@ -99,6 +107,8 @@ window.openBillingModal = function(enrollmentId, viewOnly = false) {
             if (billingRes.data.status === 'success' && methodsRes.data.status === 'success') {
                 const details = enrollmentRes.data?.data?.details || {};
                 billingRes.data.data.enrollment_status = details.header_status || details.status || billingRes.data.data.enrollment_status || '';
+                billingRes.data.data.application_id = details.application_id || null;
+                billingRes.data.data.application_status = details.application_status || null;
                 renderBillingModal(billingRes.data.data, methodsRes.data.data, enrollmentId, effectiveViewOnly);
             } else {
                 Swal.fire("Error", "Could not fetch necessary data.", "error");
@@ -346,8 +356,8 @@ window.exportTutorialBillingStatement = async function(enrollmentId) {
 
     try {
         const [billingRes, paymentsRes] = await Promise.all([
-            axios.get(`../../api/admin/billing.php?operation=getBillingDetails&enrollment_id=${enrollmentId}`),
-            axios.get(`../../api/admin/payment.php?operation=getPaymentHistory&enrollment_details_id=${enrollmentId}`).catch(() => ({ data: { history: [] } }))
+            axios.get(`../../api/admin/billing.php?operation=getBillingDetails&enrollment_id=${encodeURIComponent(enrollmentId)}`),
+            axios.get(`../../api/admin/payment.php?operation=getPaymentHistory&enrollment_details_id=${encodeURIComponent(enrollmentId)}`).catch(() => ({ data: { history: [] } }))
         ]);
         if (billingRes.data?.status !== 'success') {
             throw new Error(billingRes.data?.message || 'Could not fetch billing details.');
@@ -434,11 +444,15 @@ window.exportTutorialBillingStatement = async function(enrollmentId) {
     }
 };
 
-function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false) {
+function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false, paymentDraft = null) {
     ensureAdminBillingModalStyles();
     const paymentPageContext = isPaymentModulePage();
     const enrollmentStatus = String(data.enrollment_status || '').toLowerCase();
     const isIncompleteEnrollment = enrollmentStatus === 'incomplete';
+    const isReadyForScheduling = Boolean(data.application_id)
+        && String(data.application_status || '').toLowerCase() === 'ready_for_scheduling';
+    const canScheduleApplication = canUseOnlineApplicationPermission('finalize_online_applications');
+    const canViewApplication = canUseOnlineApplicationPermission('view_online_applications');
     const activeSchedule = getActiveBillingSchedule(data.schedule);
     const discountAmount = Math.max(0, Number(data.discount_amount || 0));
     const discountName = String(data.discount_name || 'Applied discount');
@@ -465,7 +479,7 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
     const isFullyPaid = data.balance <= 0;
 
     // Handle case where schedule is missing
-    if (activeSchedule.length === 0 && !isFullyPaid) {
+    if (activeSchedule.length === 0 && !isFullyPaid && !isReadyForScheduling) {
         Swal.fire({
             title: "Billing Not Found",
             text: "No billing schedule has been generated for this enrollment yet. Please generate the bill first.",
@@ -477,7 +491,7 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
 
     // Generate Payment Method Options from DB
     const paymentOptions = paymentMethods.map(pm => 
-        `<option value="${pm.payment_method_id}">${pm.payment_method}</option>`
+        `<option value="${escapeBillingHtml(pm.payment_method_id)}">${escapeBillingHtml(pm.payment_method)}</option>`
     ).join('');
 
     const hasPenalty = activeSchedule.some(item => parseFloat(item.penalty_amount || 0) > 0);
@@ -495,14 +509,14 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
         
         return `
         <tr>
-            <td data-label="Payment Type">${item.billing_type}</td>
+            <td data-label="Payment Type">${escapeBillingHtml(item.billing_type)}</td>
             <td data-label="Original">PHP ${originalAmount.toLocaleString()}</td>
             ${hasPenalty ? `<td data-label="Penalty">PHP ${penaltyAmount.toLocaleString()}</td>` : ''}
             <td data-label="Amount" class="admin-row-amount">&#8369;${amount.toLocaleString()}</td>
             <td data-label="Paid" class="admin-row-paid">&#8369;${paidAmount.toLocaleString()}</td>
             <td data-label="Balance" class="admin-row-balance">&#8369;${remainingAmount.toLocaleString()}</td>
             <td data-label="Due Date">${dueDate}</td>
-            <td data-label="Status"><span class="admin-billing-status ${statusClass}">${status}</span></td>
+            <td data-label="Status"><span class="admin-billing-status ${statusClass}">${escapeBillingHtml(status)}</span></td>
         </tr>
         `;
     }).join('');
@@ -515,11 +529,11 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
                     Student Details
                 </h3>
                 <div class="admin-student-grid">
-                    <div><strong>Name:</strong> ${data.student_name || 'N/A'}</div>
-                    <div><strong>Program:</strong> ${data.program_name || 'N/A'}</div>
-                    <div><strong>Subject:</strong> ${data.subject_name || 'N/A'}</div>
-                    <div><strong>Grade Level:</strong> ${data.grade_level || 'N/A'}</div>
-                    <div><strong>Goal:</strong> ${data.goal || 'N/A'}</div>
+                    <div><strong>Name:</strong> ${escapeBillingHtml(data.student_name || 'N/A')}</div>
+                    <div><strong>Program:</strong> ${escapeBillingHtml(data.program_name || 'N/A')}</div>
+                    <div><strong>Subject:</strong> ${escapeBillingHtml(data.subject_name || 'N/A')}</div>
+                    <div><strong>Grade Level:</strong> ${escapeBillingHtml(data.grade_level || 'N/A')}</div>
+                    <div><strong>Goal:</strong> ${escapeBillingHtml(data.goal || 'N/A')}</div>
                 </div>
             </section>
 
@@ -554,13 +568,15 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
                 ${discountAmount > 0 ? `
                     <div class="admin-billing-discount" role="status">
                         <div>
-                            <div class="admin-billing-discount-name"><i class="bi bi-tag-fill me-2" aria-hidden="true"></i>Discount applied: ${discountName}</div>
+                            <div class="admin-billing-discount-name"><i class="bi bi-tag-fill me-2" aria-hidden="true"></i>Discount applied: ${escapeBillingHtml(discountName)}</div>
                             <small>The assessed total already includes this discount.</small>
                         </div>
                         <div class="admin-billing-discount-amount">-&#8369;${discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
                 ` : ''}
             </section>
+
+            ${penaltyAdjustmentCard(activeSchedule)}
 
             <section class="admin-billing-card admin-billing-summary" aria-label="Billing summary">
                 <div class="admin-billing-summary-item">
@@ -579,7 +595,11 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
                 </div>
             </section>
 
-            ${isIncompleteEnrollment && !viewOnly ? `
+            ${isReadyForScheduling && !viewOnly ? `
+                <div class="alert alert-info text-center mb-0">
+                    <i class="bi bi-calendar2-check" aria-hidden="true"></i> Payment has been received. Assign a teacher and plot the student's schedule to finish this enrollment.
+                </div>
+            ` : isIncompleteEnrollment && !viewOnly ? `
                 <div class="alert alert-warning text-center mb-0">
                     <i class="bi bi-exclamation-triangle" aria-hidden="true"></i> This enrollment is incomplete. Please complete the enrollment first.
                 </div>
@@ -594,7 +614,7 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
                             <label for="modalPaymentAmount" class="form-label">Payment Amount <span class="text-danger" aria-hidden="true">*</span></label>
                             <div class="input-group">
                                 <span class="input-group-text">&#8369;</span>
-                                <input type="number" class="form-control" id="modalPaymentAmount" placeholder="Enter amount" value="" max="${data.balance}" step="0.01" autofocus>
+                                <input type="number" class="form-control" id="modalPaymentAmount" placeholder="Enter amount" value="" max="${escapeBillingHtml(data.balance)}" step="0.01" autofocus>
                             </div>
                             <small class="admin-payment-help"><em>Maximum: &#8369;${data.balance.toLocaleString()}</em></small>
                         </div>
@@ -629,8 +649,10 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
         showCancelButton: !viewOnly,
         confirmButtonText: viewOnly
             ? 'Close'
-            : (isIncompleteEnrollment
-                ? 'Pls complete the enrollment'
+            : (isReadyForScheduling
+                ? (canScheduleApplication ? 'Go to Scheduling' : (canViewApplication ? 'View Application' : 'Close'))
+                : isIncompleteEnrollment
+                ? 'Complete Onsite Enrollment'
                 : (isFullyPaid ? 'Done' : 'Confirm Enrollment & Payment')),
         cancelButtonText: '<i class="bi bi-x-circle"></i> Close',
         reverseButtons: true,
@@ -644,8 +666,17 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
             cancelButton: 'admin-billing-cancel'
         },
         didOpen: () => {
+            bindPenaltyAdjustments(activeSchedule, () => window.openBillingModal(enrollmentId, viewOnly));
             const methodSelect = document.getElementById('modalPaymentMethod');
             const referenceContainer = document.getElementById('referenceContainer');
+
+            if (paymentDraft && methodSelect) {
+                document.getElementById('modalPaymentAmount').value = paymentDraft.amount;
+                methodSelect.value = paymentDraft.method;
+                document.getElementById('modalReferenceNo').value = paymentDraft.ref || '';
+                const methodName = methodSelect.options[methodSelect.selectedIndex]?.text.toLowerCase() || '';
+                if (referenceContainer) referenceContainer.style.display = methodName.includes('gcash') ? 'block' : 'none';
+            }
 
             if (methodSelect) {
                 methodSelect.addEventListener('change', function() {
@@ -658,7 +689,7 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
             }
         },
         preConfirm: () => {
-            if (isFullyPaid || viewOnly || isIncompleteEnrollment) return true;
+            if (isFullyPaid || viewOnly || isIncompleteEnrollment || isReadyForScheduling) return true;
 
             const amount = parseFloat(document.getElementById('modalPaymentAmount').value);
             const method = document.getElementById('modalPaymentMethod').value;
@@ -669,6 +700,11 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
 
             if (!amount || amount <= 0) {
                 Swal.showValidationMessage('Please enter a valid payment amount');
+                return false;
+            }
+            if (amount > Number(data.balance)) {
+                Swal.showValidationMessage(`Please adjust the payment amount. You can pay up to PHP ${Number(data.balance).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, your outstanding balance.`);
+                document.getElementById('modalPaymentAmount').focus();
                 return false;
             }
             if (!method) {
@@ -689,6 +725,14 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
         }
         }).then((result) => {
             if (result.isConfirmed && !viewOnly) {
+                if (isReadyForScheduling) {
+                    if (canScheduleApplication) {
+                        window.openApplicationScheduling(Number(data.application_id));
+                    } else if (canViewApplication) {
+                        window.viewNewStudentApplication(Number(data.application_id));
+                    }
+                    return;
+                }
                 if (isIncompleteEnrollment) {
                     if (typeof window.openPendingEnrollmentCompletion === 'function') {
                         window.openPendingEnrollmentCompletion(enrollmentId, 'tutorial');
@@ -758,7 +802,13 @@ function renderBillingModal(data, paymentMethods, enrollmentId, viewOnly = false
                             }
                         });
                     } else {
-                        Swal.fire("Error", res.data.message || "Failed to record payment.", "error");
+                        Swal.fire({
+                            title: 'Please check the payment',
+                            text: res.data.message || 'The payment could not be recorded. Please review the details and try again.',
+                            icon: 'warning',
+                            confirmButtonText: 'Back to Payment',
+                            confirmButtonColor: '#e85d88'
+                        }).then(() => renderBillingModal(data, paymentMethods, enrollmentId, viewOnly, result.value));
                     }
                 }).catch(err => {
                     console.error(err);

@@ -13,6 +13,7 @@ export const SHARED_MODULE_PAGE_MAP = {
 };
 
 const PROGRAM_FEATURE_PERMISSION_KEYS = [
+    'view_session_automation', 'create_session_automation', 'edit_session_automation',
     'view_programs',
     'view_types', 'create_types', 'edit_types',
     'view_grades', 'create_grades', 'edit_grades',
@@ -21,6 +22,7 @@ const PROGRAM_FEATURE_PERMISSION_KEYS = [
     'view_checklists', 'edit_checklists',
     'view_discounts', 'create_discounts', 'edit_discounts',
     'view_registration', 'create_registration', 'edit_registration',
+    'view_payment_methods', 'create_payment_methods', 'edit_payment_methods', 'delete_payment_methods',
     'view_landing', 'edit_landing'
 ];
 
@@ -35,8 +37,18 @@ const LEGACY_PROGRAM_PERMISSION_MAP = {
 };
 
 export const MODULE_PERMISSION_EXTRAS = {
+    enrollment: [
+        'extend_tutorial_validity',
+        'view_online_applications',
+        'edit_online_applications',
+        'approve_online_applications',
+        'reject_online_applications',
+        'receive_online_application_payment',
+        'finalize_online_applications'
+    ],
     employee: ['manage_rbac'],
-    payment: ['view_assessment', 'manage_assessment'],
+    session: ['correct_no_show'],
+    payment: ['view_assessment', 'manage_assessment', 'adjust_penalty'],
     program: [
         'manage_types', 'manage_grades', 'manage_subjects', 'manage_services', 'manage_checklists', 'manage_discounts', 'manage_registration',
         ...PROGRAM_FEATURE_PERMISSION_KEYS
@@ -229,6 +241,10 @@ function buildDefaultPermissionMatrix(roleKey) {
     const allModules = RBAC_MODULES.map(module => module.key);
 
     setPermissions(matrix, DEFAULT_NAV_MODULES[normalized] || [], ['view']);
+    if (ROLE_DISPLAY_ORDER.includes(normalized)) {
+        setPermissions(matrix, ['program'], ['view_session_automation']);
+        setPermissions(matrix, ['session'], ['correct_no_show']);
+    }
 
     if (normalized === 'owner') {
         setPermissions(matrix, allModules, RBAC_ACTIONS, true);
@@ -240,14 +256,20 @@ function buildDefaultPermissionMatrix(roleKey) {
 
     if (normalized === 'secretary') {
         setPermissions(matrix, ['center'], ['view']);
-        setPermissions(matrix, ['schedule'], ['view']);
+        setPermissions(matrix, ['schedule'], ['view', 'create']);
         setPermissions(matrix, ['program', 'school_calendar', 'class', 'product', 'session'], ['view', 'create', 'edit']);
         setPermissions(matrix, ['enrollment', 'employee', 'payment'], ['view', 'create', 'edit', 'approve']);
+        setPermissions(matrix, ['enrollment'], MODULE_PERMISSION_EXTRAS.enrollment, true);
+        setPermissions(matrix, ['enrollment'], ['extend_tutorial_validity'], false);
         setPermissions(matrix, ['enrollment', 'payment'], ['export']);
         setPermissions(matrix, ['payment'], MODULE_PERMISSION_EXTRAS.payment, true);
         setPermissions(matrix, ['student_management'], ['view', 'edit', 'export']);
         setPermissions(matrix, ['employee'], MODULE_PERMISSION_EXTRAS.employee, true);
         setPermissions(matrix, ['program'], MODULE_PERMISSION_EXTRAS.program, true);
+        setPermissions(matrix, ['program'], [
+            'create_session_automation', 'edit_session_automation',
+            'create_payment_methods', 'edit_payment_methods', 'delete_payment_methods'
+        ], false);
         setPermissions(matrix, ['class'], MODULE_PERMISSION_EXTRAS.class, true);
         return matrix;
     }
@@ -257,28 +279,33 @@ function buildDefaultPermissionMatrix(roleKey) {
         setPermissions(matrix, ['schedule'], ['view', 'create']);
         setPermissions(matrix, ['class', 'session'], ['view', 'create', 'edit']);
         setPermissions(matrix, ['enrollment', 'payment'], ['view', 'create', 'edit', 'approve']);
+        setPermissions(matrix, ['enrollment'], MODULE_PERMISSION_EXTRAS.enrollment, true);
+        setPermissions(matrix, ['enrollment'], ['extend_tutorial_validity'], false);
         setPermissions(matrix, ['enrollment', 'payment'], ['export']);
         setPermissions(matrix, ['payment'], MODULE_PERMISSION_EXTRAS.payment, true);
         setPermissions(matrix, ['student_management'], ['view', 'edit', 'export']);
         setPermissions(matrix, ['class'], MODULE_PERMISSION_EXTRAS.class, true);
+        setPermissions(matrix, ['program'], ['view', 'view_payment_methods']);
         return matrix;
     }
 
     if (normalized === 'teacher') {
-        setPermissions(matrix, ['schedule'], ['view']);
+        setPermissions(matrix, ['schedule'], ['view', 'create']);
         setPermissions(matrix, ['class', 'school_calendar', 'session'], ['view']);
         setPermissions(matrix, ['enrollment', 'payment'], ['view', 'export']);
         setPermissions(matrix, ['session'], ['create', 'edit']);
         setPermissions(matrix, ['class'], ['manage_attendance', 'manage_students', 'manage_report_cards']);
+        setPermissions(matrix, ['program'], ['view', 'view_payment_methods']);
         return matrix;
     }
 
     if (normalized === 'auditor') {
         setPermissions(matrix, ['schedule'], ['view']);
         setPermissions(matrix, ['enrollment', 'payment', 'product', 'center'], ['view', 'export']);
+        setPermissions(matrix, ['enrollment'], ['view_online_applications']);
         setPermissions(matrix, ['payment'], ['view_assessment']);
         setPermissions(matrix, ['student_management'], ['view', 'export']);
-        setPermissions(matrix, ['program'], ['view', 'view_programs', 'view_grades']);
+        setPermissions(matrix, ['program'], ['view', 'view_programs', 'view_grades', 'view_payment_methods']);
         setPermissions(matrix, ['payment'], ['approve']);
         setPermissions(matrix, ['class'], ['view']);
         setPermissions(matrix, ['session'], ['view']);
@@ -328,6 +355,10 @@ function applyStoredOverrides(matrix, storedRoleConfig) {
             if (!Object.prototype.hasOwnProperty.call(matrix[moduleKey], permissionKey)) return;
             matrix[moduleKey][permissionKey] = value;
         });
+        // Preserve the previous approval/edit rule until this permission is saved.
+        if (moduleKey === 'payment' && typeof permissionConfig.adjust_penalty !== 'boolean') {
+            matrix.payment.adjust_penalty = Boolean(matrix.payment.edit && matrix.payment.approve);
+        }
     });
 }
 

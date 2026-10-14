@@ -29,7 +29,10 @@ function downloadBlob(blob, filename) {
 }
 
 function escapeCsvCell(value) {
-    return `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const text = String(value ?? '');
+    // Spreadsheet applications can execute formulas even inside quoted CSV cells.
+    const safeText = typeof value === 'string' && /^[\s\uFEFF]*[=+\-@]/.test(text) ? `'${text}` : text;
+    return `"${safeText.replace(/"/g, '""')}"`;
 }
 
 export function exportBillingStatementData({ format, filename, title, sections }) {

@@ -1,5 +1,5 @@
 // js/modules/discount.js
-import { canUseProgramPermission, guardProgramPermission } from './program_rbac.js';
+import { canUseProgramPermission, guardProgramPermission } from './program_rbac.js?v=20261001-payment-view-only';
 
 // 1. Load Discount Table
 export function loadDiscounts() {

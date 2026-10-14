@@ -1,6 +1,7 @@
-import OwnerCalendarModule from './owner_schedule.js?v=20260828-five-schedule-rows';
+import OwnerCalendarModule from './owner_schedule.js?v=20261012-start-window';
 
 const SECRETARY_SCHEDULE_ENDPOINT = '../../api/admin/secetary_schedule.php';
+const SESSION_STATUS_ENDPOINT = '../../api/secretary/session_status.php';
 const ALL_BRANCHES = 'all';
 
 export default class SecretaryCalendarModule extends OwnerCalendarModule {
@@ -109,14 +110,28 @@ export default class SecretaryCalendarModule extends OwnerCalendarModule {
         };
 
         try {
-            const response = await axios.post(SECRETARY_SCHEDULE_ENDPOINT, payload);
+            const sendsSessionEmail = ['ongoing', 'done', 'no-show'].includes(newStatus);
+            if (sendsSessionEmail) {
+                const action = { ongoing: 'Starting Session', done: 'Completing Session', 'no-show': 'Marking No-show' }[newStatus];
+                Swal.fire({
+                    title: `${action}...`,
+                    text: 'Please wait while the session is updated and the email is sent.',
+                    allowOutsideClick: false,
+                    allowEscapeKey: false,
+                    showConfirmButton: false,
+                    didOpen: () => Swal.showLoading()
+                });
+            }
+            const response = await axios.post(sendsSessionEmail ? SESSION_STATUS_ENDPOINT : SECRETARY_SCHEDULE_ENDPOINT, payload);
 
             if (response.data.status === 'success') {
+                const alreadyProcessed = response.data.already_done || response.data.already_ongoing || response.data.already_no_show;
+                const emailFailed = sendsSessionEmail && response.data.email_sent === false && !alreadyProcessed;
                 Swal.fire({
-                    icon: 'success',
+                    icon: emailFailed ? 'warning' : 'success',
                     title: 'Status Updated',
-                    text: `Schedule status changed to ${newStatus}.`,
-                    timer: 2000,
+                    text: response.data.message || `Schedule status changed to ${newStatus}.`,
+                    timer: emailFailed ? undefined : 2000,
                     timerProgressBar: true
                 }).then(() => {
                     this.renderCalendar();

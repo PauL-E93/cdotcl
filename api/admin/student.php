@@ -1,12 +1,49 @@
 <?php
 // student.php
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+require_once __DIR__ . '/../security/PasswordExpiration.php';
+require_once __DIR__ . '/../security/AuthGuard.php';
+require_once __DIR__ . '/../security/SafeImageUpload.php';
+require_once __DIR__ . '/../security/AccountActivation.php';
+require_once __DIR__ . '/../security/PasswordPolicy.php';
+require_once __DIR__ . '/../guardian_relationship_helper.php';
+
+SessionBootstrap::start();
+
+$requestMethod = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$requestBody = $requestMethod === 'POST' && strpos($_SERVER['CONTENT_TYPE'] ?? '', 'multipart/form-data') === false
+    ? json_decode(file_get_contents('php://input'), true) : null;
+$requestedOperation = $requestMethod === 'GET' ? ($_GET['operation'] ?? '')
+    : ($_POST['operation'] ?? (is_array($requestBody) ? ($requestBody['operation'] ?? '') : ''));
+$requestedData = $requestMethod === 'GET' ? ($_GET['json'] ?? '')
+    : ($_POST['json'] ?? (is_array($requestBody) ? ($requestBody['json'] ?? '') : ''));
+$requestedData = is_string($requestedData) ? json_decode($requestedData, true) : $requestedData;
+if ($requestedOperation !== 'getGenders') {
+    $actor = AuthGuard::requireUser();
+    $staff = in_array($actor['role_name'], ['owner', 'secretary', 'branch admin'], true);
+    $targetId = (int) (($requestedData['student_id'] ?? null) ?: ($_GET['student_id'] ?? 0));
+    if (in_array($requestedOperation, ['addStudent', 'updateStudent'], true) && !$staff
+        && !($requestedOperation === 'updateStudent' && $actor['user_type'] === 'student'
+            && $targetId === $actor['user_id'])) AuthGuard::deny();
+    if ($requestedOperation === 'updateStudentPassword'
+        && ($actor['user_type'] !== 'student' || $targetId !== $actor['user_id'])) AuthGuard::deny();
+    if ($requestedOperation === 'getStudentProfile' && !$staff
+        && !($actor['user_type'] === 'student' && $targetId === $actor['user_id'])) AuthGuard::deny();
+    if ($actor['role_name'] === 'branch admin' && $targetId > 0
+        && in_array($requestedOperation, ['getStudentProfile', 'updateStudent'], true)) {
+        $branchId = (int) ($_SESSION['branch_id'] ?? 0);
+        $check = AuthGuard::connection()->prepare('SELECT 1 FROM student s LEFT JOIN employee e ON e.employee_id = s.employee_id
+            WHERE s.student_id = ? AND (e.branch_id = ? OR EXISTS (
+                SELECT 1 FROM enrollment_header eh WHERE eh.student_id = s.student_id AND eh.branch_id = ?)) LIMIT 1');
+        $check->execute([$targetId, $branchId, $branchId]);
+        if (!$check->fetchColumn()) AuthGuard::deny();
+    }
+    if ($requestMethod === 'GET' && in_array($requestedOperation, ['addStudent', 'updateStudent', 'updateStudentPassword'], true)) {
+        AuthGuard::deny(405, 'Method not allowed.');
+    }
 }
 
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, GET");
 header("Access-Control-Allow-Headers: Content-Type");
 
@@ -14,6 +51,7 @@ class Student {
     
     function addStudent($json) {
         include "connection-pdo.php";
+        PasswordExpiration::ensureSchema($conn);
 
         $data = json_decode($json, true);
 
@@ -27,12 +65,13 @@ class Student {
         }
 
         try {
+            ensureGuardianRelationshipSchema($conn);
             $conn->beginTransaction(); // Start Transaction
 
             // --- STEP 1: INSERT GUARDIAN ---
             $g_name = $data['guardian_name'] ?? '';
             $g_contact = $data['guardian_contact'] ?? '';
-            $g_rel = $data['guardian_relationship'] ?? '';
+            $g_rel = saveGuardianRelationship($conn, validateGuardianRelationship($data['guardian_relationship'] ?? null));
 
             // Insert into guardian table (Matches image: guardian_id, name, contact_number, relationship)
             $sqlGuardian = "INSERT INTO guardian (name, contact_number, relationship) VALUES (:name, :contact, :rel)";
@@ -53,14 +92,12 @@ class Student {
             
             // AUTO-GENERATE CREDENTIALS
             // Username: firstName + lastName (lowercase, no spaces)
-            // Password: firstName + "@123" (preserve the entered capitalization)
+            // Email a temporary password and require a new password at first sign-in.
             $cleanFirst = strtolower(str_replace(' ', '', $first_name));
             $cleanLast  = strtolower(str_replace(' ', '', $last_name));
-            $passwordFirstName = preg_replace('/\s+/', '', trim((string)$first_name));
-            
             $username      = $cleanFirst . $cleanLast;
-            $raw_password  = $passwordFirstName . "@123";
-            $password_hash = password_hash($raw_password, PASSWORD_DEFAULT);
+            $temporaryPassword = 'Cdo!' . bin2hex(random_bytes(6));
+            $password_hash = password_hash($temporaryPassword, PASSWORD_DEFAULT);
 
             $email         = $data['email'] ?? null;
             $gender_id     = !empty($data['gender_id']) ? $data['gender_id'] : null;
@@ -78,7 +115,7 @@ class Student {
             // System Variables
             $status        = 'active'; // Always active on save
             $role_id       = 1; 
-            $employee_id   = isset($_SESSION['employee_id']) ? $_SESSION['employee_id'] : 1; 
+            $employee_id   = (int) $_SESSION['employee_id'];
 
             $hasHealthNoteStmt = $conn->prepare("SHOW COLUMNS FROM student LIKE 'health_note'");
             $hasHealthNoteStmt->execute();
@@ -124,6 +161,7 @@ class Student {
             $studentFields = [
                 'username',
                 'password_hash',
+                'password_is_temporary',
                 'email',
                 'first_name',
                 'middle_name',
@@ -145,6 +183,7 @@ class Student {
             $studentValues = [
                 ':username',
                 ':password_hash',
+                '1',
                 ':email',
                 ':first_name',
                 ':middle_name',
@@ -231,7 +270,7 @@ class Student {
 
                 $_SESSION['pending_enrollment_credentials'][$student_id] = [
                     'username' => $username,
-                    'password' => $raw_password,
+                    'temporary_password' => $temporaryPassword,
                     'created_at' => time()
                 ];
             }
@@ -248,16 +287,19 @@ class Student {
                 "status" => "success",
                 "student_id" => $student_id,
                 "student_name" => trim($first_name . " " . $last_name . " " . $ext),
+                "guardian_relationship" => $g_rel,
                 "current_branch" => $currentBranch
             ]);
 
-        } catch (PDOException $e) {
-            $conn->rollBack(); // Rollback if error
-            
-            if ($e->errorInfo[1] == 1062) {
+        } catch (Throwable $e) {
+            if ($conn->inTransaction()) $conn->rollBack();
+            error_log('Student account creation failed: ' . $e->getMessage());
+            if ($e instanceof InvalidArgumentException) {
+                echo json_encode(["status" => "error", "message" => $e->getMessage()]);
+            } elseif ($e instanceof PDOException && ($e->errorInfo[1] ?? null) == 1062) {
                 echo json_encode(["status" => "error", "message" => "Username or Email already exists."]);
             } else {
-                echo json_encode(["status" => "error", "message" => "Database error: " . $e->getMessage()]);
+                echo json_encode(["status" => "error", "message" => "Unable to finish student account setup. Contact the center for a temporary password."]);
             }
         }
     }
@@ -276,8 +318,21 @@ class Student {
             ]);
             return;
         }
+        $current = AuthGuard::account($conn, 'student', (int) $data['student_id']);
+        if (!$current) AuthGuard::deny(404, 'Student not found.');
+        if (strcasecmp((string) ($current['email'] ?? ''), trim((string) ($data['email'] ?? ''))) !== 0) {
+            if ((int) ($_SESSION['student_id'] ?? 0) !== (int) $data['student_id']) {
+                if (empty($current['password_is_temporary'])) AuthGuard::deny();
+                AccountActivation::ensureSchema($conn);
+                $conn->prepare('DELETE FROM account_activations WHERE user_type = ? AND user_id = ?')
+                    ->execute(['student', (int) $data['student_id']]);
+            } else {
+                AuthGuard::verifyCurrentPassword(is_array($data) ? $data : []);
+            }
+        }
 
         try {
+            ensureGuardianRelationshipSchema($conn);
             $conn->beginTransaction();
 
             $student_id = $data['student_id'];
@@ -286,7 +341,7 @@ class Student {
             if (!empty($data['guardian_id'])) {
                 $g_name = $data['guardian_name'] ?? '';
                 $g_contact = $data['guardian_contact'] ?? '';
-                $g_rel = $data['guardian_relationship'] ?? '';
+                $g_rel = saveGuardianRelationship($conn, validateGuardianRelationship($data['guardian_relationship'] ?? null));
 
                 $sqlGuardian = "UPDATE guardian SET name = :name, contact_number = :contact, relationship = :rel WHERE guardian_id = :guardian_id";
                 $stmtG = $conn->prepare($sqlGuardian);
@@ -363,6 +418,7 @@ class Student {
             $stmtS->execute();
 
             $conn->commit();
+            if ((int) ($_SESSION['student_id'] ?? 0) === (int) $student_id) AuthGuard::refreshCurrentVersion($conn);
 
             echo json_encode([
                 "status" => "success",
@@ -371,8 +427,8 @@ class Student {
                 "student_name" => trim($first_name . " " . $last_name . " " . $ext)
             ]);
 
-        } catch (PDOException $e) {
-            $conn->rollBack();
+        } catch (Throwable $e) {
+            if ($conn->inTransaction()) $conn->rollBack();
             echo json_encode([
                 "status" => "error",
                 "message" => "Database error: " . $e->getMessage()
@@ -383,8 +439,10 @@ class Student {
     // Update Student Password
     function updateStudentPassword($json) {
         include "connection-pdo.php";
+        PasswordExpiration::ensureSchema($conn);
 
         $data = json_decode($json, true);
+        AuthGuard::verifyCurrentPassword(is_array($data) ? $data : []);
         $student_id = $data['student_id'] ?? null;
         $username = trim($data['username'] ?? '');
         $new_password = $data['new_password'] ?? '';
@@ -400,8 +458,8 @@ class Student {
             return;
         }
 
-        if (strlen($new_password) < 8 || !preg_match('/[A-Za-z]/', $new_password) || !preg_match('/[A-Z]/', $new_password) || !preg_match('/[0-9]/', $new_password) || !preg_match('/[^A-Za-z0-9]/', $new_password)) {
-            echo json_encode(["status" => "error", "message" => "Password must be at least 8 characters and include at least 1 letter, 1 uppercase letter, 1 number, and 1 symbol."]);
+        if (!PasswordPolicy::valid($new_password)) {
+            echo json_encode(["status" => "error", "message" => PasswordPolicy::message()]);
             return;
         }
 
@@ -409,7 +467,7 @@ class Student {
             $conn->beginTransaction();
 
             // Update username if changed
-            $sqlUpdate = "UPDATE student SET username = :username, password_hash = :password_hash WHERE student_id = :student_id";
+            $sqlUpdate = "UPDATE student SET username = :username, password_hash = :password_hash, password_changed_at = NOW(), password_is_temporary = 0 WHERE student_id = :student_id";
             $stmt = $conn->prepare($sqlUpdate);
             $stmt->bindParam(':username', $username);
             $password_hash = password_hash($new_password, PASSWORD_DEFAULT);
@@ -418,6 +476,7 @@ class Student {
             $stmt->execute();
 
             $conn->commit();
+            AuthGuard::refreshCurrentVersion($conn);
 
             echo json_encode(["status" => "success", "message" => "Password updated successfully."]);
         } catch (PDOException $e) {
@@ -433,9 +492,16 @@ class Student {
     // Get Student Profile by ID
     function getStudentProfile($student_id) {
         include "connection-pdo.php";
+        PasswordExpiration::ensureSchema($conn);
+        $passwordAgeDays = PasswordExpiration::MAX_PASSWORD_AGE_DAYS;
         try {
-            $sql = "SELECT s.student_id, s.student_id_number, s.username, s.first_name, s.middle_name, s.last_name, s.ext, s.nickname, 
+            ensureGuardianRelationshipSchema($conn);
+            $sql = "SELECT s.student_id, s.student_id_number, s.lrn, s.username, s.first_name, s.middle_name, s.last_name, s.ext, s.nickname,
                            s.email, s.birthday, s.gender_id, s.guardian_id, s.profile_picture, s.health_note,
+                           s.password_changed_at,
+                           DATE_ADD(s.password_changed_at, INTERVAL {$passwordAgeDays} DAY) AS password_change_due_at,
+                           CASE WHEN s.password_changed_at <= DATE_SUB(NOW(), INTERVAL {$passwordAgeDays} DAY) THEN 1 ELSE 0 END AS password_expired,
+                           GREATEST(0, CEIL(GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(s.password_changed_at, INTERVAL {$passwordAgeDays} DAY))) / 86400)) AS password_days_remaining,
                            s.adr_street, s.adr_barangay, s.adr_city, s.adr_province, s.adr_note,
                            g.name as guardian_name, g.contact_number as guardian_contact, g.relationship as guardian_relationship
                     FROM student s
@@ -449,7 +515,8 @@ class Student {
             if ($result) {
                 echo json_encode([
                     "status" => "success",
-                    "data" => $result
+                    "data" => $result,
+                    "relationships" => $conn->query('SELECT relationship_id, relationship_name FROM guardian_relationships ORDER BY relationship_id')->fetchAll(PDO::FETCH_ASSOC)
                 ]);
             } else {
                 echo json_encode([
@@ -491,31 +558,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET'){
         $json = $_POST['json'] ?? "";
         
         // Handle file upload if present
-        if (isset($_FILES['profile_picture']) && $_FILES['profile_picture']['error'] == UPLOAD_ERR_OK) {
-            $file = $_FILES['profile_picture'];
-            $upload_dir = '../../uploads/student_profiles/';
-            
-            // Create directory if it doesn't exist
-            if (!is_dir($upload_dir)) {
-                mkdir($upload_dir, 0755, true);
-            }
-            
-            // Generate unique filename
-            $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-            $filename = 'student_' . time() . '_' . uniqid() . '.' . $file_ext;
-            $upload_path = $upload_dir . $filename;
-            
-            // Validate file type
-            $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
-            if (in_array($file['type'], $allowed_types) && $file['size'] <= 5 * 1024 * 1024) {
-                if (move_uploaded_file($file['tmp_name'], $upload_path)) {
-                    // Decode json and add the profile_picture path
-                    $data = json_decode($json, true);
-                    $relativePath = 'uploads/student_profiles/' . $filename;
-                    $data['profile_picture'] = $relativePath;
-                    $json = json_encode($data);
-                }
-            }
+        if (isset($_FILES['profile_picture'])) {
+            if ($operation !== 'updateStudent' || $targetId <= 0) AuthGuard::deny();
+            try {
+                $relativePath = SafeImageUpload::store($_FILES['profile_picture'], 'student_profiles');
+                $data = json_decode($json, true);
+                if (!is_array($data)) AuthGuard::deny(400, 'Invalid profile data.');
+                $data['profile_picture'] = $relativePath;
+                $json = json_encode($data);
+            } catch (Throwable $e) { AuthGuard::deny(422, $e->getMessage()); }
         }
     } else {
         $content = file_get_contents('php://input');

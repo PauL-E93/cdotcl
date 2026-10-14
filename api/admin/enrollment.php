@@ -1,17 +1,42 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+$enrollmentActor = null;
+if (($_GET['operation'] ?? '') === 'getTeacherAvailableSlots' && !AuthGuard::user()) {
+    require_once __DIR__ . '/../security/ScheduleActionToken.php';
+    $enrollmentId = (int) ($_GET['enrollment_details_id'] ?? 0);
+    $teacherId = (int) ($_GET['teacher_id'] ?? 0);
+    $date = (string) ($_GET['schedule_date'] ?? '');
+    $db = AuthGuard::connection();
+    $check = $db->prepare('SELECT s.email, COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) AS preferred_teacher FROM enrollment_details ed
+        JOIN enrollment_header eh ON eh.enrollment_header_id = ed.enrollment_header_id
+        JOIN student s ON s.student_id = eh.student_id
+        JOIN enrollment_preferred_schedule eps ON eps.enrollment_details_id = ed.enrollment_details_id
+        WHERE ed.enrollment_details_id = ? AND eps.date = ? LIMIT 1');
+    $check->execute([$enrollmentId, $date]);
+    $row = $check->fetch(PDO::FETCH_ASSOC);
+    if (!$row || $teacherId !== (int) $row['preferred_teacher']
+        || !ScheduleActionToken::validReschedule($enrollmentId, $date, (string) $row['email'],
+            $_GET['expires'] ?? null, $_GET['token'] ?? null)) AuthGuard::deny();
+} else {
+    $enrollmentActor = AuthGuard::requireUser();
+}
+require_once __DIR__ . '/../security/EnrollmentPermission.php';
+
 // api/enrollment.php
 
 error_reporting(E_ERROR | E_PARSE);
-session_start();
+if (session_status() === PHP_SESSION_NONE) session_start();
 
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, GET");
 header("Access-Control-Allow-Headers: Content-Type");
 
 require_once __DIR__ . '/../notification_helper.php';
 require_once __DIR__ . '/../grade_level_helper.php';
+require_once __DIR__ . '/../guardian_relationship_helper.php';
 require_once __DIR__ . '/../billing_assessment_helper.php';
+require_once __DIR__ . '/../enrollment_completion_helper.php';
+require_once __DIR__ . '/../tutorial_validity_helper.php';
 
 class EnrollmentAPI {
 
@@ -21,14 +46,15 @@ class EnrollmentAPI {
     public function __construct() {
         include "connection-pdo.php"; 
         $this->conn = $conn;
+        ensureTutorialValiditySchema($this->conn);
         ensureGradeLevelSchema($this->conn);
+        ensureGuardianRelationshipSchema($this->conn);
         ensureBillingAssessmentSchema($this->conn);
         $this->notifications = new NotificationService($this->conn);
     }
 
     private function getCurrentEnrollmentEmployeeId() {
-        $role = strtolower(trim((string)($_SESSION['user_role'] ?? '')));
-        if ($role === 'student') {
+        if (($_SESSION['user_type'] ?? null) === 'student') {
             return null;
         }
 
@@ -73,10 +99,143 @@ class EnrollmentAPI {
         return $branchId;
     }
 
+    private function syncSectionCapacityStatus($sectionId) {
+        $sectionId = intval($sectionId ?? 0);
+        if ($sectionId <= 0) {
+            return;
+        }
+
+        $stmt = $this->conn->prepare("SELECT s.max, s.status,
+                COUNT(ed.enrollment_details_id) AS enrolled_count
+            FROM sections s
+            LEFT JOIN enrollment_details ed ON ed.section_id = s.section_id
+            WHERE s.section_id = ?
+            GROUP BY s.section_id, s.max, s.status");
+        $stmt->execute([$sectionId]);
+        $section = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$section) {
+            return;
+        }
+
+        $maxCapacity = intval($section['max'] ?? 0);
+        $enrolledCount = intval($section['enrolled_count'] ?? 0);
+        $currentStatus = strtolower(trim((string)($section['status'] ?? '')));
+        if ($maxCapacity <= 0) {
+            return;
+        }
+
+        $newStatus = $enrolledCount >= $maxCapacity
+            ? 'full'
+            : ($currentStatus === 'full' ? 'open' : null);
+        if ($newStatus !== null && $newStatus !== $currentStatus) {
+            $update = $this->conn->prepare("UPDATE sections SET status = ? WHERE section_id = ?");
+            $update->execute([$newStatus, $sectionId]);
+        }
+    }
+
+    /**
+     * Lock and validate a section before assigning an enrollment to it.
+     * The lock is held until the caller commits, preventing two requests from
+     * taking the final slot at the same time.
+     */
+    private function assertSectionHasCapacity($sectionId, $expectedClassId = null, $expectedProgramId = null, $expectedBranchId = null, $excludeEnrollmentDetailsId = null) {
+        $sectionId = intval($sectionId ?? 0);
+        if ($sectionId <= 0) {
+            throw new Exception("A section is required to complete this enrollment.");
+        }
+
+        $stmt = $this->conn->prepare("SELECT s.section_id, s.class_id, s.status AS section_status, s.max,
+                c.program_id, c.branch_id, c.status AS class_status
+            FROM sections s
+            INNER JOIN class c ON c.class_id = s.class_id
+            WHERE s.section_id = ?
+            LIMIT 1 FOR UPDATE");
+        $stmt->execute([$sectionId]);
+        $section = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$section) {
+            throw new Exception("The selected section was not found. Please choose another section.");
+        }
+
+        if ($expectedClassId && intval($section['class_id']) !== intval($expectedClassId)) {
+            throw new Exception("The selected section does not belong to the selected class.");
+        }
+        if ($expectedProgramId && intval($section['program_id']) !== intval($expectedProgramId)) {
+            throw new Exception("The selected class is not available for this program.");
+        }
+        if ($expectedBranchId && intval($section['branch_id']) !== intval($expectedBranchId)) {
+            throw new Exception("The selected class is not available at the selected branch.");
+        }
+
+        $classStatus = strtolower(trim((string)($section['class_status'] ?? '')));
+        $sectionStatus = strtolower(trim((string)($section['section_status'] ?? '')));
+        if ($classStatus !== 'open') {
+            throw new Exception("The selected class is no longer open for enrollment.");
+        }
+        if (!in_array($sectionStatus, ['open', 'full'], true)) {
+            throw new Exception("The selected section is no longer open for enrollment.");
+        }
+
+        $countSql = "SELECT COUNT(*) FROM enrollment_details WHERE section_id = ?";
+        $countValues = [$sectionId];
+        if ($excludeEnrollmentDetailsId) {
+            $countSql .= " AND enrollment_details_id <> ?";
+            $countValues[] = intval($excludeEnrollmentDetailsId);
+        }
+        $countStmt = $this->conn->prepare($countSql);
+        $countStmt->execute($countValues);
+        $enrolledCount = intval($countStmt->fetchColumn());
+        $maxCapacity = intval($section['max'] ?? 0);
+
+        if ($maxCapacity > 0 && $enrolledCount >= $maxCapacity) {
+            throw new Exception("The selected section is already full ({$enrolledCount}/{$maxCapacity}). Please choose another section.");
+        }
+
+        // A previously-full section can become available after an enrollment is
+        // moved or deleted. Keep its stored status aligned with the locked count.
+        if ($sectionStatus === 'full') {
+            $reopen = $this->conn->prepare("UPDATE sections SET status = 'open' WHERE section_id = ?");
+            $reopen->execute([$sectionId]);
+        }
+
+        return $section;
+    }
+
+    private function canViewOnlineApplications() {
+        $role = strtolower(trim((string)($_SESSION['user_role'] ?? '')));
+        $role = preg_replace('/[\s_-]+/', ' ', $role);
+        $allowed = in_array($role, ['owner', 'secretary', 'branch admin', 'auditor'], true);
+
+        try {
+            $stmt = $this->conn->prepare("SELECT permissions_json
+                FROM role_module_permissions
+                WHERE role_name = ? AND module_key = 'enrollment'
+                LIMIT 1");
+            $stmt->execute([$role]);
+            $stored = json_decode((string)($stmt->fetchColumn() ?: '{}'), true);
+            if (is_array($stored)
+                && array_key_exists('view_online_applications', $stored)
+                && is_bool($stored['view_online_applications'])) {
+                return $stored['view_online_applications'];
+            }
+        } catch (Throwable $error) {
+            // Use role defaults while the RBAC table is being initialized.
+        }
+
+        return $allowed;
+    }
+
     private function getEnrollmentBranchId($data, $fallbackBranchId = null) {
         $requestedBranchId = isset($data['preferred_branch_id']) && $data['preferred_branch_id'] !== '' && $data['preferred_branch_id'] !== null
             ? intval($data['preferred_branch_id'])
             : 0;
+
+        $assignedBranchId = $this->getBranchAdminBranchId();
+        if ($assignedBranchId !== null) {
+            if ($requestedBranchId > 0 && $requestedBranchId !== $assignedBranchId) {
+                throw new Exception('You can only enroll students at your assigned branch.');
+            }
+            return $assignedBranchId;
+        }
 
         if ($requestedBranchId > 0) {
             return $requestedBranchId;
@@ -86,6 +245,26 @@ class EnrollmentAPI {
     }
 
     private function assertEnrollmentAccessibleToCurrentUser($enrollmentDetailsId) {
+        if (($_SESSION['user_type'] ?? null) === 'student') {
+            $studentId = intval($_SESSION['user_id'] ?? 0);
+            if ($studentId <= 0) {
+                throw new Exception("Your student session has expired. Please sign in again.");
+            }
+
+            $stmt = $this->conn->prepare("
+                SELECT 1
+                FROM enrollment_details ed
+                INNER JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id
+                WHERE ed.enrollment_details_id = ? AND eh.student_id = ?
+                LIMIT 1
+            ");
+            $stmt->execute([$enrollmentDetailsId, $studentId]);
+            if (!$stmt->fetchColumn()) {
+                throw new Exception("Enrollment not found for your student account.");
+            }
+            return;
+        }
+
         $branchId = $this->getBranchAdminBranchId();
         if (!$branchId) {
             return;
@@ -396,7 +575,8 @@ class EnrollmentAPI {
         }
     }
 
-    private function insertEnrollmentPreferredScheduleRows($detailsId, $scheduleRows) {
+    private function insertEnrollmentPreferredScheduleRows($detailsId, $scheduleRows, $initializeValidity = false) {
+        prepareTutorialEnrollmentSchedule($this->conn, (int) $detailsId, $scheduleRows, $initializeValidity);
         if (empty($scheduleRows) || !is_array($scheduleRows)) {
             return;
         }
@@ -457,7 +637,7 @@ class EnrollmentAPI {
 
     private function getProgram($programId) {
         $stmt = $this->conn->prepare("
-            SELECT p.program_id, p.name, p.tuition, p.total_units, p.unit_type, p.program_type,
+            SELECT p.program_id, p.name, p.tuition, p.total_units, p.unit_type, p.program_type, p.validity_days,
                    p.registration_fee, p.default_discount_id, p.downpayment, p.service_id,
                    s.service_name, s.amount AS service_amount, s.status AS service_status,
                    pt.type AS type_name
@@ -689,14 +869,18 @@ class EnrollmentAPI {
     }
 
     private function getPaymentMethodName($paymentMethodId) {
-        $stmt = $this->conn->prepare("SELECT payment_method FROM payment_method WHERE payment_method_id = ? LIMIT 1");
+        $stmt = $this->conn->prepare("SELECT payment_method FROM payment_method WHERE payment_method_id = ? AND status <> 'inactive' LIMIT 1");
         $stmt->execute([$paymentMethodId]);
-        return $stmt->fetchColumn() ?: 'Payment';
+        $name = $stmt->fetchColumn();
+        if ($name === false || trim((string) $name) === '') {
+            throw new Exception('The selected payment method is not available.');
+        }
+        return (string) $name;
     }
 
     private function getPaidDownpaymentAmount($detailsId) {
         $statusFilter = $this->columnExists('payment', 'payment_status')
-            ? "AND COALESCE(p.payment_status, 'Received') = 'Received'"
+            ? "AND COALESCE(p.payment_status, 'Received') IN ('Received', 'Pending')"
             : "";
 
         $stmt = $this->conn->prepare("
@@ -792,6 +976,10 @@ class EnrollmentAPI {
             $registrationFee = floatval($snapshot['registration_fee'] ?? 0);
 
             $discountCredit = floatval($snapshot['discount_amount'] ?? 0);
+            // Larger initial payments already cover these monthly charges.
+            // Retain their paid bills and deduct the credit from future months.
+            $retainInitialBills = round($paidDownpayment * 100) > round(floatval($snapshot['downpayment_amount'] ?? 0) * 100);
+            $advanceCredit = $retainInitialBills ? $registrationFee + $paidDownpayment : 0;
             $monthOneBillingId = null;
             for ($month = 1; $month <= $numMonths; $month++) {
                 $dueDate = date('Y-m-d', strtotime("+" . ($month - 1) . " months", strtotime($startDate)));
@@ -801,6 +989,11 @@ class EnrollmentAPI {
                 }
                 $amountDue = max(0, $baseAmount - $discountCredit);
                 $discountCredit = max(0, $discountCredit - $baseAmount);
+                if ($retainInitialBills) {
+                    $covered = min($advanceCredit, $amountDue);
+                    $amountDue = round($amountDue - $covered, 2);
+                    $advanceCredit = round($advanceCredit - $covered, 2);
+                }
 
                 if ($amountDue > 0) {
                     $billingId = $this->insertBillingRow($detailsId, "Month " . $month, $amountDue, $dueDate);
@@ -810,7 +1003,7 @@ class EnrollmentAPI {
                 }
             }
 
-            if ($monthOneBillingId && !empty($initialScheduleIds)) {
+            if (!$retainInitialBills && $monthOneBillingId && !empty($initialScheduleIds)) {
                 $this->moveInitialEnrollmentPaymentsToBill($detailsId, $monthOneBillingId, $initialScheduleIds);
             }
 
@@ -860,14 +1053,14 @@ class EnrollmentAPI {
             $this->conn->beginTransaction();
             $uploadedScreenshot = $_FILES['payment_screenshot'] ?? null;
 
-            if (isset($_SESSION['user_role']) && $_SESSION['user_role'] == 'student') {
+            if (($_SESSION['user_type'] ?? null) === 'student') {
                 $studentId = intval($_SESSION['user_id']);
             } else {
                 $studentId = isset($data['student_id']) ? intval($data['student_id']) : 0;
             }
 
             $programId = isset($data['program_id']) ? intval($data['program_id']) : 0;
-            $amount = floatval($data['amount'] ?? 0);
+            $amount = round(floatval($data['amount'] ?? 0), 2);
             $methodId = isset($data['method']) ? intval($data['method']) : 0;
             $referenceNo = isset($data['ref']) && trim((string)$data['ref']) !== '' ? trim((string)$data['ref']) : null;
             $isNewStudent = !empty($data['is_new_student']);
@@ -878,7 +1071,7 @@ class EnrollmentAPI {
             if ($programId <= 0) {
                 throw new Exception("Program is required before downpayment.");
             }
-            if ($amount <= 0) {
+            if (!is_finite($amount) || $amount <= 0) {
                 throw new Exception("Please enter a valid downpayment amount.");
             }
             if ($methodId <= 0) {
@@ -896,9 +1089,14 @@ class EnrollmentAPI {
             $configuredDownpayment = floatval($snapshot['downpayment_amount']);
             $expectedInitialPayment = $registrationFee + $configuredDownpayment;
 
-            if ($expectedInitialPayment > 0 && abs($amount - $expectedInitialPayment) > 0.01) {
-                throw new Exception("Payment must match the program's required registration fee and downpayment.");
+            if (($_SESSION['user_type'] ?? null) === 'student' && $expectedInitialPayment <= 0) {
+                throw new Exception('This program has no required initial payment. Please use the regular enrollment flow.');
             }
+
+            if (round($amount * 100) < round($expectedInitialPayment * 100)) {
+                throw new Exception("Payment must be at least the program's required registration fee and downpayment.");
+            }
+            $tuitionPayment = round($amount - $registrationFee, 2);
 
             $incompleteHeaderStatus = $this->getAllowedStatus('enrollment_header', 'incomplete', 'pending');
             $incompleteDetailsStatus = $this->getAllowedStatus('enrollment_details', 'incomplete', 'pending');
@@ -929,15 +1127,21 @@ class EnrollmentAPI {
             $paymentMethodName = $this->getPaymentMethodName($methodId);
             $paymentStatus = (strtolower($paymentMethodName) === 'cash') ? 'Received' : 'Pending';
             $billingStatus = $paymentStatus === 'Received' ? 'paid' : 'unpaid';
-            $isStudentPayment = strtolower(trim((string)($_SESSION['user_role'] ?? ''))) === 'student';
+            $isStudentPayment = ($_SESSION['user_type'] ?? null) === 'student';
             $isGcashPayment = stripos($paymentMethodName, 'gcash') !== false;
+
+            if ($isStudentPayment && $paymentStatus === 'Received') {
+                throw new Exception('Students must submit an online payment for staff review.');
+            }
+            if ($isStudentPayment && (!$uploadedScreenshot || ($uploadedScreenshot['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE)) {
+                throw new Exception('An online payment screenshot is required.');
+            }
+            if ($isStudentPayment && !$referenceNo) {
+                throw new Exception('An online payment reference number is required.');
+            }
 
             if ($isGcashPayment && !$isStudentPayment && !$referenceNo) {
                 throw new Exception("GCash reference number is required.");
-            }
-
-            if ($isGcashPayment && $isStudentPayment && (!$uploadedScreenshot || ($uploadedScreenshot['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE)) {
-                throw new Exception("GCash payment screenshot is required.");
             }
 
             $balance = $totalFee;
@@ -960,10 +1164,10 @@ class EnrollmentAPI {
             }
 
             $billingId = null;
-            if ($configuredDownpayment > 0) {
-                $billingId = $this->insertBillingRow($detailsId, 'Downpayment', $configuredDownpayment, date('Y-m-d'), $billingStatus);
-                $balance = max($balance - $configuredDownpayment, 0);
-                $paymentId = $this->insertPaymentRecord($billingId, $methodId, $configuredDownpayment, $referenceNo, $balance, $employeeId, $paymentStatus, 'Downpayment', $receiptId);
+            if ($tuitionPayment > 0) {
+                $billingId = $this->insertBillingRow($detailsId, 'Downpayment', $tuitionPayment, date('Y-m-d'), $billingStatus);
+                $balance = max($balance - $tuitionPayment, 0);
+                $paymentId = $this->insertPaymentRecord($billingId, $methodId, $tuitionPayment, $referenceNo, $balance, $employeeId, $paymentStatus, 'Downpayment', $receiptId);
                 if ($firstPaymentId === null) {
                     $firstPaymentId = $paymentId;
                 }
@@ -980,6 +1184,9 @@ class EnrollmentAPI {
                     $stmtUpdateProof = $this->conn->prepare($sqlUpdateProof);
                     $stmtUpdateProof->execute(array_merge([$storedScreenshotPath], $insertedPaymentIds));
                 }
+            }
+            if ($isStudentPayment && !$storedScreenshotPath) {
+                throw new Exception('The online payment screenshot could not be saved. Please try again.');
             }
 
             $stmtStudent = $this->conn->prepare("SELECT TRIM(CONCAT_WS(' ', first_name, last_name, NULLIF(TRIM(ext), ''))) AS student_name FROM student WHERE student_id = ? LIMIT 1");
@@ -1042,20 +1249,43 @@ class EnrollmentAPI {
             }
             $this->assertEnrollmentAccessibleToCurrentUser($detailsId);
 
-            $stmtExisting = $this->conn->prepare("SELECT ed.enrollment_header_id, eh.student_id, eh.branch_id FROM enrollment_details ed JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id WHERE ed.enrollment_details_id = ? LIMIT 1");
+            $stmtExisting = $this->conn->prepare("SELECT ed.enrollment_header_id, ed.section_id AS existing_section_id, ed.program_id AS original_program_id, ed.status AS details_status, ed.registration_fee, ed.downpayment_amount, eh.student_id, eh.branch_id, eh.status AS header_status FROM enrollment_details ed JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id WHERE ed.enrollment_details_id = ? LIMIT 1 FOR UPDATE");
             $stmtExisting->execute([$detailsId]);
             $existing = $stmtExisting->fetch(PDO::FETCH_ASSOC);
             if (!$existing) {
                 throw new Exception("Pending enrollment was not found.");
+            }
+            if (strtolower((string) $existing['details_status']) !== 'incomplete'
+                || strtolower((string) $existing['header_status']) !== 'incomplete') {
+                throw new Exception('Only an incomplete enrollment can be finalized.');
             }
 
             $programId = isset($data['program_id']) && $data['program_id'] !== null ? intval($data['program_id']) : 0;
             if ($programId <= 0) {
                 throw new Exception("Program is required to complete enrollment.");
             }
+            if ($programId !== intval($existing['original_program_id'])) {
+                throw new Exception('The program must match the saved downpayment enrollment.');
+            }
+
+            $stmtInitialPayment = $this->conn->prepare("SELECT COUNT(*) AS payment_count,
+                    COALESCE(SUM(p.amount_paid), 0) AS submitted_amount
+                FROM payment p
+                JOIN billing_schedule bs ON bs.billing_schedule_id = p.billing_schedule_id
+                WHERE bs.enrollment_details_id = ?
+                  AND LOWER(bs.billing_type) IN ('registration fee', 'downpayment')
+                  AND p.payment_status IN ('Pending', 'Received')");
+            $stmtInitialPayment->execute([$detailsId]);
+            $initialPayment = $stmtInitialPayment->fetch(PDO::FETCH_ASSOC);
+            $requiredInitialAmount = floatval($existing['registration_fee']) + floatval($existing['downpayment_amount']);
+            if (intval($initialPayment['payment_count'] ?? 0) === 0
+                || floatval($initialPayment['submitted_amount'] ?? 0) + 0.01 < $requiredInitialAmount) {
+                throw new Exception('The required initial payment has not been submitted for this enrollment.');
+            }
 
             $subjectIds = $this->normalizeSubjectIds($data);
-            $isTutorialEnrollment = ($data['enrollment_category'] ?? 'tutorial') !== 'preschool';
+            $program = $this->getProgram($programId);
+            $isTutorialEnrollment = !$this->isPreschoolProgramName(($program['name'] ?? '') . ' ' . ($program['type_name'] ?? ''));
             if ($isTutorialEnrollment && empty($subjectIds)) {
                 throw new Exception("At least one subject is required to complete enrollment.");
             }
@@ -1063,7 +1293,6 @@ class EnrollmentAPI {
                 $this->assertActiveGradeLevel($data['grade_level_id'] ?? null);
             }
 
-            $program = $this->getProgram($programId);
             $includeRegistrationFee = !empty($data['is_new_student']);
             if ($this->columnExists('enrollment_details', 'registration_fee')) {
                 $stmtSnapshotRegistration = $this->conn->prepare("SELECT registration_fee FROM enrollment_details WHERE enrollment_details_id = ? LIMIT 1");
@@ -1086,6 +1315,20 @@ class EnrollmentAPI {
                 if ($sectionRow) {
                     $classId = $sectionRow['class_id'];
                 }
+            }
+
+            if (!$isTutorialEnrollment && !$sectionId) {
+                throw new Exception("A section is required to complete a Pre-school / Play-school enrollment.");
+            }
+            if ($sectionId) {
+                $lockedSection = $this->assertSectionHasCapacity(
+                    $sectionId,
+                    $classId,
+                    $programId,
+                    $branchId,
+                    $detailsId
+                );
+                $classId = intval($lockedSection['class_id']);
             }
 
             $preferredTimeDay = $data['preferred_time_day'] ?? null;
@@ -1173,6 +1416,7 @@ class EnrollmentAPI {
             $programUnits = intval($program['total_units'] ?? 0);
             $unitType = $program['unit_type'] ?? '';
             $isUnitTutorial = ($unitType === 'session' && $programUnits > 0);
+            if ($isUnitTutorial && empty($data['preferences'])) throw new DomainException('Tutorial enrollment requires agreed session dates.');
 
             if (isset($data['preferences']) && is_array($data['preferences'])) {
                 if ($isUnitTutorial) {
@@ -1191,7 +1435,7 @@ class EnrollmentAPI {
                     }
                 }
 
-                $this->insertEnrollmentPreferredScheduleRows($detailsId, $scheduleRows);
+                $this->insertEnrollmentPreferredScheduleRows($detailsId, $scheduleRows, true);
             }
 
             $actualTotal = $this->generateRemainingBilling($detailsId, $program, $totalFee, $scheduleRows, $snapshot);
@@ -1199,6 +1443,11 @@ class EnrollmentAPI {
             $stmtUpdateHeader = $this->conn->prepare("UPDATE enrollment_header SET employee_id = COALESCE(?, employee_id), branch_id = ?, school_year_id = ?, total_of_program = ?, status = ? WHERE enrollment_header_id = ?");
             $stmtUpdateHeader->execute([$enrolledByEmployeeId, $branchId, $schoolYearId, $actualTotal, $completedHeaderStatus, $headerId]);
 
+            $this->syncSectionCapacityStatus($sectionId);
+            $existingSectionId = intval($existing['existing_section_id'] ?? 0);
+            if ($existingSectionId > 0 && $existingSectionId !== intval($sectionId)) {
+                $this->syncSectionCapacityStatus($existingSectionId);
+            }
             $this->conn->commit();
 
             echo json_encode([
@@ -1228,7 +1477,7 @@ class EnrollmentAPI {
         try {
             $this->conn->beginTransaction();
 
-            if (isset($_SESSION['user_role']) && $_SESSION['user_role'] == 'student') {
+            if (($_SESSION['user_type'] ?? null) === 'student') {
                 $student_id = $_SESSION['user_id'];
             } else {
                 $student_id = isset($data['student_id']) ? trim($data['student_id']) : null;
@@ -1245,12 +1494,15 @@ class EnrollmentAPI {
             $employee_id = $this->getCurrentEnrollmentEmployeeId();
             $branch_id = $this->getEnrollmentBranchId($data, $_SESSION['branch_id'] ?? null);
             $program = $this->getProgram($data['program_id'] ?? 0);
+            if ($employee_id === null && $this->isPreschoolProgramName(($program['name'] ?? '') . ' ' . ($program['type_name'] ?? ''))) {
+                throw new Exception('Please submit the preschool or play school downpayment before completing enrollment.');
+            }
             $requestedServiceId = !empty($data['include_service']) ? ($data['service_id'] ?? null) : null;
             $snapshot = $this->getProgramFinancialSnapshot($program, !empty($data['is_new_student']), $requestedServiceId, $branch_id);
             $total_fee = floatval($snapshot['grand_total']);
             $school_year_id = isset($data['school_year_id']) && is_numeric($data['school_year_id']) ? intval($data['school_year_id']) : null;
             $subjectIds = $this->normalizeSubjectIds($data);
-            $isTutorialEnrollment = ($data['enrollment_category'] ?? 'tutorial') !== 'preschool';
+            $isTutorialEnrollment = !$this->isPreschoolProgramName(($program['name'] ?? '') . ' ' . ($program['type_name'] ?? ''));
 
             if ($isTutorialEnrollment && empty($subjectIds)) {
                 throw new Exception("At least one subject is required to create an enrollment.");
@@ -1285,6 +1537,16 @@ class EnrollmentAPI {
                 if ($secRow) {
                     $class_id = $secRow['class_id'];
                 }
+            }
+
+            if ($section_id) {
+                $lockedSection = $this->assertSectionHasCapacity(
+                    $section_id,
+                    $class_id,
+                    $data['program_id'] ?? null,
+                    $branch_id
+                );
+                $class_id = intval($lockedSection['class_id']);
             }
 
             // check if enrollment_details has section_id and health_note columns in this schema
@@ -1372,6 +1634,7 @@ class EnrollmentAPI {
 
             $downpayment_details = $data['downpayment_details'] ?? null; // Get downpayment details from payload
             $isUnitTutorial = ($unit_type === 'session' && $program_units > 0);
+            if ($isUnitTutorial && empty($data['preferences'])) throw new DomainException('Tutorial enrollment requires agreed session dates.');
 
             if (isset($data['preferences']) && is_array($data['preferences'])) {
                 if ($isUnitTutorial && $program_units > 0) {
@@ -1390,7 +1653,7 @@ class EnrollmentAPI {
                     }
                 }
 
-                $this->insertEnrollmentPreferredScheduleRows($details_id, $scheduleRows);
+                $this->insertEnrollmentPreferredScheduleRows($details_id, $scheduleRows, true);
             }
 
             // 4. GENERATE BILLING SCHEDULE (Updated for units)
@@ -1559,6 +1822,7 @@ class EnrollmentAPI {
                 }
             }
 
+            $this->syncSectionCapacityStatus($section_id);
             $this->conn->commit();
             
             echo json_encode([
@@ -1580,10 +1844,17 @@ class EnrollmentAPI {
     public function getEnrollmentStats() {
         try {
             $type = isset($_GET['type']) ? $_GET['type'] : null;
-            $includeApplications = !empty($_GET['include_applications']) && in_array($type, ['tutorial', 'preschool'], true);
+            $includeApplications = !empty($_GET['include_applications'])
+                && in_array($type, ['tutorial', 'preschool'], true)
+                && $this->canViewOnlineApplications();
             $branchId = $this->getBranchAdminBranchId();
             $conditions = [$this->getProgramTypeCondition($type)];
             $params = [];
+            $schoolYearId = max(0, (int) ($_GET['school_year_id'] ?? 0));
+            if ($schoolYearId) {
+                $conditions[] = 'eh.school_year_id = :school_year_id';
+                $params[':school_year_id'] = $schoolYearId;
+            }
             if ($branchId) {
                 $conditions[] = "eh.branch_id = :branch_id";
                 $params[':branch_id'] = $branchId;
@@ -1603,15 +1874,20 @@ class EnrollmentAPI {
             $total = $getCount();
             $pending = $getCount(" AND $statusExpression = 'pending'");
             $incomplete = $getCount(" AND $statusExpression = 'incomplete'");
-            $cancelled = $getCount(" AND $statusExpression = 'cancelled'");
+            $completed = $getCount(" AND $statusExpression = 'completed'");
             $new = $getCount(" AND eh.date_created >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
             if ($includeApplications) {
                 $applicationConditions = [
                     "ea.enrollment_details_id IS NULL",
+                    "COALESCE(ea.submission_stage, 'submitted') = 'submitted'",
                     "ea.status IN ('pending_review', 'approved_for_payment')",
                     $this->getProgramTypeCondition($type)
                 ];
                 $applicationParams = [];
+                if ($schoolYearId) {
+                    $applicationConditions[] = 'ea.school_year_id = :application_school_year_id';
+                    $applicationParams[':application_school_year_id'] = $schoolYearId;
+                }
                 if ($branchId) {
                     $applicationConditions[] = 'ea.branch_id = :application_branch_id';
                     $applicationParams[':application_branch_id'] = $branchId;
@@ -1629,10 +1905,15 @@ class EnrollmentAPI {
 
                 $readyConditions = [
                     "ea.enrollment_details_id IS NOT NULL",
+                    "COALESCE(ea.submission_stage, 'submitted') = 'submitted'",
                     "ea.status = 'ready_for_scheduling'",
                     $this->getProgramTypeCondition($type)
                 ];
                 $readyParams = [];
+                if ($schoolYearId) {
+                    $readyConditions[] = 'EXISTS (SELECT 1 FROM enrollment_details red JOIN enrollment_header reh ON reh.enrollment_header_id = red.enrollment_header_id WHERE red.enrollment_details_id = ea.enrollment_details_id AND reh.school_year_id = :ready_school_year_id)';
+                    $readyParams[':ready_school_year_id'] = $schoolYearId;
+                }
                 if ($branchId) {
                     $readyConditions[] = 'ea.branch_id = :ready_branch_id';
                     $readyParams[':ready_branch_id'] = $branchId;
@@ -1643,7 +1924,7 @@ class EnrollmentAPI {
                 $pending += $readyApplications;
                 $incomplete = max(0, $incomplete - $readyApplications);
             }
-            echo json_encode(["status" => "success", "data" => ["total" => $total, "new" => $new, "pending" => $pending, "incomplete" => $incomplete, "cancelled" => $cancelled]]);
+            echo json_encode(["status" => "success", "data" => ["total" => $total, "new" => $new, "pending" => $pending, "incomplete" => $incomplete, "completed" => $completed]]);
         } catch (Exception $e) { echo json_encode(["status" => "error", "message" => $e->getMessage()]); }
     }
 
@@ -1654,7 +1935,7 @@ class EnrollmentAPI {
             $type = isset($_GET['type']) ? $_GET['type'] : null;
             $branchId = $this->getBranchAdminBranchId();
 
-            $where = "WHERE COALESCE(NULLIF(eh.status, ''), ed.status) IN ('enrolled', 'pending', 'approved', 'active')";
+            $where = "WHERE COALESCE(NULLIF(eh.status, ''), ed.status) IN ('enrolled', 'pending', 'approved')";
             if ($search !== '') {
                 $where .= " AND (st.student_id_number LIKE :search OR TRIM(CONCAT_WS(' ', st.first_name, st.last_name, NULLIF(TRIM(st.ext), ''))) LIKE :search OR p.name LIKE :search)";
             }
@@ -1696,8 +1977,11 @@ class EnrollmentAPI {
             $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 10;
             $offset = ($page - 1) * $limit;
             $type = isset($_GET['type']) ? $_GET['type'] : null;
-            $includeApplications = !empty($_GET['include_applications']) && in_array($type, ['tutorial', 'preschool'], true);
+            $includeApplications = !empty($_GET['include_applications'])
+                && in_array($type, ['tutorial', 'preschool'], true)
+                && $this->canViewOnlineApplications();
             $summaryFilter = isset($_GET['summary_filter']) ? strtolower(trim($_GET['summary_filter'])) : 'total';
+            $schoolYearId = max(0, (int) ($_GET['school_year_id'] ?? 0));
             $search = isset($_GET['search']) ? trim($_GET['search']) : '';
             $status = isset($_GET['status']) ? trim($_GET['status']) : '';
             $applicationStatusMap = [
@@ -1759,6 +2043,10 @@ class EnrollmentAPI {
                 $whereClause .= " AND eh.branch_id = :branch_id";
             }
 
+            if ($schoolYearId) {
+                $whereClause .= ' AND eh.school_year_id = :school_year_id';
+            }
+
             // Get total count
             $countSql = "SELECT COUNT(*) FROM enrollment_details ed " .
                 "JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id " .
@@ -1790,12 +2078,26 @@ class EnrollmentAPI {
             if ($branchId) {
                 $countStmt->bindValue(':branch_id', $branchId, PDO::PARAM_INT);
             }
+            if ($schoolYearId) {
+                $countStmt->bindValue(':school_year_id', $schoolYearId, PDO::PARAM_INT);
+            }
             $countStmt->execute();
             $total = $countStmt->fetchColumn();
 
+            // Include saved class and section placement for preschool list tables.
+            $placementSelect = '';
+            $placementJoin = '';
+            if ($type === 'preschool') {
+                $classExpression = $this->columnExists('enrollment_details', 'class_id')
+                    ? 'COALESCE(ed.class_id, list_section.class_id)'
+                    : 'list_section.class_id';
+                $placementSelect = "ed.section_id, list_section.section_name, {$classExpression} AS class_id, ";
+                $placementJoin = "LEFT JOIN sections list_section ON ed.section_id = list_section.section_id ";
+            }
+
             // Get paginated data
             $sql = "SELECT ed.enrollment_details_id, ed.program_id, p.name AS program_name, st.student_id_number, TRIM(CONCAT_WS(' ', st.first_name, st.last_name, NULLIF(TRIM(st.ext), ''))) AS student_name, COALESCE(esub.subject_names, sub.subject_name) AS subject_name, CONCAT(e.first_name, ' ', e.last_name) AS teacher_name, TRIM(CONCAT_WS(' ', enrolled_by.first_name, enrolled_by.last_name)) AS enrolled_by_name, enrolled_by_role.role_name AS enrolled_by_role, b.branch_id, b.branch_name, DATE_FORMAT(eh.date_created, '%M %d, %Y') AS enrollment_date, eh.date_created AS sort_date, COALESCE(NULLIF(eh.status, ''), ed.status) AS status, ea.application_id, ea.status AS application_status, " .
-                "CASE " .
+                $placementSelect . "CASE " .
                     "WHEN COALESCE(pt.pending_payment_count, 0) > 0 THEN 'Pending' " .
                     "WHEN (COALESCE(eh.total_of_program, 0) + COALESCE(bt.total_penalty, 0) - COALESCE(pt.total_paid, 0)) <= 0 THEN 'Fully Paid' " .
                     "WHEN COALESCE(pt.total_paid, 0) > 0 THEN 'Partial' " .
@@ -1807,6 +2109,7 @@ class EnrollmentAPI {
                 "LEFT JOIN subject sub ON ed.subject_id = sub.subject_id " .
                 "LEFT JOIN (SELECT es.enrollment_details_id, GROUP_CONCAT(s.subject_name ORDER BY s.subject_name SEPARATOR ', ') AS subject_names FROM enrollment_subjects es JOIN subject s ON es.subject_id = s.subject_id GROUP BY es.enrollment_details_id) esub ON ed.enrollment_details_id = esub.enrollment_details_id " .
                 "LEFT JOIN employee e ON ed.preferred_teacher = e.employee_id " .
+                $placementJoin .
                 "LEFT JOIN employee enrolled_by ON eh.employee_id = enrolled_by.employee_id " .
                 "LEFT JOIN role enrolled_by_role ON enrolled_by.role_id = enrolled_by_role.role_id " .
                 "LEFT JOIN branch b ON eh.branch_id = b.branch_id " .
@@ -1839,12 +2142,16 @@ class EnrollmentAPI {
                 $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
                 $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
             }
+            if ($schoolYearId) {
+                $stmt->bindValue(':school_year_id', $schoolYearId, PDO::PARAM_INT);
+            }
             $stmt->execute();
             $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             if ($includeApplications) {
                 $applicationWhere = [
                     "ea.enrollment_details_id IS NULL",
+                    "COALESCE(ea.submission_stage, 'submitted') = 'submitted'",
                     $this->getProgramTypeCondition($type)
                 ];
                 $applicationParams = [];
@@ -1882,6 +2189,10 @@ class EnrollmentAPI {
                     $applicationWhere[] = 'ea.branch_id = :application_branch_id';
                     $applicationParams[':application_branch_id'] = $branchId;
                 }
+                if ($schoolYearId) {
+                    $applicationWhere[] = 'ea.school_year_id = :application_school_year_id';
+                    $applicationParams[':application_school_year_id'] = $schoolYearId;
+                }
                 $applicationSql = "SELECT NULL AS enrollment_details_id, ea.program_id, p.name AS program_name,
                         st.student_id_number,
                         TRIM(CONCAT_WS(' ', st.first_name, st.last_name, NULLIF(TRIM(st.ext), ''))) AS student_name,
@@ -1889,7 +2200,12 @@ class EnrollmentAPI {
                         NULL AS teacher_name, b.branch_id, b.branch_name,
                         DATE_FORMAT(ea.created_at, '%M %d, %Y') AS enrollment_date,
                         ea.created_at AS sort_date, ea.status, ea.application_id,
-                        ea.status AS application_status, 'Unpaid' AS payment_status,
+                        ea.status AS application_status,
+                        CASE
+                            WHEN eap.payment_status = 'received' THEN 'Partial'
+                            WHEN eap.payment_status = 'pending_review' THEN 'Pending'
+                            ELSE 'Unpaid'
+                        END AS payment_status,
                         pm.payment_method AS application_payment_method,
                         eap.amount AS application_payment_amount,
                         eap.payment_status AS application_payment_review_status
@@ -1966,6 +2282,7 @@ class EnrollmentAPI {
             $branchId = isset($_SESSION['branch_id']) ? intval($_SESSION['branch_id']) : null;
             $restrictedBranchId = $this->getBranchAdminBranchId();
             $data['genders'] = $this->conn->query("SELECT * FROM gender")->fetchAll(PDO::FETCH_ASSOC);
+            $data['relationships'] = $this->conn->query('SELECT relationship_id, relationship_name FROM guardian_relationships ORDER BY relationship_id')->fetchAll(PDO::FETCH_ASSOC);
             $data['programs'] = $this->conn->query("
                 SELECT p.*, pt.type as type_name,
                        s.service_name AS default_service_name,
@@ -1978,7 +2295,7 @@ class EnrollmentAPI {
                 ORDER BY p.name
             ")->fetchAll(PDO::FETCH_ASSOC);
             $data['subjects'] = $this->conn->query("SELECT * FROM subject")->fetchAll(PDO::FETCH_ASSOC);
-            $data['statuses'] = $this->conn->query("SELECT DISTINCT COALESCE(NULLIF(eh.status, ''), ed.status) AS status FROM enrollment_details ed JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id ORDER BY status")->fetchAll(PDO::FETCH_COLUMN);
+            $data['statuses'] = ['pending', 'approved', 'enrolled', 'incomplete', 'completed'];
             if ($restrictedBranchId) {
                 $stmt = $this->conn->prepare("SELECT branch_id, branch_name FROM branch WHERE branch_id = ? ORDER BY branch_name");
                 $stmt->execute([$restrictedBranchId]);
@@ -2004,6 +2321,7 @@ class EnrollmentAPI {
                 $data['services'] = $this->conn->query("SELECT * FROM service WHERE status = 'active' ORDER BY service_name")->fetchAll(PDO::FETCH_ASSOC);
             }
             $activeSchoolYear = $this->conn->query("SELECT * FROM school_years WHERE sy_status = 'active' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+            $data['filter_school_years'] = $this->conn->query('SELECT school_year_id, school_year FROM school_years ORDER BY school_year DESC, school_year_id DESC')->fetchAll(PDO::FETCH_ASSOC);
             $data['active_school_year'] = $activeSchoolYear ?: null;
             $data['school_years'] = $activeSchoolYear ? [$activeSchoolYear] : [];
             
@@ -2024,9 +2342,22 @@ class EnrollmentAPI {
             }
             
             // Sections query
-            $sectionSql = "SELECT s.section_id, s.class_id, s.employee_id, s.section_name, s.status, CONCAT(e.first_name, ' ', e.last_name) as teacher_name
+            $sectionSql = "SELECT s.section_id, s.class_id, s.employee_id, s.section_name, s.max,
+                                  COALESCE(ec.enrolled_count, 0) AS enrolled_count,
+                                  CASE
+                                      WHEN s.max > 0 AND COALESCE(ec.enrolled_count, 0) >= s.max THEN 'full'
+                                      WHEN LOWER(TRIM(COALESCE(s.status, ''))) = 'full' THEN 'open'
+                                      ELSE s.status
+                                  END AS status,
+                                  CONCAT(e.first_name, ' ', e.last_name) as teacher_name
                            FROM sections s
-                           LEFT JOIN employee e ON s.employee_id = e.employee_id";
+                           LEFT JOIN employee e ON s.employee_id = e.employee_id
+                           LEFT JOIN (
+                               SELECT section_id, COUNT(*) AS enrolled_count
+                               FROM enrollment_details
+                               WHERE section_id IS NOT NULL
+                               GROUP BY section_id
+                           ) ec ON ec.section_id = s.section_id";
             if ($restrictedBranchId) {
                 $sectionSql .= " INNER JOIN class c ON s.class_id = c.class_id WHERE c.branch_id = ?";
                 $sectStmt = $this->conn->prepare($sectionSql . " ORDER BY s.section_name ASC");
@@ -2065,15 +2396,43 @@ class EnrollmentAPI {
             return;
         }
 
+        $unassignedSubjects = [];
+        if (($_GET['include_unassigned_subjects'] ?? '') === '1' && ($_SESSION['user_type'] ?? '') === 'employee') {
+            try {
+                $ids = implode(',', array_fill(0, count($subjectIds), '?'));
+                $eligibleBranch = $branch_id ? ' AND e.branch_id = ?' : '';
+                $unassigned = $this->conn->prepare("SELECT s.subject_id, s.subject_name FROM subject s
+                    WHERE s.subject_id IN ($ids) AND NOT EXISTS (
+                        SELECT 1 FROM subject_teacher st
+                        JOIN employee e ON e.employee_id = st.employee_id
+                        JOIN program_teacher pt ON pt.employee_id = e.employee_id
+                        WHERE st.subject_id = s.subject_id AND pt.program_id = ?$eligibleBranch
+                        AND e.status = 'active'
+                        AND e.role_id IN (SELECT role_id FROM role WHERE role_name = 'teacher')
+                    ) ORDER BY s.subject_name");
+                $unassigned->execute(array_merge($subjectIds, [$program_id], $branch_id ? [$branch_id] : []));
+                $unassignedSubjects = $unassigned->fetchAll(PDO::FETCH_ASSOC);
+            } catch (Exception $e) {
+                echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+                return;
+            }
+        }
+        $unassignedIds = array_map('intval', array_column($unassignedSubjects, 'subject_id'));
+        $matchedSubjectIds = array_values(array_diff($subjectIds, $unassignedIds));
         $schedule_filter = "";
         $availability_filter = "";
-        $subjectPlaceholders = implode(',', array_fill(0, count($subjectIds), '?'));
+        $subjectPlaceholders = implode(',', array_fill(0, count($matchedSubjectIds), '?'));
+        $subjectFilter = $matchedSubjectIds ? "AND e.employee_id IN (
+            SELECT st.employee_id FROM subject_teacher st
+            WHERE st.subject_id IN ($subjectPlaceholders)
+            GROUP BY st.employee_id HAVING COUNT(DISTINCT st.subject_id) = ?
+        )" : '';
         $branch_filter = $branch_id ? " AND e.branch_id = ?" : "";
         $params = [$program_id];
         if ($branch_id) {
             $params[] = $branch_id;
         }
-        $params = array_merge($params, $subjectIds, [count($subjectIds)]);
+        if ($matchedSubjectIds) $params = array_merge($params, $matchedSubjectIds, [count($matchedSubjectIds)]);
         
         if ($preferred_schedules_json) {
             $preferred_schedules = json_decode($preferred_schedules_json, true);
@@ -2123,8 +2482,8 @@ class EnrollmentAPI {
                     $availability_filter = "AND NOT EXISTS (
                         SELECT 1 FROM enrollment_preferred_schedule eps
                         JOIN enrollment_details ed_conflict ON eps.enrollment_details_id = ed_conflict.enrollment_details_id
-                        WHERE ed_conflict.preferred_teacher = e.employee_id
-                        AND ed_conflict.status IN ('active', 'pending', 'enrolled')
+                        WHERE COALESCE(eps.substitute_teacher_id, ed_conflict.preferred_teacher) = e.employee_id
+                        AND ed_conflict.status IN ('pending', 'enrolled')
                         AND (" . implode(' OR ', $conflict_conditions) . ")
                         " . ($excludeEnrollmentId > 0 ? "AND ed_conflict.enrollment_details_id <> ?" : "") . "
                     )";
@@ -2140,13 +2499,7 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
                     FROM employee e
                     JOIN program_teacher pt ON e.employee_id = pt.employee_id
                     WHERE pt.program_id = ?{$branch_filter}
-                    AND e.employee_id IN (
-                        SELECT st.employee_id
-                        FROM subject_teacher st
-                        WHERE st.subject_id IN ($subjectPlaceholders)
-                        GROUP BY st.employee_id
-                        HAVING COUNT(DISTINCT st.subject_id) = ?
-                    )
+                    $subjectFilter
                     AND e.role_id IN (SELECT role_id FROM role WHERE role_name = 'teacher')
                     AND e.status = 'active'
                     $schedule_filter
@@ -2156,6 +2509,11 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
             $stmt = $this->conn->prepare($sql);
             $stmt->execute($params);
             $teachers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($teachers as &$teacher) {
+                $teacher['unassigned_subjects'] = array_column($unassignedSubjects, 'subject_name');
+                $teacher['requires_subject_confirmation'] = !empty($unassignedSubjects);
+            }
+            unset($teacher);
             
             echo json_encode(["status" => "success", "data" => $teachers]);
         } catch (Exception $e) {
@@ -2182,8 +2540,8 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
             $bookingSql = "SELECT eps.date, eps.start_time, eps.end_time
                  FROM enrollment_preferred_schedule eps
                  JOIN enrollment_details ed ON eps.enrollment_details_id = ed.enrollment_details_id
-                 WHERE ed.preferred_teacher = ?
-                 AND ed.status IN ('active', 'pending', 'enrolled')
+                 WHERE COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = ?
+                 AND ed.status IN ('pending', 'enrolled')
                  " . ($excludeEnrollmentId > 0 ? "AND ed.enrollment_details_id <> ?\n" : "") .
                  "ORDER BY eps.date, eps.start_time";
             $bookingStmt = $this->conn->prepare($bookingSql);
@@ -2227,20 +2585,22 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
                OR first_name LIKE ?
                OR last_name LIKE ?
                OR ext LIKE ?
+               OR CONCAT_WS(' ', first_name, last_name, NULLIF(ext, '')) LIKE ?
             LIMIT 10
         ");
-        $stmt->execute([$q, $q, $q, $q]);
+        $stmt->execute([$q, $q, $q, $q, $q]);
         echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
     }
 
     // --- GET ENROLLMENT DETAILS ---
     public function getEnrollmentDetails() {
-        $id = $_GET['id'] ?? null;
+        $id = filter_var($_GET['id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         if (!$id) {
             echo json_encode(["status" => "error", "message" => "ID required"]);
             return;
         }
         try {
+            $this->assertEnrollmentAccessibleToCurrentUser($id);
             $branchId = $this->getBranchAdminBranchId();
             // Detect if enrollment_details has class_id column
             $hasClassColStmt = $this->conn->prepare("SHOW COLUMNS FROM enrollment_details LIKE 'class_id'");
@@ -2341,9 +2701,20 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
             $stmt = $this->conn->prepare($sql);
             $stmt->execute($params);
             $details = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($details) {
+                $validity = $this->conn->prepare('SELECT validity_days, validity_start_date, validity_end_date FROM enrollment_details WHERE enrollment_details_id = ?');
+                $validity->execute([$id]);
+                $details = array_merge($details, $validity->fetch(PDO::FETCH_ASSOC) ?: []);
+            }
             if (!$details) {
                 throw new Exception("Enrollment not found for your branch.");
             }
+
+            $stmtApplication = $this->conn->prepare("SELECT application_id, status FROM enrollment_applications WHERE enrollment_details_id = ? LIMIT 1");
+            $stmtApplication->execute([$id]);
+            $application = $stmtApplication->fetch(PDO::FETCH_ASSOC);
+            $details['application_id'] = $application['application_id'] ?? null;
+            $details['application_status'] = $application['status'] ?? null;
 
             // Get preferred schedule
             $stmtSched = $this->conn->prepare("SELECT day, start_time, end_time, date FROM enrollment_preferred_schedule WHERE enrollment_details_id = ?");
@@ -2366,6 +2737,72 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
     }
 
     // --- UPDATE ENROLLMENT ---
+    public function updatePrePlayPlacement($json) {
+        EnrollmentPermission::requirePermission('edit');
+        $data = json_decode($json, true);
+        try {
+            $enrollmentId = intval($data['enrollment_details_id'] ?? 0);
+            $classId = intval($data['class_id'] ?? 0);
+            $sectionId = intval($data['section_id'] ?? 0);
+            if ($enrollmentId <= 0 || $classId <= 0 || $sectionId <= 0) {
+                throw new Exception('Enrollment, class and section are required.');
+            }
+            $this->assertEnrollmentAccessibleToCurrentUser($enrollmentId);
+            $this->conn->beginTransaction();
+            $stmt = $this->conn->prepare("SELECT ed.program_id, ed.section_id, eh.branch_id, eh.enrollment_header_id
+                FROM enrollment_details ed
+                JOIN enrollment_header eh ON eh.enrollment_header_id = ed.enrollment_header_id
+                WHERE ed.enrollment_details_id = ? LIMIT 1 FOR UPDATE");
+            $stmt->execute([$enrollmentId]);
+            $existing = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$existing) {
+                throw new Exception('Enrollment was not found.');
+            }
+            $branchId = $this->getEnrollmentBranchId([
+                'preferred_branch_id' => $data['branch_id'] ?? $existing['branch_id']
+            ], $existing['branch_id']);
+            $branchStmt = $this->conn->prepare('SELECT branch_id FROM branch WHERE branch_id = ? LIMIT 1');
+            $branchStmt->execute([$branchId]);
+            if (!$branchStmt->fetchColumn()) {
+                throw new Exception('Selected branch was not found.');
+            }
+            $program = $this->getProgram($existing['program_id']);
+            if (!$this->isPreschoolProgramName($this->getProgramDisplayName($program))) {
+                throw new Exception('This action is only available for preschool and play school enrollments.');
+            }
+            // An unchanged placement remains valid even if the current class is closed.
+            if ($sectionId !== intval($existing['section_id'] ?? 0) || $branchId !== intval($existing['branch_id'])) {
+                $this->assertSectionHasCapacity($sectionId, $classId, $existing['program_id'], $branchId, $enrollmentId);
+            } else {
+                $sectionStmt = $this->conn->prepare('SELECT class_id FROM sections WHERE section_id = ?');
+                $sectionStmt->execute([$sectionId]);
+                if (intval($sectionStmt->fetchColumn()) !== $classId) {
+                    throw new Exception('The selected section does not belong to the selected class.');
+                }
+            }
+            $fields = 'section_id = ?';
+            $values = [$sectionId];
+            if ($this->columnExists('enrollment_details', 'class_id')) {
+                $fields .= ', class_id = ?';
+                $values[] = $classId;
+            }
+            $values[] = $enrollmentId;
+            $update = $this->conn->prepare("UPDATE enrollment_details SET {$fields} WHERE enrollment_details_id = ?");
+            $update->execute($values);
+            $headerUpdate = $this->conn->prepare('UPDATE enrollment_header SET branch_id = ? WHERE enrollment_header_id = ?');
+            $headerUpdate->execute([$branchId, $existing['enrollment_header_id']]);
+            if (!empty($existing['section_id']) && intval($existing['section_id']) !== $sectionId) {
+                $this->syncSectionCapacityStatus($existing['section_id']);
+            }
+            $this->syncSectionCapacityStatus($sectionId);
+            $this->conn->commit();
+            echo json_encode(['status' => 'success', 'message' => 'Branch, class and section updated successfully.']);
+        } catch (Exception $e) {
+            if ($this->conn->inTransaction()) $this->conn->rollBack();
+            echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+        }
+    }
+
     public function updateEnrollment($json) {
         $data = json_decode($json, true);
         try {
@@ -2387,8 +2824,10 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
             $sectionId = isset($data['section_id']) && $data['section_id'] !== '' ? $data['section_id'] : null;
 
             $stmtExisting = $this->conn->prepare("
-                SELECT ed.program_id, ed.grade_level_id, ed.subject_id, ed.goal, ed.enrollment_header_id
+                SELECT ed.program_id, ed.grade_level_id, ed.subject_id, ed.goal, ed.preferred_time_day,
+                       ed.enrollment_header_id, ed.section_id AS previous_section_id, eh.branch_id
                 FROM enrollment_details ed
+                JOIN enrollment_header eh ON eh.enrollment_header_id = ed.enrollment_header_id
                 WHERE ed.enrollment_details_id = ?
                 LIMIT 1
             ");
@@ -2396,6 +2835,27 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
             $existing = $stmtExisting->fetch(PDO::FETCH_ASSOC);
             if (!$existing) {
                 throw new Exception("Enrollment was not found");
+            }
+
+            if (!array_key_exists('preferred_time_day', $data)) {
+                $preferredTimeDay = $existing['preferred_time_day'] ?? '';
+            }
+            if (array_key_exists('preferred_branch_id', $data)) {
+                $branchId = $this->getEnrollmentBranchId($data, $existing['branch_id']);
+                $branchStmt = $this->conn->prepare("SELECT branch_id FROM branch WHERE branch_id = ? LIMIT 1");
+                $branchStmt->execute([$branchId]);
+                if (!$branchStmt->fetchColumn()) {
+                    throw new Exception('Selected branch was not found');
+                }
+                if ($preferredTeacher) {
+                    $teacherStmt = $this->conn->prepare("SELECT employee_id FROM employee WHERE employee_id = ? AND branch_id = ? AND status = 'active' AND role_id IN (SELECT role_id FROM role WHERE role_name = 'teacher') LIMIT 1");
+                    $teacherStmt->execute([$preferredTeacher, $branchId]);
+                    if (!$teacherStmt->fetchColumn()) {
+                        throw new Exception('Please select an active teacher at the selected branch');
+                    }
+                }
+                $branchUpdate = $this->conn->prepare("UPDATE enrollment_header SET branch_id = ? WHERE enrollment_header_id = ?");
+                $branchUpdate->execute([$branchId, $existing['enrollment_header_id']]);
             }
 
             if ($programId === null) {
@@ -2484,6 +2944,7 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
 
             // Only update schedules if preferences are explicitly provided
             if (isset($data['preferences']) && is_array($data['preferences'])) {
+                prepareTutorialEnrollmentSchedule($this->conn, (int) $enrollmentId, [], false);
                 // Delete existing schedules only when updating with new preferences
                 $stmtDel = $this->conn->prepare("DELETE FROM enrollment_preferred_schedule WHERE enrollment_details_id = ?");
                 $stmtDel->execute([$enrollmentId]);
@@ -2496,6 +2957,7 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
                 $program_units = intval($progResult['total_units'] ?? 0);
                 $unit_type = $progResult['unit_type'] ?? '';
                 $isUnitTutorial = ($unit_type === 'session' && $program_units > 0);
+            if ($isUnitTutorial && empty($data['preferences'])) throw new DomainException('Tutorial enrollment requires agreed session dates.');
 
                 if ($isUnitTutorial && $program_units > 0) {
                     $scheduleRows = $this->buildSessionScheduleRows($data['preferences'], $program_units);
@@ -2514,8 +2976,15 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
                 }
 
                 $this->insertEnrollmentPreferredScheduleRows($enrollmentId, $scheduleRows);
+                syncEnrollmentCompletionStatus($this->conn, (int) $enrollmentId);
             }
             // If no preferences provided, existing schedules are preserved
+
+            $previousSectionId = intval($existing['previous_section_id'] ?? 0);
+            if ($previousSectionId > 0 && $previousSectionId !== intval($sectionId ?? 0)) {
+                $this->syncSectionCapacityStatus($previousSectionId);
+            }
+            $this->syncSectionCapacityStatus($sectionId);
 
             $this->conn->commit();
             echo json_encode(["status" => "success", "message" => "Enrollment updated successfully"]);
@@ -2604,7 +3073,9 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
                 $section_id = $detailResult['section_id'];
                 
                 // Count enrolled students in this section
-                $countSql = "SELECT COUNT(*) as count FROM enrollment_details WHERE section_id = ? AND status = 'enrolled'";
+                $countSql = "SELECT COUNT(*) as count
+                             FROM enrollment_details ed
+                             WHERE ed.section_id = ?";
                 $countStmt = $this->conn->prepare($countSql);
                 $countStmt->execute([$section_id]);
                 $countResult = $countStmt->fetch(PDO::FETCH_ASSOC);
@@ -2663,14 +3134,14 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
                          FROM enrollment_details ed
                          INNER JOIN sections sec ON ed.section_id = sec.section_id
                          INNER JOIN class c ON sec.class_id = c.class_id
-                         WHERE ed.section_id = ? AND ed.status = 'enrolled'"
+                         WHERE ed.section_id = ?"
                          . ($branchId ? " AND c.branch_id = ?" : "");
             $countStmt = $this->conn->prepare($countSql);
             $countStmt->execute($branchId ? [$section_id, $branchId] : [$section_id]);
             $countResult = $countStmt->fetch(PDO::FETCH_ASSOC);
             $currentCount = (int)$countResult['count'];
 
-            $maxSql = "SELECT sec.max
+            $maxSql = "SELECT sec.max, sec.status AS section_status, c.status AS class_status
                        FROM sections sec
                        INNER JOIN class c ON sec.class_id = c.class_id
                        WHERE sec.section_id = ?"
@@ -2678,9 +3149,28 @@ $sql = "SELECT DISTINCT e.employee_id, TRIM(CONCAT_WS(' ', e.first_name, NULLIF(
             $maxStmt = $this->conn->prepare($maxSql);
             $maxStmt->execute($branchId ? [$section_id, $branchId] : [$section_id]);
             $maxResult = $maxStmt->fetch(PDO::FETCH_ASSOC);
-            $maxCapacity = $maxResult ? (int)$maxResult['max'] : 0;
+            if (!$maxResult) {
+                echo json_encode(["status" => "error", "message" => "Section not found"]);
+                return;
+            }
 
-            echo json_encode(["status" => "success", "count" => $currentCount, "max" => $maxCapacity]);
+            $maxCapacity = (int)$maxResult['max'];
+            $sectionStatus = strtolower(trim((string)($maxResult['section_status'] ?? '')));
+            $classStatus = strtolower(trim((string)($maxResult['class_status'] ?? '')));
+            $isAtCapacity = $maxCapacity > 0 && $currentCount >= $maxCapacity;
+            if (!$isAtCapacity && $sectionStatus === 'full') {
+                $sectionStatus = 'open';
+            }
+            $isOpen = $sectionStatus === 'open';
+            $isClassOpen = $classStatus === 'open';
+
+            echo json_encode([
+                "status" => "success",
+                "count" => $currentCount,
+                "max" => $maxCapacity,
+                "available" => $isClassOpen && $isOpen && !$isAtCapacity,
+                "section_status" => $isAtCapacity ? "full" : $sectionStatus
+            ]);
         } catch (Exception $e) {
             echo json_encode(["status" => "error", "message" => $e->getMessage()]);
         }
@@ -2703,6 +3193,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET') {
         }
     }
 
+    $staffEnrollmentPermission = [
+        'addEnrollment' => 'create',
+        'createPendingDownpaymentEnrollment' => 'create',
+        'completePendingEnrollment' => 'approve',
+    ][$op] ?? null;
+    if ($staffEnrollmentPermission !== null && ($enrollmentActor['user_type'] ?? null) === 'employee') {
+        EnrollmentPermission::requirePermission($staffEnrollmentPermission);
+    }
+
         $api = new EnrollmentAPI();
     switch($op){
         case "addEnrollment": $api->addEnrollment($json); break;
@@ -2718,6 +3217,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET') {
         case "getReleaseStudents": $api->getReleaseStudents(); break;
         case "getEnrollmentDetails": $api->getEnrollmentDetails(); break;
         case "updateEnrollment": $api->updateEnrollment($json); break;
+        case "updatePrePlayPlacement": $api->updatePrePlayPlacement($json); break;
         case "deleteEnrollment": $api->deleteEnrollment($json); break;
         case "checkTeacherAvailability": $api->checkTeacherAvailability(); break;
         case "updateEnrollmentStatus": $api->updateEnrollmentStatus($json); break;

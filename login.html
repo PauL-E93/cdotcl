@@ -1,85 +1,100 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CDO Tutor Login</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Sign in to your CDO Tutor and Learning Center account." />
+    <title>Login | CDO Tutor &amp; Learning Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&amp;family=Nunito:wght@400;600;700;800;900&amp;display=swap" rel="stylesheet" />
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+    <link rel="stylesheet" href="css/style.css?v=20260828-login-home-button" />
+    <link rel="stylesheet" href="css/login.css?v=20260930-remember-me" />
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <script type="module" src="js/index.js?v=20260809-captcha-expiry"></script>
-    <link rel="stylesheet" href="css/style.css?v=20260828-login-home-button">
+    <script src="node_modules/axios/dist/axios.min.js"></script>
+    <script src="js/vendor/sweetalert2.all.min.js"></script>
+    <script type="module" src="js/login.js?v=20260930-remember-me"></script>
 </head>
 <body class="login-page">
-    <div class="container-fluid h-100">
-        <div class="row h-100">
-            <div class="col-md-6 left-panel-container">
-                <img src="assist/operation.png" class="operations-img" alt="Math Symbols">
-                <img src="assist/book.png" class="notebook-img" alt="Notebook and Pencil">
-                <img src="assist/abc.png" class="abc-img" alt="ABC Blocks">
+    <main class="login-shell">
+        <section class="login-welcome" aria-labelledby="welcome-title">
+            <a class="login-back-link" href="index.html"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to home</a>
 
-                <div class="main-content">
-                    <img src="assist/logo.png" class="logo" alt="CDO Tutor Logo">
-                    <h3 class="fw-bold">CDO TUTOR</h3>
-                    <p class="tagline mb-4">ALWAYS ON THE GO</p>
+            <div class="school-doodle school-doodle--pencil" aria-hidden="true">✏️</div>
+            <div class="school-doodle school-doodle--star-one" aria-hidden="true">★</div>
+            <div class="school-doodle school-doodle--star-two" aria-hidden="true">✦</div>
+            <div class="school-doodle school-doodle--abc" aria-hidden="true">ABC</div>
+
+            <div class="welcome-copy">
+                <div class="welcome-brand">
+                    <img src="assist/logo.png" alt="CDO Tutor logo" />
+                    <span><strong>CDO Tutor</strong><small>Learning Center · Since 2020</small></span>
+                </div>
+                <p class="welcome-eyebrow"><span aria-hidden="true">✦</span> Learn · Play · Grow</p>
+                <h1 id="welcome-title">Your learning<br /><span>adventure</span><br />continues!</h1>
+                <p>Sign in to stay connected with your classes, schedules, progress, and learning community.</p>
+                <div class="welcome-pills" aria-label="Learning values">
+                    <span><i aria-hidden="true">😊</i> Friendly</span>
+                    <span><i aria-hidden="true">📚</i> Supportive</span>
+                    <span><i aria-hidden="true">🌟</i> Inspiring</span>
                 </div>
             </div>
 
-            <div class="col-md-6 login-form-panel d-flex justify-content-center align-items-center">
-                <div class="card shadow login-card p-4">
-                    <h4 class="mb-2">Welcome back!</h4>
-                    <p class="login-card__subtitle">Log in to continue your learning journey.</p>
+            <div class="welcome-books" aria-hidden="true"><span>LEARN</span><span>PLAY</span><span>GROW</span></div>
+            <div class="welcome-wave" aria-hidden="true"></div>
+        </section>
 
-                    <div class="mb-3">
+        <section class="login-form-panel" aria-labelledby="login-heading">
+            <div class="mobile-brand" aria-hidden="true"><img src="assist/logo.png" alt="" /><span>CDO Tutor</span></div>
+
+            <div class="login-card">
+                <div class="login-card__heading">
+                    <span class="login-card__icon" aria-hidden="true">👋</span>
+                    <div><p>Welcome back</p><h2 id="login-heading">Let’s sign you in</h2></div>
+                </div>
+                <p class="login-card__subtitle">Enter your account details to continue your learning journey.</p>
+
+                <form class="login-form">
+                    <div class="login-field">
                         <label for="username" class="form-label">Username</label>
                         <div class="login-input-wrapper">
                             <i class="fa-regular fa-user login-input-icon" aria-hidden="true"></i>
-                            <input type="text" id="username" class="form-control" placeholder="Enter username">
+                            <input type="text" id="username" class="form-control" placeholder="Enter your username" maxlength="100" autocomplete="username" required />
                         </div>
                     </div>
 
-                    <div class="mb-3">
-                        <label for="password" class="form-label">Password</label>
+                    <div class="login-field">
+                        <div class="login-label-row"><label for="password" class="form-label">Password</label><a class="forgot-password-link" href="forgetpassword.html">Forgot password?</a></div>
                         <div class="password-input-wrapper login-input-wrapper">
                             <i class="fa-solid fa-lock login-input-icon" aria-hidden="true"></i>
-                            <input type="password" id="password" class="form-control pe-5" placeholder="Enter password">
-                            <button type="button" id="toggle-password" class="password-toggle" aria-label="Show password" aria-pressed="false">
-                                <i class="fa-solid fa-eye" aria-hidden="true"></i>
-                            </button>
+                            <input type="password" id="password" class="form-control pe-5" placeholder="Enter your password" autocomplete="current-password" required />
+                            <button type="button" id="toggle-password" class="password-toggle" aria-label="Show password" aria-pressed="false"><i class="fa-solid fa-eye" aria-hidden="true"></i></button>
                         </div>
                     </div>
 
-                    <div class="mb-3">
-                        <label for="captcha-answer" class="form-label">Solve to continue</label>
+                    <div class="login-field captcha-field">
+                        <div class="login-label-row"><label for="captcha-answer" class="form-label">Quick check</label><span class="captcha-help">Solve the math question</span></div>
                         <div class="math-captcha" aria-label="Solve the math CAPTCHA">
-                            <span id="captcha-first-number" class="captcha-number">--</span>
-                            <span class="captcha-symbol">+</span>
-                            <span id="captcha-second-number" class="captcha-number">--</span>
-                            <span class="captcha-symbol">=</span>
-                            <input type="number" id="captcha-answer" class="form-control captcha-answer" inputmode="numeric" autocomplete="off" aria-label="Math CAPTCHA answer">
-                            <button type="button" id="refresh-captcha" class="captcha-refresh" aria-label="Generate a new math CAPTCHA">
-                                <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
-                            </button>
+                            <span id="captcha-first-number" class="captcha-number">--</span><span class="captcha-symbol">+</span><span id="captcha-second-number" class="captcha-number">--</span><span class="captcha-symbol">=</span>
+                            <input type="number" id="captcha-answer" class="form-control captcha-answer" inputmode="numeric" autocomplete="off" aria-label="Math CAPTCHA answer" required />
+                            <button type="button" id="refresh-captcha" class="captcha-refresh" aria-label="Generate a new math CAPTCHA"><i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i></button>
                         </div>
+                        <p id="captcha-status" class="captcha-status" role="status" aria-live="polite" hidden></p>
                     </div>
 
-                    <button onclick="handleLogin()" class="btn btn-signin w-100 mb-3">LOG IN</button>
+                    <label class="login-remember"><input type="checkbox" id="keep-signed-in" /><span>Keep me signed in</span></label>
 
-                    <a href="index.html" class="btn login-home-button w-100 mb-3">
-                        <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
-                        BACK TO HOME
-                    </a>
+                    <button type="submit" class="btn btn-signin">Log in <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button>
+                </form>
 
-                    <div class="text-center">
-                        <small>
-                            <a class="forgot-password-link" href="forgetpassword.html">Forgot Password</a>
-                        </small>
-                    </div>
-                </div>
+                <div class="login-help"><span aria-hidden="true">💡</span><p><strong>Need help signing in?</strong><br />Contact your CDO Tutor learning center for assistance.</p></div>
+                <a href="index.html" class="login-home-button"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Return to the CDO Tutor homepage</a>
             </div>
-        </div>
-    </div>
+
+            <p class="login-footer">Safe, supportive learning for every child <span aria-hidden="true">♥</span></p>
+        </section>
+    </main>
 </body>
 </html>

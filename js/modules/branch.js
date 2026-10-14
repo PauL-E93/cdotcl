@@ -1,4 +1,6 @@
 // js/modules/branch.js
+import '../utilities/csrf.js';
+import { isHostedBrowserChallenge, normalizeApiResponse } from '../utilities/api_response.js';
 import {
     applyCenterPagePermissions,
     canUseCenterPermission,
@@ -8,6 +10,44 @@ import {
 
 let branches = [];
 let employees = [];
+
+function centerRequestErrorMessage(error, fallback) {
+    const response = error?.response;
+    const payload = normalizeApiResponse(response?.data);
+    const status = response?.status;
+    const suffix = status ? ` (HTTP ${status})` : '';
+
+    if (isHostedBrowserChallenge(response?.data)) {
+        return 'The hosting service requested browser verification. Reload this page and try again.' + suffix;
+    }
+    if (status === 401) {
+        return 'Your session has expired. Log in again, then retry.' + suffix;
+    }
+    if (payload && typeof payload === 'object') {
+        const message = payload.message || payload.error;
+        if (typeof message === 'string') return message + suffix;
+    }
+    if (status === 403) {
+        return 'The server refused this request. Reload the page and log in again before retrying.' + suffix;
+    }
+    if (status >= 500) {
+        return 'The server could not complete the request. Please try again later.' + suffix;
+    }
+    if (response) return fallback + suffix;
+    return 'No response was received from the server. Check your connection and reload the page. Check the center list before retrying because the change may have been saved.';
+}
+
+function showCenterRequestError(error, fallback) {
+    console.error(fallback, error);
+    Swal.fire('Error', centerRequestErrorMessage(error, fallback), 'error');
+}
+
+function centerWriteSucceeded(response) {
+    const payload = normalizeApiResponse(response.data);
+    if (payload === 1 || payload === '1') return true;
+    showCenterRequestError({ response }, 'The server did not confirm that the center was saved.');
+    return false;
+}
 
 function escapeHtml(value = '') {
     return String(value).replace(/[&<>'"]/g, character => ({
@@ -39,8 +79,7 @@ export function loadBranches() {
             updateStats();
         })
         .catch(err => {
-            console.error('Error loading branches:', err);
-            Swal.fire('Error', 'Failed to load centers', 'error');
+            showCenterRequestError(err, 'Failed to load centers.');
         });
 }
 
@@ -352,17 +391,14 @@ function saveCenter() {
 
     axios.post('../../api/admin/branch.php', params)
         .then(res => {
-            if (res.data == 1) {
+            if (centerWriteSucceeded(res)) {
                 Swal.fire('Success', 'Center added successfully!', 'success');
                 bootstrap.Modal.getInstance(document.getElementById('addCenterModal')).hide();
                 loadBranches();
-            } else {
-                Swal.fire('Error', 'Failed to add center', 'error');
             }
         })
         .catch(err => {
-            console.error('Error:', err);
-            Swal.fire('Error', 'Network error', 'error');
+            showCenterRequestError(err, 'Failed to add center.');
         });
 }
 
@@ -403,17 +439,14 @@ function updateCenter(branchId) {
 
     axios.post('../../api/admin/branch.php', params)
         .then(res => {
-            if (res.data == 1) {
+            if (centerWriteSucceeded(res)) {
                 Swal.fire('Success', 'Center updated successfully!', 'success');
                 bootstrap.Modal.getInstance(document.getElementById('editCenterModal')).hide();
                 loadBranches();
-            } else {
-                Swal.fire('Error', 'Failed to update center', 'error');
             }
         })
         .catch(err => {
-            console.error('Error:', err);
-            Swal.fire('Error', 'Network error', 'error');
+            showCenterRequestError(err, 'Failed to update center.');
         });
 }
 
@@ -437,16 +470,13 @@ export function deleteCenter(branchId) {
 
             axios.post('../../api/admin/branch.php', params)
                 .then(res => {
-                    if (res.data == 1) {
+                    if (centerWriteSucceeded(res)) {
                         Swal.fire('Deleted!', 'Center has been deleted.', 'success');
                         loadBranches();
-                    } else {
-                        Swal.fire('Error', 'Failed to delete center', 'error');
                     }
                 })
                 .catch(err => {
-                    console.error('Error:', err);
-                    Swal.fire('Error', 'Network error', 'error');
+                    showCenterRequestError(err, 'Failed to delete center.');
                 });
         }
     });

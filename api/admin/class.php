@@ -1,7 +1,9 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 // api/admin/class.php
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();

@@ -1,6 +1,8 @@
-import { renderPasswordModal, setupPasswordModal } from "./password.js";
+import { renderPasswordModal, setupPasswordModal } from "./password.js?v=20260929-password-days";
+import { normalizeProfileImage } from "../utilities/profile_image.js";
 
 let gendersList = [];
+let guardianRelationships = [];
 let currentStudentData = null;
 let lastLoadedStudentId = null;
 
@@ -22,6 +24,8 @@ function getGenderLabel(genderId) {
 export function initStudentProfile() {
     const container = document.getElementById('dashboard-content') || document.querySelector('.dashboard-content');
     if (!container) return;
+
+    document.body.classList.add('profile-page');
 
     // Get logged-in student ID from localStorage
     const userData = localStorage.getItem('user');
@@ -60,6 +64,7 @@ function loadStudentProfile(studentId, container) {
             console.log('Profile API Response:', res.data);
             
             if (res.data && res.data.status === 'success' && res.data.data) {
+                guardianRelationships = Array.isArray(res.data.relationships) ? res.data.relationships : [];
                 const student = res.data.data;
                 
                 // Build profile data combining API data with defaults
@@ -69,6 +74,7 @@ function loadStudentProfile(studentId, container) {
                 const profileData = {
                     student_id: student.student_id,
                     student_id_number: student.student_id_number || 'N/A',
+                    lrn: student.lrn || 'N/A',
                     guardian_id: student.guardian_id,
                     username: student.username || '',
                     fullName: formatStudentName(student),
@@ -91,6 +97,9 @@ function loadStudentProfile(studentId, container) {
                     health_note: student.health_note || '',
                     role: 'Student',
                     status: 'Online',
+                    password_days_remaining: Math.max(0, Number(student.password_days_remaining ?? 72)),
+                    password_change_due_at: student.password_change_due_at || '',
+                    password_expired: Boolean(Number(student.password_expired || 0)),
                     earnings: '0.00',
                     earningsTrend: '+ 0%',
                     balance: '0.00',
@@ -104,7 +113,7 @@ function loadStudentProfile(studentId, container) {
                 renderProfilePage(profileData, container);
                 renderPasswordModal(container);
                 setupEditProfileModal(profileData, container);
-                setupPasswordModal(profileData);
+                setupPasswordModal(profileData, () => loadStudentProfile(studentId, container));
             } else {
                 console.error('Unexpected API response:', res.data);
                 loadDemoProfile(container);
@@ -121,6 +130,7 @@ function loadDemoProfile(container) {
     const profileData = {
         student_id: 1,
         student_id_number: 'STU-0001',
+        lrn: 'N/A',
         guardian_id: 1,
         username: 'cmapagmahal',
         fullName: 'Carl Mapagmahal',
@@ -142,6 +152,9 @@ function loadDemoProfile(container) {
         health_note: '',
         role: 'Math Tutor',
         status: 'Online',
+        password_days_remaining: 72,
+        password_change_due_at: '',
+        password_expired: false,
         earnings: '$5,250.00',
         earningsTrend: '+ 112.5%',
         balance: '$725.00',
@@ -160,6 +173,14 @@ function loadDemoProfile(container) {
 
 function renderProfilePage(profileData, container) {
     const primaryColor = '#ea9aa6';
+    const passwordDaysRemaining = Math.max(0, Math.min(72, Number(profileData.password_days_remaining ?? 72)));
+    const passwordExpired = Boolean(profileData.password_expired);
+    const passwordProgress = Math.round((passwordDaysRemaining / 72) * 100);
+    const passwordDueDate = formatPasswordDueDate(profileData.password_change_due_at);
+    const passwordStatusText = passwordExpired
+        ? 'Password change required'
+        : `${passwordDaysRemaining} day${passwordDaysRemaining === 1 ? '' : 's'} remaining`;
+    const passwordStatusColor = passwordExpired ? '#dc3545' : (passwordDaysRemaining <= 14 ? '#d98200' : '#198754');
     const formattedBirthday = profileData.birthday
         ? new Date(profileData.birthday).toLocaleDateString()
         : 'Not set';
@@ -185,36 +206,40 @@ function renderProfilePage(profileData, container) {
             .info-label { color: #888; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; }
             .info-value { color: #333; font-weight: 500; font-size: 0.9rem; margin-bottom: 12px; }
             .stat-badge { border-radius: 8px; padding: 10px; text-align: center; background: #fdfdfd; border: 1px solid #f0f0f0; }
+            .password-expiry-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+            .password-expiry-count { color: ${passwordStatusColor}; font-size: 1.05rem; font-weight: 700; }
+            .password-expiry-track { height: 8px; overflow: hidden; border-radius: 999px; background: #f0edf0; }
+            .password-expiry-fill { width: ${passwordProgress}%; height: 100%; border-radius: inherit; background: ${passwordStatusColor}; }
         </style>
 
         <div class="container-fluid p-0">
             <div class="row g-3">
                 <div class="col-12">
                     <div class="card profile-card compact-header">
-                        <div class="row align-items-center">
-                            <div class="col-auto position-relative">
+                        <div class="row align-items-center profile-summary-row">
+                            <div class="col-auto position-relative profile-avatar">
                                 ${profileData.profile_picture ? 
-                                    `<img src="${resolveProfilePictureUrl(profileData.profile_picture)}" alt="Profile" class="rounded-circle" style="width: 80px; height: 80px; object-fit: cover; border: 3px solid ${primaryColor};">` :
+                                    `<img src="${resolveProfilePictureUrl(profileData.profile_picture)}" alt="Profile" class="rounded-circle profile-picture-image" style="width: 80px; height: 80px; object-fit: cover; border: 3px solid ${primaryColor};">` :
                                     `<div class="rounded-circle d-flex align-items-center justify-content-center fw-bold" 
                                         style="width: 80px; height: 80px; background: ${primaryColor}; color: white; font-size: 1.5rem;">
                                         ${getInitials(profileData.first_name, profileData.last_name)}
                                     </div>`
                                 }
                             </div>
-                            <div class="col">
+                            <div class="col profile-identity">
                                 <h4 class="mb-0 fw-bold">${profileData.fullName}</h4>
-                                <div class="d-flex align-items-center gap-2 mt-1" style="font-size: 0.85rem;">
+                                <div class="d-flex align-items-center gap-2 mt-1 profile-meta" style="font-size: 0.85rem;">
                                     <span style="color: ${primaryColor}"><i class="bi bi-patch-check-fill"></i> ${profileData.role}</span>
                                     <span class="text-muted">|</span>
                                     <span class="text-success">● ${profileData.status}</span>
                                 </div>
-                                <div class="d-flex gap-3 mt-2" style="font-size: 0.8rem; color: #777;">
+                                <div class="d-flex gap-3 mt-2 profile-contact-list" style="font-size: 0.8rem; color: #777;">
                                     <span><i class="bi bi-envelope"></i> ${profileData.email}</span>
                                     <span><i class="bi bi-telephone"></i> ${profileData.phone}</span>
                                 </div>
                             </div>
                         </div>
-                        <div class="d-flex gap-2 mt-3">
+                        <div class="d-flex gap-2 mt-3 profile-action-list">
                             <button type="button" class="btn btn-action flex-grow-1" id="editProfileBtn"><i class="bi bi-pencil"></i> Edit Profile</button>
                             <button type="button" class="btn btn-action flex-grow-1" id="passwordStudentProfileBtn"><i class="bi bi-shield-lock"></i> Password</button>
                         </div>
@@ -230,6 +255,8 @@ function renderProfilePage(profileData, container) {
                                 <div class="info-value">${nameExtension}</div>
                                 <div class="info-label">Student ID</div>
                                 <div class="info-value">${profileData.student_id_number}</div>
+                                <div class="info-label">LRN</div>
+                                <div class="info-value">${profileData.lrn || 'N/A'}</div>
                                 <div class="info-label">Username</div>
                                 <div class="info-value">${username}</div>
                                 <div class="info-label">Age</div>
@@ -275,6 +302,21 @@ function renderProfilePage(profileData, container) {
                                 <div class="info-label">Address</div>
                                 <div class="info-value mb-0">${profileData.address}</div>
                                 ${addressNote}
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="card profile-card p-3">
+                                <div class="password-expiry-summary">
+                                    <div>
+                                        <h6 class="section-title mb-1"><i class="bi bi-shield-lock" style="color:${passwordStatusColor}"></i> Password Security</h6>
+                                        <div class="text-muted small">${passwordExpired ? 'Change your password to continue using your account.' : `Next password change is due ${passwordDueDate}.`}</div>
+                                    </div>
+                                    <div class="password-expiry-count">${passwordStatusText}</div>
+                                </div>
+                                <div class="password-expiry-track mt-3" role="progressbar" aria-label="Password validity remaining" aria-valuemin="0" aria-valuemax="72" aria-valuenow="${passwordDaysRemaining}">
+                                    <div class="password-expiry-fill"></div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -348,6 +390,10 @@ function renderProfilePage(profileData, container) {
                                     <label class="form-label">Email <span class="text-danger" aria-hidden="true">*</span></label>
                                     <input type="email" class="form-control" id="editEmail" required>
                                 </div>
+                                <div class="col-md-12 mb-3">
+                                    <label class="form-label" for="editCurrentPassword">Current Password (required to change email)</label>
+                                    <input type="password" class="form-control" id="editCurrentPassword" autocomplete="current-password">
+                                </div>
                             </div>
 
                             <h6 class="text-primary mb-3 border-top pt-3">Guardian Details</h6>
@@ -362,7 +408,11 @@ function renderProfilePage(profileData, container) {
                                 </div>
                                 <div class="col-md-12 mb-3">
                                     <label class="form-label">Relationship <span class="text-danger" aria-hidden="true">*</span></label>
-                                    <input type="text" class="form-control" id="editGuardianRelationship" required>
+                                    <select class="form-select" id="editGuardianRelationship" required><option value="">Select relationship</option></select>
+                                    <div class="mt-2 d-none" id="editOtherGuardianRelationshipField">
+                                        <label class="form-label" for="editOtherGuardianRelationship">Specify relationship</label>
+                                        <input type="text" class="form-control" id="editOtherGuardianRelationship" maxlength="50" placeholder="Enter relationship" disabled>
+                                    </div>
                                 </div>
                             </div>
 
@@ -387,6 +437,14 @@ function renderProfilePage(profileData, container) {
     `;
 }
 
+function formatPasswordDueDate(value) {
+    if (!value) return 'in 72 days';
+    const date = new Date(String(value).replace(' ', 'T'));
+    return Number.isNaN(date.getTime())
+        ? 'in 72 days'
+        : `on ${date.toLocaleDateString()}`;
+}
+
 function setupEditProfileModal(profileData, container) {
     const editBtn = document.getElementById('editProfileBtn');
     if (editBtn) {
@@ -394,6 +452,31 @@ function setupEditProfileModal(profileData, container) {
             openEditProfileModal(profileData);
         });
     }
+}
+
+function updateProfileGuardianRelationshipInput() {
+    const others = document.getElementById('editGuardianRelationship')?.value === '__others__';
+    document.getElementById('editOtherGuardianRelationshipField')?.classList.toggle('d-none', !others);
+    const input = document.getElementById('editOtherGuardianRelationship');
+    if (input) {
+        input.disabled = !others;
+        input.required = others;
+    }
+}
+
+function populateProfileGuardianRelationships(currentValue) {
+    const select = document.getElementById('editGuardianRelationship');
+    if (!select) return;
+    const current = String(currentValue || '').trim();
+    select.replaceChildren(new Option('Select relationship', ''));
+    guardianRelationships.forEach(item => select.add(new Option(item.relationship_name, item.relationship_name)));
+    const matching = [...select.options].find(option => option.value.toLowerCase() === current.toLowerCase());
+    if (current && !matching) select.add(new Option(current, current));
+    select.add(new Option('Others', '__others__'));
+    select.value = matching?.value || current;
+    document.getElementById('editOtherGuardianRelationship').value = '';
+    select.onchange = updateProfileGuardianRelationshipInput;
+    updateProfileGuardianRelationshipInput();
 }
 
 function openEditProfileModal(profileData) {
@@ -408,7 +491,7 @@ function openEditProfileModal(profileData) {
     document.getElementById('editGenderId').value = profileData.gender_id || '';
     document.getElementById('editGuardianName').value = profileData.guardian_name || '';
     document.getElementById('editGuardianContact').value = profileData.guardian_contact || '';
-    document.getElementById('editGuardianRelationship').value = profileData.guardian_relationship || '';
+    populateProfileGuardianRelationships(profileData.guardian_relationship);
     document.getElementById('editHealthNote').value = profileData.health_note || '';
     
     // Setup profile picture preview
@@ -416,7 +499,7 @@ function openEditProfileModal(profileData) {
     const fileInput = document.getElementById('editProfilePicture');
     
     if (profileData.profile_picture) {
-        previewDiv.innerHTML = `<img src="${resolveProfilePictureUrl(profileData.profile_picture)}" alt="Profile" style="width: 100%; height: 100%; object-fit: cover;">`;
+        previewDiv.innerHTML = `<img src="${resolveProfilePictureUrl(profileData.profile_picture)}" alt="Profile" class="profile-picture-image" style="width: 100%; height: 100%; object-fit: cover;">`;
     } else {
         previewDiv.innerHTML = getInitials(profileData.first_name, profileData.last_name);
     }
@@ -451,7 +534,15 @@ function openEditProfileModal(profileData) {
     modal.show();
 }
 
-function handleSaveProfile(studentId) {
+async function handleSaveProfile(studentId) {
+    const relationshipSelect = document.getElementById('editGuardianRelationship');
+    const relationship = (relationshipSelect.value === '__others__'
+        ? document.getElementById('editOtherGuardianRelationship').value
+        : relationshipSelect.value).replace(/\s+/gu, ' ').trim();
+    if (!relationship || [...relationship].length > 50 || /^(other|others)$/i.test(relationship) || /\p{C}/u.test(relationship)) {
+        Swal.fire('Relationship required', 'Select a relationship or specify it using 1 to 50 characters.', 'warning');
+        return;
+    }
     const data = {
         student_id: studentId,
         guardian_id: currentStudentData.guardian_id,
@@ -463,9 +554,10 @@ function handleSaveProfile(studentId) {
         birthday: document.getElementById('editBirthday').value,
         gender_id: document.getElementById('editGenderId').value,
         email: document.getElementById('editEmail').value,
+        current_password: document.getElementById('editCurrentPassword')?.value || '',
         guardian_name: document.getElementById('editGuardianName').value,
         guardian_contact: document.getElementById('editGuardianContact').value,
-        guardian_relationship: document.getElementById('editGuardianRelationship').value,
+        guardian_relationship: relationship,
         health_note: document.getElementById('editHealthNote').value.trim() || null
     };
 
@@ -507,7 +599,7 @@ function handleSaveProfile(studentId) {
             return;
         }
         
-        formData.append('profile_picture', file);
+        formData.append('profile_picture', await normalizeProfileImage(file));
     }
 
     axios.post('../../api/admin/student.php', formData, {
@@ -546,12 +638,7 @@ function getInitials(firstName, lastName) {
 }
 
 function resolveProfilePictureUrl(profilePicture) {
-    if (!profilePicture) return '';
-    if (/^(?:https?:)?\/\//.test(profilePicture)) {
-        return profilePicture;
-    }
-    const cleaned = profilePicture.replace(/^\/+/, '');
-    return `../../${cleaned}`;
+    return window.resolveUploadUrl(profilePicture);
 }
 
 function calculateAge(birthday) {

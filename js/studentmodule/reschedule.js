@@ -1,18 +1,31 @@
-import { initEnrollmentDatePicker } from '../modules/enrollmentDatePicker.js';
+import { initEnrollmentDatePicker } from '../modules/enrollmentDatePicker.js?v=20261011-disabled-hours';
+import { initEnrollmentTimePickers, refreshEnrollmentTimePickers, disposeEnrollmentTimePickers } from '../modules/enrollment_time_picker.js?v=20261012-reschedule';
+import { formatTutorialDate, ensureTutorialValidityStyles } from '../modules/tutorial_validity.js?v=20261013';
 import { buildAppUrl } from '../utilities/app_url.js';
 
-export function openRescheduleModal(schedule, onSuccess, options = {}) {
+export async function openRescheduleModal(schedule, onSuccess, options = {}) {
+    ensureTutorialValidityStyles();
+    let validity;
+    try {
+        const response = await axios.get(buildAppUrl('api/enrollment_validity.php'), { params: { enrollment_details_id: schedule.enrollment_details_id } });
+        if (response.data.status !== 'success') throw new Error(response.data.message);
+        validity = response.data.data;
+        if (validity.expired) { await Swal.fire('Tutorial expired', 'This package expired on ' + formatTutorialDate(validity.validity_end_date) + '. An authorized validity extension is required.', 'warning'); return; }
+    } catch (error) { await Swal.fire('Unable to load validity', error.response?.data?.message || error.message, 'error'); return; }
     const isAdminAction = Boolean(options?.isAdminAction);
     const cutoffDateValue = schedule.last_session_date || schedule.lastSessionDate || schedule.latest_session_date || schedule.date;
-    const minDate = addDaysToDateString(cutoffDateValue, 1);
+    const minDate = validity.validity_end_date
+        ? [validity.validity_start_date || '', validity.today || ''].sort().pop()
+        : addDaysToDateString(cutoffDateValue, 1);
     const currentStartTime = schedule.start_time || schedule.time || '';
     const currentEndTime = schedule.endTime || schedule.end_time || '';
 
     const content = `
         <div style="max-height: 520px; overflow-y: auto; text-align: left;">
+            ${validity.validity_end_date ? `<p class="small">Valid through ${formatTutorialDate(validity.validity_end_date)}, inclusive. Rescheduling keeps this deadline.</p>` : ''}
             <div class="alert alert-info mb-3">
                 <i class="bi bi-info-circle"></i>
-                <strong>Current Schedule:</strong> ${schedule.day}, ${schedule.date} at ${formatTime(currentStartTime)}${currentEndTime ? ' - ' + formatTime(currentEndTime) : ''}
+                <strong>Current Schedule:</strong> ${schedule.day}, ${formatTutorialDate(schedule.date)} at ${formatTime(currentStartTime)}${currentEndTime ? ' - ' + formatTime(currentEndTime) : ''}
             </div>
 
             <div class="card p-3 bg-light">
@@ -26,12 +39,14 @@ export function openRescheduleModal(schedule, onSuccess, options = {}) {
                         <div id="dateCalendarContainer"></div>
                     </div>
                     <div class="col-md-3">
-                        <label class="form-label small fw-bold">Start Time</label>
-                        <input type="time" id="schedTime" class="form-control" value="${currentStartTime}" required>
+                        <label class="form-label small fw-bold" for="schedTimeDisplay">Start Time</label>
+                        <input type="hidden" id="schedTime" value="${currentStartTime}">
+                        <button type="button" class="form-control enrollment-time-trigger" id="schedTimeDisplay" aria-label="Choose start time" aria-haspopup="dialog" aria-expanded="false" disabled>Select a date</button>
                     </div>
                     <div class="col-md-3">
-                        <label class="form-label small fw-bold">End Time</label>
-                        <input type="time" id="schedEndTime" class="form-control" value="${currentEndTime}" required>
+                        <label class="form-label small fw-bold" for="schedEndTimeDisplay">End Time</label>
+                        <input type="hidden" id="schedEndTime" value="${currentEndTime}">
+                        <button type="button" class="form-control enrollment-time-trigger" id="schedEndTimeDisplay" aria-label="Choose end time" aria-haspopup="dialog" aria-expanded="false" disabled>Select a date</button>
                     </div>
                 </div>
 
@@ -47,6 +62,8 @@ export function openRescheduleModal(schedule, onSuccess, options = {}) {
 
     Swal.fire({
         title: 'Reschedule Session',
+        customClass: { popup: 'tutorial-validity-modal', confirmButton: 'tutorial-validity-save', cancelButton: 'tutorial-validity-cancel' },
+        buttonsStyling: false,
         html: content,
         width: 920,
         heightAuto: false,
@@ -56,12 +73,15 @@ export function openRescheduleModal(schedule, onSuccess, options = {}) {
         confirmButtonColor: '#10b981',
         cancelButtonColor: '#6c757d',
         didOpen: async () => {
-            wireReschedulePicker(schedule, minDate);
+            await wireReschedulePicker(schedule, minDate, validity);
         },
+        didDestroy: disposeEnrollmentTimePickers,
         preConfirm: () => {
             const dateInput = document.getElementById('schedDate')?.value || '';
             const timeInput = document.getElementById('schedTime')?.value || '';
             const endTimeInput = document.getElementById('schedEndTime')?.value || '';
+
+            if (validity.validity_end_date && (dateInput < validity.validity_start_date || dateInput > validity.validity_end_date)) { Swal.showValidationMessage('Choose a session date within the validity window.'); return false; }
 
             if (!dateInput || !timeInput || !endTimeInput) {
                 Swal.showValidationMessage('Please select a date, start time, and end time.');
@@ -100,7 +120,7 @@ export function openRescheduleModal(schedule, onSuccess, options = {}) {
     });
 }
 
-async function wireReschedulePicker(schedule, minDate) {
+async function wireReschedulePicker(schedule, minDate, validity = {}) {
     const dateInput = document.getElementById('schedDateInput');
     const hiddenDate = document.getElementById('schedDate');
     const calendarContainer = document.getElementById('dateCalendarContainer');
@@ -110,6 +130,14 @@ async function wireReschedulePicker(schedule, minDate) {
     if (!dateInput || !hiddenDate || !calendarContainer || !startTimeInput || !endTimeInput) {
         return;
     }
+
+    window.teacherAvailableSlots = [];
+    window.teacherBookedSlots = [];
+    window.teacherAvailableDates = [];
+    window.teacherAvailableSlotsPerDate = {};
+    window.teacherFullShiftsPerDate = {};
+    hiddenDate.value = '';
+    initEnrollmentTimePickers({ root: Swal.getPopup() });
 
     if (!schedule.preferred_teacher) {
         dateInput.value = '';
@@ -126,12 +154,6 @@ async function wireReschedulePicker(schedule, minDate) {
     if (window.__enrollmentDatePickerInstances instanceof Map) {
         window.__enrollmentDatePickerInstances.delete(pickerKey);
     }
-
-    window.teacherAvailableSlots = [];
-    window.teacherBookedSlots = [];
-    window.teacherAvailableDates = [];
-    window.teacherAvailableSlotsPerDate = {};
-    window.teacherFullShiftsPerDate = {};
 
     const validateCallback = () => {
         const selectedDate = hiddenDate.value;
@@ -159,6 +181,7 @@ async function wireReschedulePicker(schedule, minDate) {
         hiddenDateId: 'schedDate',
         containerId: 'dateCalendarContainer',
         validateCallback,
+        onDateSelected: refreshEnrollmentTimePickers,
         parseTimeToMinutes,
         containerMaxWidth: '460px'
     });
@@ -170,6 +193,7 @@ async function wireReschedulePicker(schedule, minDate) {
 
     try {
         const response = await axios.get(buildAppUrl(`api/admin/enrollment.php?operation=getTeacherAvailableSlots&teacher_id=${encodeURIComponent(schedule.preferred_teacher)}`));
+        if (document.getElementById('schedDateInput') !== dateInput) return;
         if (response.data.status !== 'success') {
             dateInput.value = '';
             dateInput.placeholder = 'No available dates';
@@ -179,7 +203,7 @@ async function wireReschedulePicker(schedule, minDate) {
         window.teacherAvailableSlots = response.data.data.slots || [];
         window.teacherBookedSlots = response.data.data.bookings || [];
 
-        const availableDates = getAvailableTeacherDates(window.teacherAvailableSlots, window.teacherBookedSlots, minDate, 180);
+        const availableDates = getAvailableTeacherDates(window.teacherAvailableSlots, window.teacherBookedSlots, minDate, 180).filter(date => !validity.validity_end_date || date <= validity.validity_end_date);
         window.teacherAvailableDates = availableDates;
 
         dateInput.value = '';
@@ -189,6 +213,7 @@ async function wireReschedulePicker(schedule, minDate) {
         startTimeInput.addEventListener('change', () => renderAvailableSlots(hiddenDate.value));
         endTimeInput.addEventListener('change', () => renderAvailableSlots(hiddenDate.value));
     } catch (error) {
+        if (document.getElementById('schedDateInput') !== dateInput) return;
         console.error('Error fetching teacher slots:', error);
         dateInput.value = '';
         dateInput.placeholder = 'Unable to load dates';
@@ -196,6 +221,8 @@ async function wireReschedulePicker(schedule, minDate) {
 }
 
 function getAvailableTeacherDates(slots, bookings, minDate, daysAhead = 180) {
+    window.teacherAvailableSlotsPerDate = {};
+    window.teacherFullShiftsPerDate = {};
     if (!Array.isArray(slots) || slots.length === 0) return [];
 
     const bookingsByDate = {};
@@ -214,9 +241,6 @@ function getAvailableTeacherDates(slots, bookings, minDate, daysAhead = 180) {
     const today = new Date();
     const minDateValue = minDate || formatLocalDate(today);
 
-    window.teacherAvailableSlotsPerDate = {};
-    window.teacherFullShiftsPerDate = {};
-
     for (let offset = 0; offset <= daysAhead; offset += 1) {
         const current = new Date(today);
         current.setDate(today.getDate() + offset);
@@ -232,15 +256,23 @@ function getAvailableTeacherDates(slots, bookings, minDate, daysAhead = 180) {
             continue;
         }
 
-        const shift = daySlots[0];
+        const shifts = daySlots.map(slot => ({ start: parseTimeToMinutes(slot.start_time), end: parseTimeToMinutes(slot.end_time) }))
+            .filter(slot => slot.end > slot.start)
+            .sort((a, b) => a.start - b.start)
+            .reduce((merged, slot) => {
+                const last = merged[merged.length - 1];
+                if (last && slot.start <= last.end) last.end = Math.max(last.end, slot.end);
+                else merged.push({ ...slot });
+                return merged;
+            }, []);
+        if (!shifts.length) continue;
         window.teacherFullShiftsPerDate[formatted] = {
-            start: shift.start_time,
-            end: shift.end_time
+            start: minutesToTime(shifts[0].start),
+            end: minutesToTime(shifts[shifts.length - 1].end),
+            totalMinutes: shifts.reduce((total, shift) => total + shift.end - shift.start, 0)
         };
 
-        const shiftStart = parseTimeToMinutes(shift.start_time);
-        const shiftEnd = parseTimeToMinutes(shift.end_time);
-        let remaining = [{ start: shiftStart, end: shiftEnd }];
+        let remaining = shifts.map(shift => ({ ...shift }));
 
         const booked = bookingsByDate[formatted] || [];
         booked.forEach(item => {
@@ -292,13 +324,13 @@ function validateRescheduleSelection(dateInput, timeInput, endTimeInput) {
 
     const start = parseTimeToMinutes(timeInput);
     const end = parseTimeToMinutes(endTimeInput);
-    const overlaps = available.some(slot => {
+    const fitsAvailableSlot = available.some(slot => {
         const slotStart = parseTimeToMinutes(slot.start);
         const slotEnd = parseTimeToMinutes(slot.end);
-        return start < slotEnd && end > slotStart;
+        return start >= slotStart && end <= slotEnd && end > start;
     });
 
-    if (!overlaps) {
+    if (!fitsAvailableSlot) {
         Swal.showValidationMessage('The selected time is not within the available slots for this teacher.');
         return false;
     }

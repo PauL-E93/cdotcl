@@ -2,14 +2,14 @@
 
 // schedule_notifications.php - Daily cron job to send schedule notifications at 6 AM
 
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
-
-require 'PHPMailer/src/Exception.php';
-require 'PHPMailer/src/PHPMailer.php';
-require 'PHPMailer/src/SMTP.php';
+require_once __DIR__ . '/email_service.php';
 require_once __DIR__ . '/notification_helper.php';
 require_once __DIR__ . '/app_url_helper.php';
+require_once __DIR__ . '/security/ScheduleActionToken.php';
+if (PHP_SAPI !== 'cli') {
+    require_once __DIR__ . '/security/AuthGuard.php';
+    AuthGuard::requireRoles(['owner']);
+}
 
 class ScheduleNotifications {
     private $conn;
@@ -22,35 +22,9 @@ class ScheduleNotifications {
     }
 
     private function sendEmail($to, $subject, $message) {
-        $mail = new PHPMailer(true);
-        try {
-            $mail->isSMTP();
-            $mail->Host       = 'smtp.gmail.com';
-            $mail->SMTPAuth   = true;
-            $mail->Username   = 'espinosapaul810@gmail.com';
-            $mail->Password   = 'yjds vbuo gxas knkm';
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port       = 587;
-
-            $mail->SMTPOptions = [
-                'ssl' => [
-                    'verify_peer' => false,
-                    'verify_peer_name' => false,
-                    'allow_self_signed' => true
-                ]
-            ];
-
-            $mail->setFrom('espinosapaul810@gmail.com', 'CDO Tutor Schedule Reminder');
-            $mail->addAddress($to);
-            $mail->isHTML(true);
-            $mail->Subject = $subject;
-            $mail->Body    = $message;
-
-            return $mail->send();
-        } catch (Exception $e) {
-            error_log("Email sending failed: " . $mail->ErrorInfo);
-            return false;
-        }
+        return (new EmailService($this->conn))->send($to, $subject, $message, [
+            'from_name' => 'CDO Tutor Schedule Reminder'
+        ]);
     }
 
     private function getTodaysSchedules() {
@@ -79,7 +53,7 @@ class ScheduleNotifications {
                 LEFT JOIN program p ON ed.program_id = p.program_id
                 LEFT JOIN subject sub ON ed.subject_id = sub.subject_id
                 LEFT JOIN student s ON eh.student_id = s.student_id
-                LEFT JOIN employee t ON ed.preferred_teacher = t.employee_id
+                LEFT JOIN employee t ON COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = t.employee_id
                 LEFT JOIN branch b ON eh.branch_id = b.branch_id
                 WHERE eps.date = :today
                   AND eps.is_notified = 0
@@ -105,12 +79,17 @@ class ScheduleNotifications {
     }
 
     private function buildConfirmUrl($enrollmentDetailsId, $scheduleDate) {
-        return cdoBuildAppUrl('api/schedule_confirm.php?enrollment_details_id=' . urlencode($enrollmentDetailsId) . '&schedule_date=' . urlencode($scheduleDate));
+        return cdoBuildAppUrl('api/schedule_confirm.php?enrollment_details_id=' . urlencode($enrollmentDetailsId)
+            . '&schedule_date=' . urlencode($scheduleDate) . '&' . ScheduleActionToken::query((int) $enrollmentDetailsId, $scheduleDate));
     }
 
     private function buildStudentEmailContent($schedule, $confirmUrl = '') {
         $timeDisplay = date('g:i A', strtotime($schedule['start_time']));
         $loginUrl = htmlspecialchars(cdoBuildAppUrl('login.html'), ENT_QUOTES, 'UTF-8');
+        $ownerEmail = (new EmailService($this->conn))->getOwnerEmail();
+        $rescheduleSubject = rawurlencode('Reschedule Request for ' . $schedule['date']);
+        $rescheduleBody = rawurlencode('Please help me reschedule my session on ' . $schedule['date'] . '.');
+        $rescheduleUrl = 'mailto:' . rawurlencode($ownerEmail) . '?subject=' . $rescheduleSubject . '&body=' . $rescheduleBody;
         if (!empty($schedule['end_time'])) {
             $timeDisplay .= ' - ' . date('g:i A', strtotime($schedule['end_time']));
         }
@@ -125,7 +104,7 @@ class ScheduleNotifications {
                 </tr>
                 <tr>
                     <td style='padding:0 20px 20px; text-align:center;'>
-                        <a href='mailto:espinosapaul810@gmail.com?subject=Reschedule%20Request%20for%20{$schedule['date']}&body=Please%20help%20me%20reschedule%20my%20session%20on%20{$schedule['date']}.' style='display:inline-block; color:#ea9aa6; text-decoration:none; font-weight:600;'>Request Reschedule</a>
+                        <a href='{$rescheduleUrl}' style='display:inline-block; color:#ea9aa6; text-decoration:none; font-weight:600;'>Request Reschedule</a>
                     </td>
                 </tr>
                 <tr>

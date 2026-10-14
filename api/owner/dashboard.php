@@ -1,6 +1,8 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -103,6 +105,19 @@ try {
         LIMIT 300
     ");
 
+    $studentBirthdays = fetchOwnerDashboardRows($conn, "
+        SELECT DISTINCT st.student_id,
+               TRIM(CONCAT_WS(' ', st.first_name, st.last_name, NULLIF(TRIM(st.ext), ''))) AS student_name,
+               st.birthday,
+               eh.branch_id,
+               COALESCE(b.branch_name, 'Unassigned Center') AS branch_name
+        FROM student st
+        LEFT JOIN enrollment_header eh ON eh.student_id = st.student_id
+        LEFT JOIN branch b ON eh.branch_id = b.branch_id
+        WHERE st.birthday IS NOT NULL AND st.birthday > '0000-00-00'
+        ORDER BY st.birthday ASC, student_name ASC
+    ");
+
     $pendingPayments = fetchOwnerDashboardRows($conn, "
         SELECT pay.payment_id,
                eh.branch_id,
@@ -190,6 +205,7 @@ try {
         'branch_performance' => $branchPerformance,
         'payment_overview' => $paymentOverview,
         'recent_enrollments' => $recentEnrollments,
+        'student_birthdays' => $studentBirthdays,
         'pending_payments' => $pendingPayments,
         'recent_employees' => $recentEmployees,
         'low_stock_products' => $lowStockProducts,

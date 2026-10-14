@@ -1,6 +1,13 @@
 <?php
+require_once __DIR__ . '/penalty_adjustment_helper.php';
+
+function tuitionBillingTypeSql(): string {
+    return "(LOWER(TRIM(COALESCE(bs.billing_type, ''))) IN ('tuition', 'tuition fee', 'midterm', 'final')
+        OR LOWER(TRIM(COALESCE(bs.billing_type, ''))) REGEXP '^month [0-9]+$')";
+}
 
 function refreshBillingSchedulePenalties(PDO $conn, $enrollmentDetailsId = null, $studentId = null, $programId = null) {
+    ensurePenaltyAdjustmentSchema($conn);
     $params = [];
     $where = [];
 
@@ -31,14 +38,25 @@ function refreshBillingSchedulePenalties(PDO $conn, $enrollmentDetailsId = null,
     $itemTableCheck = $conn->prepare("SELECT COUNT(*) FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'billing_schedule_items'");
     $itemTableCheck->execute();
-    // Legacy installations and legacy bills remain penalty eligible. Itemized
-    // bills (for example an additional uniform) can explicitly opt out.
-    $penaltyEligible = !(bool)$itemTableCheck->fetchColumn() ? '1 = 1' : "(
+    // Only tuition installments qualify, including legacy bills without items.
+    // Miscellaneous, registration, downpayment, products and services are exempt.
+    $tuitionBill = tuitionBillingTypeSql();
+    $itemEligible = !(bool)$itemTableCheck->fetchColumn() ? '1 = 1' : "(
         NOT EXISTS (SELECT 1 FROM billing_schedule_items bsi_any WHERE bsi_any.billing_schedule_id = bs.billing_schedule_id)
         OR EXISTS (SELECT 1 FROM billing_schedule_items bsi_eligible
-            WHERE bsi_eligible.billing_schedule_id = bs.billing_schedule_id AND bsi_eligible.penalty_eligible = 1)
+            WHERE bsi_eligible.billing_schedule_id = bs.billing_schedule_id
+                AND bsi_eligible.item_type IN ('tuition', 'tuition_balance')
+                AND bsi_eligible.line_total > 0 AND bsi_eligible.penalty_eligible = 1)
     )";
+    $penaltyEligible = "($tuitionBill AND $itemEligible)";
     $penaltyAmount = "CASE
+        WHEN bs.status IN ('unpaid', 'partial', 'overdue')
+             AND bs.due_date IS NOT NULL
+             AND CURDATE() >= $penaltyStartDate
+             AND $penaltyEligible
+             AND ($baseAmount) > 0
+             AND pa.adjustment_id IS NOT NULL
+             THEN pa.agreed_penalty + GREATEST(DATEDIFF(CURDATE(), COALESCE(pa.pause_until, DATE(pa.created_at))), 0) * COALESCE(pp.penalty_amount, 0)
         WHEN bs.status IN ('unpaid', 'partial', 'overdue')
              AND bs.due_date IS NOT NULL
              AND CURDATE() >= $penaltyStartDate
@@ -53,6 +71,10 @@ function refreshBillingSchedulePenalties(PDO $conn, $enrollmentDetailsId = null,
             JOIN enrollment_details ed ON bs.enrollment_details_id = ed.enrollment_details_id
             JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id
             LEFT JOIN program_penalty pp ON ed.program_id = pp.program_id
+            LEFT JOIN billing_penalty_adjustments pa ON pa.adjustment_id = (
+                SELECT MAX(pa_latest.adjustment_id) FROM billing_penalty_adjustments pa_latest
+                WHERE pa_latest.billing_schedule_id = bs.billing_schedule_id
+            )
             SET bs.original_amount = $baseAmount,
                 bs.penalty_amount = $penaltyAmount,
                 bs.penalty_applied_date = CASE
@@ -68,6 +90,25 @@ function refreshBillingSchedulePenalties(PDO $conn, $enrollmentDetailsId = null,
 
     $stmt = $conn->prepare($sql);
     $stmt->execute($params);
+
+    // Removing an exempt charge's penalty can finish a partially paid bill.
+    // Pending payments stay subject to staff review.
+    $settledSql = "UPDATE billing_schedule bs
+        JOIN enrollment_details ed ON bs.enrollment_details_id = ed.enrollment_details_id
+        JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id
+        JOIN (
+            SELECT billing_schedule_id,
+                SUM(CASE WHEN payment_status = 'Received' THEN amount_paid ELSE 0 END) AS received_amount,
+                SUM(CASE WHEN payment_status = 'Pending' THEN 1 ELSE 0 END) AS pending_count
+            FROM payment GROUP BY billing_schedule_id
+        ) paid ON paid.billing_schedule_id = bs.billing_schedule_id
+        SET bs.status = 'paid'
+        WHERE bs.status IN ('unpaid', 'partial', 'overdue')
+          AND NOT ($penaltyEligible)
+          AND paid.pending_count = 0 AND paid.received_amount > 0
+          AND paid.received_amount >= bs.total_amount";
+    if ($where) $settledSql .= ' AND ' . implode(' AND ', $where);
+    $conn->prepare($settledSql)->execute($params);
 }
 
 function backfillLegacyPaymentPenalties(PDO $conn, $enrollmentDetailsId = null) {

@@ -1,8 +1,14 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+require_once __DIR__ . '/../tutorial_validity_helper.php';
+ensureTutorialValiditySchema(AuthGuard::connection());
+
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 
 require_once __DIR__ . '/../notification_helper.php';
+require_once __DIR__ . '/../enrollment_completion_helper.php';
+require_once __DIR__ . '/../session_sequence_helper.php';
 
 class OwnerSchedule {
     private function normalizeRole($role) {
@@ -61,7 +67,7 @@ class OwnerSchedule {
                            p.name AS program_name,
                            sub.subject_name,
                            TRIM(CONCAT_WS(' ', s.first_name, s.last_name, NULLIF(TRIM(s.ext), ''))) AS student_name,
-                           ed.preferred_teacher,
+                           COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) AS preferred_teacher,
                            CONCAT(t.first_name, ' ', t.last_name) AS teacher_name,
                            eh.branch_id,
                            b.branch_name,
@@ -72,9 +78,9 @@ class OwnerSchedule {
                     LEFT JOIN program p ON ed.program_id = p.program_id
                     LEFT JOIN subject sub ON ed.subject_id = sub.subject_id
                     LEFT JOIN student s ON eh.student_id = s.student_id
-                    LEFT JOIN employee t ON ed.preferred_teacher = t.employee_id
+                    LEFT JOIN employee t ON COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = t.employee_id
                     LEFT JOIN branch b ON eh.branch_id = b.branch_id
-                    WHERE ed.status IN ('active', 'pending', 'enrolled', 'completed')
+                    WHERE ed.status IN ('pending', 'enrolled', 'completed')
                       {$branchFilterSql}
                     ORDER BY eps.date ASC, eps.start_time ASC, b.branch_name ASC";
 
@@ -150,6 +156,8 @@ class OwnerSchedule {
                 return;
             }
 
+            $conn->beginTransaction();
+
             if ($preferenceIds) {
                 $idPlaceholders = [];
                 $verifyParams = [
@@ -188,8 +196,31 @@ class OwnerSchedule {
                 ? (int)$verifyStmt->fetchColumn() === count($preferenceIds)
                 : (bool)$verifyStmt->fetch();
             if (!$scheduleFound) {
+                $conn->rollBack();
                 echo json_encode(['status' => 'error', 'message' => 'Schedule not found']);
                 return;
+            }
+
+            if ($newStatus === 'ongoing') assertTutorialScheduleStart($conn, (int) $preferenceId, (int) $enrollmentDetailsId, (string) $scheduleDate);
+            if (in_array($newStatus, ['ongoing', 'no-show'], true)) {
+                $blockingSession = findEarlierUnresolvedSession(
+                    $conn,
+                    $preferenceId,
+                    $preferenceIds,
+                    $enrollmentDetailsId,
+                    $scheduleDate,
+                    true
+                );
+                if ($blockingSession) {
+                    $conn->rollBack();
+                    echo json_encode([
+                        'status' => 'error',
+                        'message' => $newStatus === 'no-show'
+                            ? 'Complete all earlier sessions before marking this session as no-show.'
+                            : 'Complete all earlier sessions before starting this session.'
+                    ]);
+                    return;
+                }
             }
 
             if ($preferenceIds) {
@@ -243,18 +274,27 @@ class OwnerSchedule {
                 $notifications = new NotificationService($conn);
                 $notificationPreferenceId = $preferenceId ?: ($preferenceIds[0] ?? null);
                 $schedule = $notifications->getScheduleContext($notificationPreferenceId, $enrollmentDetailsId, $scheduleDate);
+                $resolvedEnrollmentId = (int) ($schedule['enrollment_details_id'] ?? $enrollmentDetailsId ?? 0);
+                $completion = syncEnrollmentCompletionStatus($conn, $resolvedEnrollmentId);
                 $notifications->notifyScheduleStatus($schedule, $newStatus, 'employee', $_SESSION['employee_id'] ?? 0);
+
+                $conn->commit();
 
                 echo json_encode([
                     'status' => 'success',
                     'message' => 'Schedule status updated successfully',
                     'new_status' => $newStatus,
+                    'enrollment_completed' => $completion['completed'],
                     'affected_rows' => $affectedRows
                 ]);
             } else {
+                $conn->rollBack();
                 echo json_encode(['status' => 'error', 'message' => 'No rows updated - schedule not found']);
             }
         } catch (Exception $e) {
+            if (isset($conn) && $conn->inTransaction()) {
+                $conn->rollBack();
+            }
             echo json_encode([
                 'status' => 'error',
                 'message' => $e->getMessage()

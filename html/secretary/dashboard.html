@@ -1,16 +1,19 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script src="../../js/utilities/upload_url.js?v=20261006-upload-images-r2"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Secretary Dashboard</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="../../css/design.css">
-    <link rel="stylesheet" href="../../css/secretary_dashboard.css">
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script type="module" src="../../js/index.js"></script>
-    <script type="module" src="../../js/modules/dashboard_secretary.js"></script>
+    <link rel="stylesheet" href="../../css/secretary_dashboard.css?v=20261013-enrollment-filter-r2">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js?v=20261006-upload-images"></script>
+    <script type="module" src="../../js/index.js?v=20261012-all-user-session"></script>
+    <script type="module" src="../../js/modules/dashboard_secretary.js?v=20261013-enrollment-filter"></script>
+    <link rel="stylesheet" href="../../css/dashboard_birthdays.css">
+    <script type="module" src="../../js/modules/dashboard_birthdays.js?v=20261006-upload-images"></script>
 </head>
 <body>
     <header id="dynamic-header"></header>
@@ -30,10 +33,44 @@
                 <article class="secretary-stat-card secretary-stat-pink" data-dashboard-modal="pending-applications"><div class="secretary-stat-icon"><i class="bi bi-journal-plus"></i></div><div><p>Pending Applications</p><strong id="secretary-pending-applications">0</strong><span>Enrollments waiting for follow-up</span></div></article>
                 <article class="secretary-stat-card secretary-stat-blue" data-dashboard-modal="today-sessions"><div class="secretary-stat-icon"><i class="bi bi-calendar-check"></i></div><div><p>Today's Sessions</p><strong id="secretary-today-sessions">0</strong><span>Scheduled tutorial sessions today</span></div></article>
                 <article class="secretary-stat-card secretary-stat-green" data-dashboard-modal="pending-payments"><div class="secretary-stat-icon"><i class="bi bi-credit-card"></i></div><div><p>Pending Payments</p><strong id="secretary-pending-payments-total">0</strong><span>Payments needing confirmation</span></div></article>
-                <article class="secretary-stat-card secretary-stat-orange" data-dashboard-modal="active-employees"><div class="secretary-stat-icon"><i class="bi bi-person-badge"></i></div><div><p>Active Employees</p><strong id="secretary-active-employees">0</strong><span>Available staff across centers</span></div></article>
+                <article class="secretary-stat-card secretary-stat-orange secretary-enrollment-card" data-dashboard-modal="total-enrollments">
+                    <div class="secretary-enrollment-heading">
+                        <p>Total Enrollment</p>
+                        <select id="secretary-enrollment-filter" class="secretary-enrollment-filter" aria-label="Filter total enrollment by program">
+                            <option value="all">All Programs</option>
+                            <option value="tutorial">Tutorial</option>
+                            <option value="preschool">Pre School</option>
+                            <option value="playschool">Play School</option>
+                        </select>
+                    </div>
+                    <div class="secretary-stat-icon"><i class="bi bi-people-fill"></i></div>
+                    <div class="secretary-enrollment-summary">
+                        <strong id="secretary-total-enrollments" aria-live="polite">0</strong>
+                        <span>Enrollment records across centers</span>
+                    </div>
+                </article>
             </section>
 
            
+
+            <section class="dashboard-birthday-card" data-student-birthday-card data-center-filter="secretary-center-filter" aria-labelledby="student-birthday-title">
+                <div class="birthday-card-heading">
+                    <div class="birthday-card-title"><i class="bi bi-gift" aria-hidden="true"></i><h2 id="student-birthday-title">Student Birthdays</h2><span class="birthday-count" data-birthday-count>0</span></div>
+                    <select class="birthday-period-select" data-birthday-period aria-label="Birthday period">
+                        <option value="year">This Year</option>
+                        <option value="month" selected>This Month</option>
+                        <option value="week">This Week</option>
+                        <option value="day">Today</option>
+                    </select>
+                </div>
+                <p class="birthday-range" data-birthday-range></p>
+                <div class="birthday-table-wrap" aria-live="polite">
+                    <table class="birthday-table">
+                        <thead><tr><th scope="col">Student</th><th scope="col">Birthday</th><th scope="col">Turning</th><th scope="col">Center</th></tr></thead>
+                        <tbody data-birthday-rows><tr><td colspan="4" class="birthday-empty">Loading birthdays...</td></tr></tbody>
+                    </table>
+                </div>
+            </section>
 
             <section class="secretary-main-grid">
                 <article class="secretary-card" data-dashboard-modal="enrollment-pipeline">
@@ -65,10 +102,6 @@
                 <article class="secretary-card" data-dashboard-modal="pending-payments">
                     <div class="secretary-card-heading"><div><i class="bi bi-wallet2"></i><h2>Payment Follow-up</h2></div><span class="secretary-count-badge" id="secretary-payment-count">0</span></div>
                     <div id="secretary-pending-payments" class="secretary-payment-list"></div>
-                </article>
-                <article class="secretary-card" data-dashboard-modal="active-employees">
-                    <div class="secretary-card-heading"><div><i class="bi bi-people"></i><h2>Staff Mix</h2></div><a href="employee.html">Employees <i class="bi bi-chevron-right"></i></a></div>
-                    <div id="secretary-staff-summary" class="secretary-staff-list"></div>
                 </article>
             </section>
             <p class="secretary-error" id="secretary-dashboard-error" role="status"></p>

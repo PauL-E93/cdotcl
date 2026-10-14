@@ -3,11 +3,12 @@ import { canUseSchedulePermission } from './schedule_rbac.js';
 import {
     getManagerScheduleModalActions,
     openScheduleDetailsModal
-} from '../utilities/schedule_details_modal.js';
+} from '../utilities/schedule_details_modal.js?v=20261012-start-window';
 import { fitScheduleLogToRows } from '../utilities/schedule_log_scroll.js?v=20260828-five-rows';
 
 const BRANCH_SCHEDULE_ENDPOINT = '../../api/admin/branch_schedule.php';
 const SEND_NOTIFICATION_ENDPOINT = '../../api/send_schedule_notification.php';
+const SESSION_STATUS_ENDPOINT = '../../api/branch_admin/session_status.php';
 const ALL_FILTERS = 'all';
 
 export default class BranchAdminCalendarModule {
@@ -471,14 +472,28 @@ export default class BranchAdminCalendarModule {
         };
 
         try {
-            const response = await axios.post(BRANCH_SCHEDULE_ENDPOINT, payload);
+            const sendsSessionEmail = ['ongoing', 'done', 'no-show'].includes(newStatus);
+            if (sendsSessionEmail) {
+                const action = { ongoing: 'Starting Session', done: 'Completing Session', 'no-show': 'Marking No-show' }[newStatus];
+                Swal.fire({
+                    title: `${action}...`,
+                    text: 'Please wait while the session is updated and the email is sent.',
+                    allowOutsideClick: false,
+                    allowEscapeKey: false,
+                    showConfirmButton: false,
+                    didOpen: () => Swal.showLoading()
+                });
+            }
+            const response = await axios.post(sendsSessionEmail ? SESSION_STATUS_ENDPOINT : BRANCH_SCHEDULE_ENDPOINT, payload);
 
             if (response.data.status === 'success') {
+                const alreadyProcessed = response.data.already_done || response.data.already_ongoing || response.data.already_no_show;
+                const emailFailed = sendsSessionEmail && response.data.email_sent === false && !alreadyProcessed;
                 Swal.fire({
-                    icon: 'success',
+                    icon: emailFailed ? 'warning' : 'success',
                     title: 'Status Updated',
-                    text: `Schedule status changed to ${newStatus}.`,
-                    timer: 2000,
+                    text: response.data.message || `Schedule status changed to ${newStatus}.`,
+                    timer: emailFailed ? undefined : 2000,
                     timerProgressBar: true
                 }).then(() => {
                     this.renderCalendar();
@@ -501,6 +516,19 @@ export default class BranchAdminCalendarModule {
     }
 
     async sendScheduleNotification(enrollmentDetailsId, scheduleDate) {
+        const schedule = this.getSchedulesForDate(scheduleDate).find(item =>
+            Number(item.enrollment_details_id) === Number(enrollmentDetailsId)
+        );
+        if (String(schedule?.status || '').trim().toLowerCase() === 'done') {
+            Swal.fire({
+                icon: 'info',
+                title: 'Session Already Done',
+                text: 'This session is already done. There is no need to email the student.',
+                confirmButtonText: 'OK'
+            });
+            return;
+        }
+
         if (enrollmentDetailsId <= 0 || !scheduleDate || scheduleDate.trim() === '') {
             Swal.fire({
                 icon: 'warning',
@@ -553,9 +581,9 @@ export default class BranchAdminCalendarModule {
                 }
 
                 Swal.fire({
-                    icon: 'success',
-                    title: 'Notification Sent!',
-                    text: recipientText,
+                    icon: payload.email_warning ? 'warning' : 'success',
+                    title: payload.email_warning ? 'Email Delivery Incomplete' : 'Notification Sent!',
+                    text: payload.email_warning ? payload.message : recipientText,
                     confirmButtonText: 'OK'
                 }).then(() => {
                     this.renderCalendar();
@@ -579,14 +607,15 @@ export default class BranchAdminCalendarModule {
 
     async sendAllScheduleNotifications() {
         const schedules = this.getSchedulesForDate(this.selectedDate).filter(schedule =>
-            schedule.enrollment_details_id > 0 && schedule.date
+            schedule.enrollment_details_id > 0 && schedule.date &&
+            String(schedule.status || '').trim().toLowerCase() !== 'done'
         );
 
         if (schedules.length === 0) {
             Swal.fire({
                 icon: 'info',
                 title: 'No Schedules to Email',
-                text: 'There are no valid schedules in the selected schedule log.'
+                text: 'There are no unfinished valid schedules in the selected schedule log. Done sessions do not need an email.'
             });
             return;
         }
@@ -594,7 +623,7 @@ export default class BranchAdminCalendarModule {
         const result = await Swal.fire({
             icon: 'question',
             title: 'Email All Schedules?',
-            text: `This will send email notifications to the student and teacher for all ${schedules.length} schedule${schedules.length === 1 ? '' : 's'} shown for ${this.formatShortDate(this.selectedDate)}.`,
+            text: `This will send email notifications to the student and teacher for ${schedules.length} unfinished schedule${schedules.length === 1 ? '' : 's'} shown for ${this.formatShortDate(this.selectedDate)}. Done sessions will be skipped.`,
             showCancelButton: true,
             confirmButtonText: 'Yes, Send All',
             cancelButtonText: 'Cancel',
@@ -632,7 +661,7 @@ export default class BranchAdminCalendarModule {
                     sender_type: 'branch_admin'
                 });
 
-                if (response.data?.success) {
+                if (response.data?.success && !response.data.email_warning) {
                     sent.push(schedule);
                 } else {
                     failed.push({ schedule, reason: response.data?.message || 'Notification could not be sent' });

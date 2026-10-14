@@ -1,15 +1,14 @@
 <?php
+require_once __DIR__ . '/security/AuthGuard.php';
+AuthGuard::requireUser();
+
 header('Content-Type: application/json; charset=UTF-8');
-header('Access-Control-Allow-Origin: *');
 
-use PHPMailer\PHPMailer\Exception as MailException;
-use PHPMailer\PHPMailer\PHPMailer;
-
-require_once __DIR__ . '/PHPMailer/src/Exception.php';
-require_once __DIR__ . '/PHPMailer/src/PHPMailer.php';
-require_once __DIR__ . '/PHPMailer/src/SMTP.php';
-require_once __DIR__ . '/admin/connection-pdo.php';
+$conn = AuthGuard::connection();
+require_once __DIR__ . '/email_service.php';
 require_once __DIR__ . '/notification_helper.php';
+require_once __DIR__ . '/enrollment_completion_helper.php';
+require_once __DIR__ . '/session_substitute_helper.php';
 
 class DoneSession
 {
@@ -54,12 +53,14 @@ class DoneSession
         return is_array($data) ? $data : [];
     }
 
-    private function getScheduleForUpdate($preferenceId, $enrollmentDetailsId, $scheduleDate, $teacherId)
+    private function getScheduleForUpdate($preferenceId, $enrollmentDetailsId, $scheduleDate, $teacherId, array $preferenceIds = [])
     {
         $identifierSql = '';
         $params = [':teacher_id' => $teacherId];
 
-        if ($preferenceId > 0) {
+        if ($preferenceIds) {
+            $identifierSql = 'eps.preference_id IN (' . implode(',', $preferenceIds) . ')';
+        } elseif ($preferenceId > 0) {
             $identifierSql = 'eps.preference_id = :preference_id';
             $params[':preference_id'] = $preferenceId;
         } else {
@@ -76,7 +77,7 @@ class DoneSession
                     eps.start_time,
                     eps.end_time,
                     eps.status,
-                    ed.preferred_teacher AS teacher_id,
+                    COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) AS teacher_id,
                     eh.student_id,
                     eh.branch_id,
                     p.name AS program_name,
@@ -93,16 +94,16 @@ class DoneSession
                 LEFT JOIN program p ON p.program_id = ed.program_id
                 LEFT JOIN program_type pt ON pt.program_type_id = p.program_type
                 LEFT JOIN subject sub ON sub.subject_id = ed.subject_id
-                LEFT JOIN employee t ON t.employee_id = ed.preferred_teacher
+                LEFT JOIN employee t ON t.employee_id = COALESCE(eps.substitute_teacher_id, ed.preferred_teacher)
                 LEFT JOIN branch b ON b.branch_id = eh.branch_id
                 WHERE {$identifierSql}
-                  AND ed.preferred_teacher = :teacher_id
-                LIMIT 1
+                  AND COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = :teacher_id
+                " . ($preferenceIds ? "ORDER BY eps.start_time, eps.preference_id" : "LIMIT 1") . "
                 FOR UPDATE";
 
         $stmt = $this->conn->prepare($sql);
         $stmt->execute($params);
-        return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        return $preferenceIds ? selectTeacherMeeting($stmt, $preferenceIds, 'done') : ($stmt->fetch(PDO::FETCH_ASSOC) ?: null);
     }
 
     private function isHouseBased($programType)
@@ -181,41 +182,22 @@ class DoneSession
 
     private function sendCompletionEmail($schedule, $isHouseBased)
     {
-        $mail = new PHPMailer(true);
+        $subject = $isHouseBased
+            ? 'House-Based Session Completed - ' . date('F j, Y', strtotime($schedule['date']))
+            : 'Session Completed - Student Ready for Pickup - ' . date('F j, Y', strtotime($schedule['date']));
 
-        try {
-            $mail->isSMTP();
-            $mail->Host = 'smtp.gmail.com';
-            $mail->SMTPAuth = true;
-            $mail->Username = 'espinosapaul810@gmail.com';
-            $mail->Password = 'yjds vbuo gxas knkm';
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port = 587;
-            $mail->CharSet = 'UTF-8';
-            $mail->SMTPOptions = [
-                'ssl' => [
-                    'verify_peer' => false,
-                    'verify_peer_name' => false,
-                    'allow_self_signed' => true
-                ]
-            ];
-
-            $mail->setFrom('espinosapaul810@gmail.com', 'CDO Tutor Session Notification');
-            $mail->addAddress($schedule['student_email'], $schedule['student_name']);
-            $mail->isHTML(true);
-            $mail->Subject = $isHouseBased
-                ? 'House-Based Session Completed - ' . date('F j, Y', strtotime($schedule['date']))
-                : 'Session Completed - Student Ready for Pickup - ' . date('F j, Y', strtotime($schedule['date']));
-            $mail->Body = $this->buildCompletionEmail($schedule, $isHouseBased);
-            $mail->AltBody = $isHouseBased
-                ? 'Your house-based tutorial session has been completed.'
-                : 'The tutorial session has been completed. The student is now ready for pickup.';
-
-            return $mail->send();
-        } catch (MailException $e) {
-            error_log('Done session email failed: ' . $mail->ErrorInfo);
-            return false;
-        }
+        return (new EmailService($this->conn))->send(
+            $schedule['student_email'],
+            $subject,
+            $this->buildCompletionEmail($schedule, $isHouseBased),
+            [
+                'from_name' => 'CDO Tutor Session Notification',
+                'recipient_name' => $schedule['student_name'],
+                'alt_body' => $isHouseBased
+                    ? 'Your house-based tutorial session has been completed.'
+                    : 'The tutorial session has been completed. The student is now ready for pickup.'
+            ]
+        );
     }
 
     public function run()
@@ -228,6 +210,7 @@ class DoneSession
         try {
             $teacherId = $this->getTeacherId();
             $data = $this->getRequestData();
+            $preferenceIds = !empty($data['preference_ids']) ? SessionSubstituteService::identifiers($data) : [];
             $preferenceId = (int) ($data['preference_id'] ?? 0);
             $enrollmentDetailsId = (int) ($data['enrollment_details_id'] ?? 0);
             $scheduleDate = trim((string) ($data['schedule_date'] ?? ''));
@@ -250,7 +233,8 @@ class DoneSession
                 $preferenceId,
                 $enrollmentDetailsId,
                 $scheduleDate,
-                $teacherId
+                $teacherId,
+                $preferenceIds
             );
 
             if (!$schedule) {
@@ -260,10 +244,12 @@ class DoneSession
             }
 
             if (strtolower((string) $schedule['status']) === 'done') {
-                $this->conn->rollBack();
+                $completion = syncEnrollmentCompletionStatus($this->conn, (int) $schedule['enrollment_details_id']);
+                $this->conn->commit();
                 $this->respond('success', 'This session is already marked as done.', [
                     'new_status' => 'done',
                     'already_done' => true,
+                    'enrollment_completed' => $completion['completed'],
                     'email_sent' => false
                 ]);
                 return;
@@ -278,13 +264,15 @@ class DoneSession
             $update = $this->conn->prepare(
                 "UPDATE enrollment_preferred_schedule
                  SET status = 'done'
-                 WHERE preference_id = :preference_id AND status = 'ongoing'"
+                 WHERE preference_id IN (" . implode(',', $schedule['preference_ids'] ?? [(int)$schedule['preference_id']]) . ") AND status = 'ongoing'"
             );
-            $update->execute([':preference_id' => $schedule['preference_id']]);
+            $update->execute();
 
-            if ($update->rowCount() !== 1) {
+            if ($update->rowCount() < 1) {
                 throw new RuntimeException('The session status could not be updated.');
             }
+
+            $completion = syncEnrollmentCompletionStatus($this->conn, (int) $schedule['enrollment_details_id']);
 
             $this->conn->commit();
 
@@ -308,6 +296,7 @@ class DoneSession
             $this->respond('success', $message, [
                 'new_status' => 'done',
                 'email_sent' => $emailSent,
+                'enrollment_completed' => $completion['completed'],
                 'session_type' => $isHouseBased ? 'House Based' : 'Center'
             ]);
         } catch (RuntimeException $e) {

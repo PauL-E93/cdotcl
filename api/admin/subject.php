@@ -1,17 +1,19 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 // api/admin/subject.php
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type");
 
 class Subject {
     private function getSubjectName($data) {
-        return trim((string) ($data['subject_name'] ?? ''));
+        return trim(preg_replace('/\s+/u', ' ', (string) ($data['subject_name'] ?? '')) ?? '');
     }
 
     private function findSubjectIdByName($conn, $subjectName, $excludeId = null) {
-        $sql = "SELECT subject_id FROM subject WHERE subject_name = :subject_name";
+        $sql = "SELECT subject_id FROM subject WHERE LOWER(TRIM(subject_name)) = LOWER(:subject_name)";
         $params = [':subject_name' => $subjectName];
 
         if ($excludeId !== null) {
@@ -58,8 +60,8 @@ class Subject {
         $data = json_decode($json, true) ?: [];
         $subjectName = $this->getSubjectName($data);
 
-        if ($subjectName === '') {
-            echo json_encode(["status" => "error", "message" => "Subject name is required"]);
+        if ($subjectName === '' || preg_match_all('/./us', $subjectName) > 100) {
+            echo json_encode(["status" => "error", "message" => "Requested subject must contain 1 to 100 characters."]);
             return;
         }
 

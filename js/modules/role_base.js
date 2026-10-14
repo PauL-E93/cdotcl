@@ -3,16 +3,24 @@ import {
     ROLE_DISPLAY_ORDER,
     ROLE_META,
     getResolvedRolePermissions,
+    initRbacPermissions,
     normalizeRbacRoleKey,
     setRbacModulePermissions
-} from '../utilities/rbac_navigation.js';
-import { initializeEmployeeModuleSupport, loadEmployeesData } from './employee.js';
+} from '../utilities/rbac_navigation.js?v=20261001-payment-view-only';
+import { initializeEmployeeModuleSupport, loadEmployeesData } from './employee.js?v=20261013-theme-plus';
 
 const MODULE_DETAIL_MAP = {
     enrollment: [
+        { label: 'Extend Tutorial Validity', hint: 'Review existing tutorial validity or extend a package deadline with a recorded reason.', permissionKey: 'extend_tutorial_validity' },
         { label: 'Add Enrollment', hint: 'Create new tutorial enrollment records.', permissionKey: 'create' },
         { label: 'Update Enrollment', hint: 'Modify enrollment records and details.', permissionKey: 'edit' },
         { label: 'Approve Enrollment', hint: 'Handle approval-related enrollment steps.', permissionKey: 'approve' },
+        { label: 'View Online Applications', hint: 'See and open applications submitted from the New Student Enrollment page.', permissionKey: 'view_online_applications' },
+        { label: 'Edit Online Applications', hint: 'Correct submitted application preferences before enrollment is finalized; preserve payment approval and receipts.', permissionKey: 'edit_online_applications' },
+        { label: 'Approve Online Applications', hint: 'Accept an online application after reviewing the student and enrollment information.', permissionKey: 'approve_online_applications' },
+        { label: 'Reject Online Applications', hint: 'Reject an online application and send the review notes to the applicant.', permissionKey: 'reject_online_applications' },
+        { label: 'Receive Online Application Payment', hint: 'Confirm GCash proof or record the required cash registration fee and downpayment.', permissionKey: 'receive_online_application_payment' },
+        { label: 'Finalize Online Enrollment', hint: 'Assign a teacher and schedule, or a class and section, then complete the online enrollment.', permissionKey: 'finalize_online_applications' },
         { label: 'Export Enrollment', hint: 'Export enrollment data and summaries.', permissionKey: 'export' }
     ],
     student_management: [
@@ -36,6 +44,7 @@ const MODULE_DETAIL_MAP = {
     payment: [
         { label: 'Add Payment Record', hint: 'Create or log payment records.', permissionKey: 'create' },
         { label: 'Edit Payment', hint: 'Update payment details and statuses.', permissionKey: 'edit' },
+        { label: 'Adjust Penalty', hint: 'Approve tuition penalty waivers or reductions, record the parent/guardian agreement, and set a settlement deadline.', permissionKey: 'adjust_penalty' },
         { label: 'To Receive Payment Card', hint: 'Show the To Receive Payment card and allow approve / decline actions for pending payments.', permissionKey: 'approve' },
         { label: 'View Assessment', hint: 'Open billing assessments from tutorial and pre-play payment records.', permissionKey: 'view_assessment' },
         { label: 'Manage Assessment', hint: 'Change discounts, optional services, and additional product charges in billing assessments.', permissionKey: 'manage_assessment' },
@@ -63,6 +72,7 @@ const MODULE_DETAIL_MAP = {
         { label: 'Delete Center', hint: 'Remove center records that should no longer remain in the list.', permissionKey: 'delete' }
     ],
     session: [
+        { label: 'Correct No-show', hint: 'Correct a no-show to ongoing or done and email the student an attendance correction.', permissionKey: 'correct_no_show' },
         { label: 'Create Session', hint: 'Reserve space for future session scheduling tools.', permissionKey: 'create' },
         { label: 'Edit Session', hint: 'Update session status and tutorial progress actions.', permissionKey: 'edit' }
     ]
@@ -76,12 +86,27 @@ const MODULE_VIEW_DETAIL_MAP = {
 };
 
 const MODULE_PERMISSION_DEPENDENCIES = {
+    enrollment: {
+        approve_online_applications: ['view_online_applications'],
+        edit_online_applications: ['view_online_applications'],
+        reject_online_applications: ['view_online_applications'],
+        receive_online_application_payment: ['view_online_applications'],
+        finalize_online_applications: ['view_online_applications']
+    },
     payment: {
         manage_assessment: ['view_assessment']
     }
 };
 
 const PROGRAM_FEATURE_DETAIL_MAP = [
+    {
+        key: 'session_automation', label: 'Session Automation', hint: 'Automatic attendance timing for tutorial sessions across all branches.', icon: 'bi-clock-history',
+        actions: [
+            { label: 'View', hint: 'Show the Session Automation card.', permissionKey: 'view_session_automation' },
+            { label: 'Add', hint: 'Create the global session automation policy.', permissionKey: 'create_session_automation' },
+            { label: 'Edit', hint: 'Update automatic no-show and completion timing.', permissionKey: 'edit_session_automation' }
+        ]
+    },
     {
         key: 'programs',
         label: 'Program List',
@@ -146,6 +171,15 @@ const PROGRAM_FEATURE_DETAIL_MAP = [
             { label: 'View', hint: 'Show the Registration Amounts card.', permissionKey: 'view_registration' },
             { label: 'Add', hint: 'Add registration amounts.', permissionKey: 'create_registration' },
             { label: 'Edit', hint: 'Edit registration amounts.', permissionKey: 'edit_registration' }
+        ]
+    },
+    {
+        key: 'payment_methods', label: 'Payment Methods', hint: 'Payment channels, receiving accounts, and QR codes.', icon: 'bi-credit-card',
+        actions: [
+            { label: 'View', hint: 'Show the Payment Methods card.', permissionKey: 'view_payment_methods' },
+            { label: 'Add', hint: 'Add payment methods.', permissionKey: 'create_payment_methods' },
+            { label: 'Edit', hint: 'Edit payment methods and status.', permissionKey: 'edit_payment_methods' },
+            { label: 'Archive', hint: 'Set payment methods to inactive.', permissionKey: 'delete_payment_methods' }
         ]
     },
     {
@@ -233,7 +267,8 @@ function getCurrentViewerEmployeePermissions() {
         const permissions = getResolvedRolePermissions(normalizeRoleKey(user?.role_name)).employee || {};
         return {
             view: Boolean(permissions.view),
-            edit: Boolean(permissions.edit)
+            edit: Boolean(permissions.edit),
+            schedule: Boolean(permissions.view && permissions.approve)
         };
     } catch (error) {
         console.error('Error reading current viewer employee permissions for RBAC list:', error);
@@ -268,7 +303,7 @@ function buildAssignedUserActionCell(user) {
         `);
     }
 
-    if (permissions.edit && typeof window.openScheduleModal === 'function') {
+    if (permissions.schedule && typeof window.openScheduleModal === 'function') {
         actionItems.push(`
             <li>
                 <button class="dropdown-item" type="button" onclick="openScheduleModal(${Number(user.employee_id)})">
@@ -914,6 +949,8 @@ function renderRoleBaseAccessDenied(message) {
 
 async function initRoleBasePage() {
     if (!isRoleBasePage() || !document.getElementById('rbac-role-list')) return;
+
+    await initRbacPermissions();
 
     const userData = localStorage.getItem('user');
     let currentUserRole = '';

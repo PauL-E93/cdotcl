@@ -3,12 +3,13 @@ import { canUseSchedulePermission } from './schedule_rbac.js';
 import {
     getManagerScheduleModalActions,
     openScheduleDetailsModal
-} from '../utilities/schedule_details_modal.js';
+} from '../utilities/schedule_details_modal.js?v=20261012-start-window';
 import { fitScheduleLogToRows } from '../utilities/schedule_log_scroll.js?v=20260828-five-rows';
 
 const TEACHER_SCHEDULE_ENDPOINT = '../../api/admin/schedule.php';
 const DONE_SESSION_ENDPOINT = '../../api/done_session.php';
 const ONGOING_SESSION_ENDPOINT = '../../api/ongoing.php';
+const NO_SHOW_SESSION_ENDPOINT = '../../api/no_show.php';
 const SEND_NOTIFICATION_ENDPOINT = '../../api/send_schedule_notification.php';
 const ALL_FILTERS = 'all';
 
@@ -407,11 +408,13 @@ export default class TeacherCalendarModule {
         };
 
         try {
-            if (newStatus === 'done' || newStatus === 'ongoing') {
+            if (['done', 'ongoing', 'no-show'].includes(newStatus)) {
                 const isStarting = newStatus === 'ongoing';
                 Swal.fire({
-                    title: isStarting ? 'Starting Session...' : 'Completing Session...',
-                    text: isStarting
+                    title: newStatus === 'no-show' ? 'Marking No-show...' : (isStarting ? 'Starting Session...' : 'Completing Session...'),
+                    text: newStatus === 'no-show'
+                        ? 'Please wait while the session is marked as no-show and the email is sent.'
+                        : isStarting
                         ? 'Please wait while the session is started and the email is sent.'
                         : 'Please wait while the session is marked as done and the email is sent.',
                     allowOutsideClick: false,
@@ -425,12 +428,13 @@ export default class TeacherCalendarModule {
 
             const endpoint = newStatus === 'done'
                 ? DONE_SESSION_ENDPOINT
-                : (newStatus === 'ongoing' ? ONGOING_SESSION_ENDPOINT : TEACHER_SCHEDULE_ENDPOINT);
+                : (newStatus === 'ongoing' ? ONGOING_SESSION_ENDPOINT
+                    : (newStatus === 'no-show' ? NO_SHOW_SESSION_ENDPOINT : TEACHER_SCHEDULE_ENDPOINT));
             const response = await axios.post(endpoint, payload);
 
             if (response.data.status === 'success') {
-                const alreadyProcessed = response.data.already_done || response.data.already_ongoing;
-                const emailFailed = ['done', 'ongoing'].includes(newStatus)
+                const alreadyProcessed = response.data.already_done || response.data.already_ongoing || response.data.already_no_show;
+                const emailFailed = ['done', 'ongoing', 'no-show'].includes(newStatus)
                     && response.data.email_sent === false
                     && !alreadyProcessed;
                 const successTitle = newStatus === 'done'
@@ -463,6 +467,19 @@ export default class TeacherCalendarModule {
     }
 
     async sendScheduleNotification(enrollmentDetailsId, scheduleDate) {
+        const schedule = this.getSchedulesForDate(scheduleDate).find(item =>
+            Number(item.enrollment_details_id) === Number(enrollmentDetailsId)
+        );
+        if (String(schedule?.status || '').trim().toLowerCase() === 'done') {
+            Swal.fire({
+                icon: 'info',
+                title: 'Session Already Done',
+                text: 'This session is already done. There is no need to email the student.',
+                confirmButtonText: 'OK'
+            });
+            return;
+        }
+
         if (enrollmentDetailsId <= 0 || !scheduleDate || scheduleDate.trim() === '') {
             Swal.fire({
                 icon: 'warning',
@@ -516,9 +533,9 @@ export default class TeacherCalendarModule {
                 }
 
                 Swal.fire({
-                    icon: 'success',
-                    title: 'Notification Sent!',
-                    text: recipientText,
+                    icon: payload.email_warning ? 'warning' : 'success',
+                    title: payload.email_warning ? 'Email Delivery Incomplete' : 'Notification Sent!',
+                    text: payload.email_warning ? payload.message : recipientText,
                     confirmButtonText: 'OK'
                 });
             } else {
@@ -541,14 +558,15 @@ export default class TeacherCalendarModule {
 
     async sendAllScheduleNotifications() {
         const schedules = this.getSchedulesForDate(this.selectedDate).filter(schedule =>
-            schedule.enrollment_details_id > 0 && schedule.date
+            schedule.enrollment_details_id > 0 && schedule.date &&
+            String(schedule.status || '').trim().toLowerCase() !== 'done'
         );
 
         if (schedules.length === 0) {
             Swal.fire({
                 icon: 'info',
                 title: 'No Schedules to Email',
-                text: 'There are no valid schedules in the selected schedule log.'
+                text: 'There are no unfinished valid schedules in the selected schedule log. Done sessions do not need an email.'
             });
             return;
         }
@@ -556,7 +574,7 @@ export default class TeacherCalendarModule {
         const result = await Swal.fire({
             icon: 'question',
             title: 'Email All Schedules?',
-            text: `This will send email notifications for all ${schedules.length} schedule${schedules.length === 1 ? '' : 's'} shown for ${this.formatShortDate(this.selectedDate)}.`,
+            text: `This will send email notifications for ${schedules.length} unfinished schedule${schedules.length === 1 ? '' : 's'} shown for ${this.formatShortDate(this.selectedDate)}. Done sessions will be skipped.`,
             showCancelButton: true,
             confirmButtonText: 'Yes, Send All',
             cancelButtonText: 'Cancel',
@@ -594,7 +612,7 @@ export default class TeacherCalendarModule {
                     sender_type: 'teacher'
                 });
 
-                if (response.data?.success) {
+                if (response.data?.success && !response.data.email_warning) {
                     sent.push(schedule);
                 } else {
                     failed.push({ schedule, reason: response.data?.message || 'Notification could not be sent' });

@@ -1,10 +1,17 @@
-import { openRescheduleModal } from './reschedule.js?v=20260823-merged-meetings';
+import { openRescheduleModal } from './reschedule.js?v=20261012-disabled-hours';
 import { canUseSessionPermission, shouldApplySessionRbac } from '../modules/session_rbac.js';
 import {
     getManagerScheduleModalActions,
     getStudentScheduleModalActions,
+    formatSessionDuration,
     openScheduleDetailsModal
-} from '../utilities/schedule_details_modal.js';
+} from '../utilities/schedule_details_modal.js?v=20261012-correct-no-show-access';
+
+function escapeSessionHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[char]));
+}
 
 /**
  * SessionManager Module
@@ -17,12 +24,39 @@ export class SessionManager {
         this.currentEnrollmentId = null;
         this.initialEnrollmentId = this._getInitialEnrollmentId();
         this.pathname = window.location.pathname;
-        this.mergeConsecutiveSessions = this.pathname.includes('/owner/session.html');
+        this.mergeConsecutiveSessions = this.pathname.includes('/session.html');
+        this.isStudentView = this.pathname.includes('/student/');
         this.isTeacherView = this.pathname.includes('/teacher/');
+        this.isBranchAdminView = this.pathname.includes('/branch_admin/');
+        this.isSecretaryView = this.pathname.includes('/secretary/');
+        this.isOwnerView = this.pathname.includes('/owner/');
         this.isAuditorView = this.pathname.includes('/auditor/');
         this.scheduleUpdateEndpoint = this._getScheduleUpdateEndpoint();
         this.isScheduleManagerView = Boolean(this.scheduleUpdateEndpoint) || this.isAuditorView;
         this.canEditSession = !shouldApplySessionRbac() || canUseSessionPermission('edit');
+        this.canCorrectNoShow = !this.isStudentView && canUseSessionPermission('correct_no_show');
+        this.refreshInFlight = false;
+        window.addEventListener('session-automation-updated', () => this.refreshVisibleSession());
+        this.refreshTimer = window.setInterval(() => this.refreshVisibleSession(), 60000);
+        window.addEventListener('pagehide', () => window.clearInterval(this.refreshTimer), { once: true });
+    }
+
+    async refreshVisibleSession() {
+        const container = document.getElementById('session-content');
+        if (document.hidden || !container || !this.currentEnrollmentId || this.refreshInFlight
+            || window.Swal?.isVisible() || document.querySelector('.modal.show')) return;
+        const enrollmentId = this.currentEnrollmentId;
+        this.refreshInFlight = true;
+        try {
+            const filter = this.mergeConsecutiveSessions ? '&only_active=1' : '';
+            const { data } = await axios.get(`../../api/student/session.php?operation=getSessionByEnrollment&enrollment_details_id=${enrollmentId}${filter}`);
+            if (enrollmentId !== this.currentEnrollmentId || document.hidden || window.Swal?.isVisible()
+                || document.querySelector('.modal.show') || data.status !== 'success') return;
+            const fingerprint = JSON.stringify(data.data);
+            if (fingerprint !== this.sessionFingerprint) this.render(data.data, container);
+        } catch (error) {
+            console.warn('Session refresh failed; retrying on the next check.', error);
+        } finally { this.refreshInFlight = false; }
     }
 
     /**
@@ -39,10 +73,14 @@ export class SessionManager {
      */
     async loadEnrollments(initialData = null) {
         try {
-            const response = await axios.get('../../api/student/session.php?operation=getEnrollments');
+            const activeFilter = this.mergeConsecutiveSessions ? '&only_active=1' : '';
+            const response = await axios.get(`../../api/student/session.php?operation=getEnrollments${activeFilter}`);
             
             if (response.data.status === 'success') {
-                this.enrollments = (response.data.enrollments || []).filter(enrollment => this._isTutorialEnrollment(enrollment));
+                this.enrollments = (response.data.enrollments || []).filter(enrollment =>
+                    this._isTutorialEnrollment(enrollment)
+                    && (!this.mergeConsecutiveSessions || ['enrolled', 'completed'].includes(String(enrollment.status || '').toLowerCase()))
+                );
                 
                 // Set first enrollment as current if not set
                 if (this.enrollments.length > 0) {
@@ -57,18 +95,24 @@ export class SessionManager {
                     
                     // Render selector and initial content
                     this.renderEnrollmentSelector();
-                    this.loadSessionByEnrollment(this.currentEnrollmentId);
+                    if (!this.mergeConsecutiveSessions) {
+                        this.loadSessionByEnrollment(this.currentEnrollmentId);
+                    }
                 } else {
                     this.container.innerHTML = `
                         <div class="alert alert-info" role="alert">
-                            <i class="bi bi-info-circle"></i> ${this.isScheduleManagerView ? 'No assigned tutorial students found.' : 'No tutorial enrollments found.'}
+                            <i class="bi bi-info-circle"></i> ${this.mergeConsecutiveSessions
+                                ? (this.isScheduleManagerView ? 'No assigned enrolled or completed tutorial students found.' : 'No enrolled or completed tutorial enrollments found.')
+                                : (this.isScheduleManagerView ? 'No assigned tutorial students found.' : 'No tutorial enrollments found.')}
                         </div>
                     `;
                 }
             } else {
-                const message = this.isScheduleManagerView && response.data.message === 'No enrollments found'
-                    ? 'No assigned tutorial students found.'
-                    : (response.data.message || 'No tutorial enrollments found.');
+                const message = response.data.message === 'No enrollments found' && this.mergeConsecutiveSessions
+                    ? (this.isScheduleManagerView ? 'No assigned enrolled or completed tutorial students found.' : 'No enrolled or completed tutorial enrollments found.')
+                    : (this.isScheduleManagerView && response.data.message === 'No enrollments found'
+                        ? 'No assigned tutorial students found.'
+                        : (response.data.message || 'No tutorial enrollments found.'));
 
                 this.container.innerHTML = `
                     <div class="alert alert-warning" role="alert">
@@ -104,6 +148,9 @@ export class SessionManager {
             const isConsecutive = previous
                 && previous.hasSchedule
                 && lesson.hasSchedule
+                && String(previous.preferred_teacher || '') === String(lesson.preferred_teacher || '')
+                && String(previous.substitute_teacher_id || '') === String(lesson.substitute_teacher_id || '')
+                && previous.can_manage_session === lesson.can_manage_session
                 && previous.date === lesson.date
                 && String(previous.endTime || '').slice(0, 8) === String(lesson.time || '').slice(0, 8);
 
@@ -163,6 +210,11 @@ export class SessionManager {
      * Render enrollment selector dropdown
      */
     renderEnrollmentSelector() {
+        if (this.mergeConsecutiveSessions) {
+            this.renderSessionFilters();
+            return;
+        }
+
         const selectorLabel = this.isScheduleManagerView ? 'Select Student Tutorial:' : 'Select Enrollment:';
         const selectorHTML = `
             ${this.isScheduleManagerView ? `
@@ -198,6 +250,101 @@ export class SessionManager {
         }
     }
 
+    renderSessionFilters() {
+        const title = this.isStudentView ? 'My Sessions' : 'Student Sessions';
+        const description = this.isStudentView
+            ? 'Follow your enrolled and completed tutorial sessions.'
+            : 'Review sessions for enrolled and completed tutorial students.';
+
+        this.container.innerHTML = `
+            <div class="session-dashboard-header">
+                <div>
+                    <span class="session-dashboard-eyebrow">Tutorial Center</span>
+                    <h1>${title}</h1>
+                    <p>${description}</p>
+                </div>
+                <div class="session-dashboard-total" aria-label="${this.enrollments.length} available enrollments">
+                    <strong>${this.enrollments.length}</strong>
+                    <span>Enrollments</span>
+                </div>
+            </div>
+            <section class="session-filter-card" aria-label="Session filters">
+                <div class="session-filter-heading">
+                    <div>
+                        <h2><i class="bi bi-funnel me-2" aria-hidden="true"></i>Find a session</h2>
+                        <p>Choose an enrollment to view its meetings and progress.</p>
+                    </div>
+                    <span class="session-filter-count" id="session-filter-count" role="status" aria-live="polite"></span>
+                </div>
+                <div class="session-filter-grid">
+                    <div class="session-filter-field session-filter-search">
+                        <label for="session-search">Search</label>
+                        <input id="session-search" class="form-control" type="search" placeholder="${this.isStudentView ? 'Search program or subject' : 'Search student, program, subject, or branch'}" autocomplete="off">
+                    </div>
+                    <div class="session-filter-field">
+                        <label for="session-status-filter">Enrollment status</label>
+                        <select id="session-status-filter" class="form-select">
+                            <option value="">Enrolled and Completed</option>
+                            <option value="enrolled">Enrolled</option>
+                            <option value="completed">Completed</option>
+                        </select>
+                    </div>
+                    <div class="session-filter-field session-filter-enrollment">
+                        <label for="enrollment-selector">${this.isStudentView ? 'Enrollment' : 'Student enrollment'}</label>
+                        <select id="enrollment-selector" class="form-select"></select>
+                    </div>
+                </div>
+            </section>
+            <div id="session-content" aria-live="polite"></div>
+        `;
+
+        this.container.querySelector('#session-search')?.addEventListener('input', () => this.applySessionFilters());
+        this.container.querySelector('#session-status-filter')?.addEventListener('change', () => this.applySessionFilters());
+        this.container.querySelector('#enrollment-selector')?.addEventListener('change', event => {
+            this.currentEnrollmentId = Number(event.target.value);
+            if (this.currentEnrollmentId) this.loadSessionByEnrollment(this.currentEnrollmentId);
+        });
+        this.applySessionFilters();
+    }
+
+    applySessionFilters() {
+        const search = this.container.querySelector('#session-search')?.value.trim().toLowerCase() || '';
+        const status = this.container.querySelector('#session-status-filter')?.value || '';
+        const selector = this.container.querySelector('#enrollment-selector');
+        const count = this.container.querySelector('#session-filter-count');
+        const content = this.container.querySelector('#session-content');
+        if (!selector || !content) return;
+
+        const filtered = this.enrollments.filter(enrollment => {
+            const searchable = [enrollment.student_name, enrollment.program_name, enrollment.subject_name, enrollment.branch_name, enrollment.teacher_name]
+                .filter(Boolean).join(' ').toLowerCase();
+            return (!status || String(enrollment.status || '').toLowerCase() === status)
+                && (!search || searchable.includes(search));
+        });
+
+        selector.replaceChildren();
+        filtered.forEach(enrollment => {
+            const option = new Option(this.isScheduleManagerView ? enrollment.label : `${enrollment.label} - ${enrollment.teacher_name || 'Teacher to be assigned'}`, enrollment.enrollment_details_id);
+            selector.add(option);
+        });
+        selector.disabled = filtered.length === 0;
+        if (count) count.textContent = `${filtered.length} ${filtered.length === 1 ? 'result' : 'results'}`;
+
+        if (!filtered.length) {
+            this.currentEnrollmentId = null;
+            content.innerHTML = '<div class="session-filter-empty"><i class="bi bi-search" aria-hidden="true"></i><strong>No sessions match these filters.</strong><span>Try another search or status.</span></div>';
+            return;
+        }
+
+        const current = filtered.find(enrollment => Number(enrollment.enrollment_details_id) === Number(this.currentEnrollmentId));
+        const selected = current || filtered[0];
+        selector.value = String(selected.enrollment_details_id);
+        if (!current || !content.hasChildNodes()) {
+            this.currentEnrollmentId = Number(selected.enrollment_details_id);
+            this.loadSessionByEnrollment(this.currentEnrollmentId);
+        }
+    }
+
     /**
      * Load session data for a specific enrollment
      */
@@ -215,7 +362,8 @@ export class SessionManager {
         `;
 
         try {
-            const response = await axios.get(`../../api/student/session.php?operation=getSessionByEnrollment&enrollment_details_id=${enrollmentDetailsId}`);
+            const activeFilter = this.mergeConsecutiveSessions ? '&only_active=1' : '';
+            const response = await axios.get(`../../api/student/session.php?operation=getSessionByEnrollment&enrollment_details_id=${enrollmentDetailsId}${activeFilter}`);
             
             if (response.data.status === 'success') {
                 this.render(response.data.data, contentContainer);
@@ -237,6 +385,7 @@ export class SessionManager {
     }
 
     render(data, container = this.container) {
+        this.sessionFingerprint = JSON.stringify(data);
         const displayData = this.mergeConsecutiveSessions
             ? { ...data, lessons: this._mergeConsecutiveLessons(data.lessons || []) }
             : data;
@@ -292,7 +441,7 @@ export class SessionManager {
                         <div class="d-flex flex-wrap gap-4 text-muted small">
                             <span><i class="bi bi-play-circle me-1"></i> Lesson ${data.currentLesson} of ${data.totalLessons}</span>
                             <span><i class="bi bi-clock me-1"></i> Started: ${data.startTimeFormatted}</span>
-                            <span><i class="bi bi-person me-1"></i> Instructor: ${data.instructor}</span>
+                            <span><i class="bi bi-person me-1"></i> Regular teacher: ${escapeSessionHtml(data.instructor)}</span>
                             <span><i class="bi bi-grid me-1"></i> Category: ${data.category}</span>
                         </div>
                         <div class="mt-3">
@@ -304,6 +453,7 @@ export class SessionManager {
                                 <div class="progress-bar bg-danger" style="width: ${data.overallProgress}%"></div>
                             </div>
                         </div>
+                        ${this._createReenrollAction(data)}
                     </div>
                     ${this.isScheduleManagerView ? `
                         <div class="col-md-3 d-grid gap-2">
@@ -315,11 +465,32 @@ export class SessionManager {
         `;
     }
 
+    _createReenrollAction(data) {
+        const isComplete = this.isStudentView && data.isFullyCompleted === true;
+        if (!isComplete) return '';
+
+        const params = new URLSearchParams({ reenroll: '1' });
+        const programId = Number(data.programId || 0);
+        if (programId > 0) params.set('program_id', String(programId));
+
+        return `
+            <div class="mt-4 p-3 rounded-3 bg-danger-subtle d-flex align-items-center justify-content-between gap-3 flex-wrap">
+                <div>
+                    <strong class="d-block text-danger"><i class="bi bi-trophy-fill me-2"></i>All sessions completed</strong>
+                    <small class="text-muted">Continue learning by submitting a new enrollment request.</small>
+                </div>
+                <a class="btn btn-danger px-4" href="enrollement.html?${params.toString()}">
+                    <i class="bi bi-arrow-repeat me-2"></i>Re-enroll
+                </a>
+            </div>
+        `;
+    }
+
 _createProgressTimeline(data) {
     return `
-        <div class="card border-0 shadow-sm rounded-4 p-4 mb-4">
+            <div class="card border-0 shadow-sm rounded-4 p-4 mb-4 session-progress-card">
             
-            <div class="d-flex justify-content-between align-items-center mb-5">
+            <div class="d-flex justify-content-between align-items-center mb-5 session-progress-heading">
                 <div>
                     <h5 class="fw-bold mb-1">Session Progress</h5>
                     <small class="text-muted">
@@ -327,7 +498,7 @@ _createProgressTimeline(data) {
                     </small>
                 </div>
 
-                <div class="text-end">
+                <div class="text-end session-progress-summary">
                     <div class="fw-semibold">
                         ${data.lessons.length} ${this.mergeConsecutiveSessions ? 'Meetings' : 'Lessons'}${this.mergeConsecutiveSessions && data.lessons.length !== Number(data.totalLessons) ? ` · ${data.totalLessons} package sessions` : ''}
                     </div>
@@ -463,6 +634,7 @@ _createProgressTimeline(data) {
 
             ${sessionCircle}
 
+            <div class="step-content">
             <div class="lesson-title">
                 ${lesson.title}
             </div>
@@ -476,9 +648,22 @@ _createProgressTimeline(data) {
             <div class="lesson-duration">
                 ${lessonTimeLabel}
             </div>
+            ${lesson.hasSchedule ? `
+                <div class="lesson-duration session-length">
+                    Duration: ${formatSessionDuration(lesson.time, lesson.endTime)}
+                </div>
+            ` : ''}
 
             <div class="lesson-badge ${badgeClass}">
                 ${lesson.status.replace('-', ' ')}
+            </div>
+            ${lesson.substitute_teacher_id ? '<div class="badge text-bg-info mt-1">Substitute</div>' : ''}
+            ${lesson.hasSchedule ? `
+                <div class="lesson-teacher small text-muted mt-2 text-break">
+                    ${lesson.substitute_teacher_id ? 'Substitute teacher' : 'Teacher'}:
+                    <strong>${escapeSessionHtml(lesson.teacher || lesson.substitute_teacher || lesson.regular_teacher || 'To be assigned')}</strong>
+                </div>
+            ` : ''}
             </div>
 
         </div>
@@ -509,8 +694,9 @@ _createProgressTimeline(data) {
     openScheduleDetailModal(schedule) {
         const actions = this.isScheduleManagerView
             ? getManagerScheduleModalActions(schedule.status, {
-                canEdit: this.canEditSession,
-                canReschedule: true
+                canEdit: this.canEditSession && schedule.can_manage_session !== false,
+                canReschedule: schedule.can_manage_session !== false,
+                canCorrectNoShow: this.canCorrectNoShow && schedule.can_manage_session !== false
             })
             : getStudentScheduleModalActions(schedule.status);
 
@@ -519,11 +705,29 @@ _createProgressTimeline(data) {
             actions,
             formatTime: value => this.formatTime(value),
             showCenter: this.isScheduleManagerView && !this.isTeacherView,
-            personLabel: this.isScheduleManagerView ? 'Student' : 'Teacher',
+            personLabel: this.isScheduleManagerView ? 'Student' : (schedule.substitute_teacher_id ? 'Teacher for this session' : 'Teacher'),
             personValue: this.isScheduleManagerView ? schedule.student : schedule.teacher,
-            showTeacher: this.isScheduleManagerView && !this.isTeacherView
+            showTeacher: this.isScheduleManagerView && !this.isTeacherView,
+            onAssignSubstitute: this._canAssignSubstitute(schedule) ? () => this.assignSubstitute(schedule) : null,
+            onRemoveSubstitute: this._canAssignSubstitute(schedule) ? () => this.removeSubstitute(schedule) : null
         }).then(({ action }) => {
+            if (action === 'correct-no-show') {
+                this.correctNoShow(schedule);
+                return;
+            }
             if (['no-show', 'ongoing', 'done'].includes(action)) {
+                if (['ongoing', 'no-show'].includes(action)) {
+                    const blockingLesson = this._getBlockingEarlierLesson(schedule);
+                    if (blockingLesson) {
+                        Swal.fire({
+                            icon: 'warning',
+                            title: 'Complete Earlier Session First',
+                            text: `${blockingLesson.title} must be completed before ${schedule.title} can be ${action === 'no-show' ? 'marked as no-show' : 'started'}.`
+                        });
+                        return;
+                    }
+                }
+
                 this.updateScheduleStatus(schedule.preference_id, schedule.enrollment_details_id, schedule.date, action, schedule.preference_ids || []);
                 return;
             }
@@ -546,7 +750,126 @@ _createProgressTimeline(data) {
         });
     }
 
-    async updateScheduleStatus(preferenceId, enrollmentDetailsId, scheduleDate, newStatus, preferenceIds = []) {
+    _canAssignSubstitute(schedule) {
+        return Boolean(this.isOwnerView || this.isBranchAdminView || this.isSecretaryView)
+            && this.canEditSession
+            && ['pending', 'confirmed'].includes(this.normalizeStatus(schedule.status))
+            && (!schedule.groupStatuses || schedule.groupStatuses.every(status => ['pending', 'confirmed'].includes(this.normalizeStatus(status))));
+    }
+
+    async assignSubstitute(schedule) {
+        const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+        try {
+            Swal.fire({ title: 'Finding available teachers…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+            const ids = schedule.preference_ids?.length ? schedule.preference_ids : [schedule.preference_id];
+            const query = ids.map(id => `preference_ids[]=${encodeURIComponent(id)}`).join('&');
+            const { data } = await axios.get(`../../api/session_substitute.php?operation=getTeachers&${query}`);
+            if (data.status !== 'success') throw new Error(data.message || 'Unable to load teachers.');
+            if (!data.teachers.length) {
+                await Swal.fire({ icon: 'info', title: 'No available substitutes', text: 'No eligible teacher in this branch is available for the full session time.' });
+                return;
+            }
+            const result = await Swal.fire({
+                title: 'Assign Substitute',
+                html: `<p>${escape(schedule.title)} · ${escape(schedule.date)} · ${escape(this.formatTime(schedule.time))} – ${escape(this.formatTime(schedule.endTime))}</p>
+                    <p class="small text-muted">Regular teacher: ${escape(schedule.regular_teacher || schedule.teacher)}. This assignment applies only to this meeting.</p>
+                    <label for="session-substitute-teacher" class="form-label">Substitute teacher</label>
+                    <select id="session-substitute-teacher" class="form-select"><option value="">Select a teacher</option>${data.teachers.map(teacher => `<option value="${Number(teacher.employee_id)}" ${Number(teacher.employee_id) === Number(schedule.substitute_teacher_id) ? 'selected' : ''}>${escape(teacher.name)}</option>`).join('')}</select>
+                    <label for="session-substitute-reason" class="form-label mt-3">Reason (optional)</label>
+                    <textarea id="session-substitute-reason" class="form-control" maxlength="500" rows="3">${escape(schedule.substitute_reason || '')}</textarea>`,
+                showCancelButton: true,
+                confirmButtonText: 'Save Substitute',
+                showLoaderOnConfirm: true,
+                allowOutsideClick: () => !Swal.isLoading(),
+                preConfirm: async () => {
+                    const teacherId = Number(document.getElementById('session-substitute-teacher').value);
+                    if (!teacherId) { Swal.showValidationMessage('Select a substitute teacher.'); return false; }
+                    try {
+                        return await this._saveSubstitute(schedule, teacherId, document.getElementById('session-substitute-reason').value);
+                    } catch (error) { Swal.showValidationMessage(error.response?.data?.message || error.message); return false; }
+                }
+            });
+            if (result.isConfirmed) {
+                await this.loadSessionByEnrollment(this.currentEnrollmentId);
+                await Swal.fire({ icon: 'success', title: 'Substitute Assigned', text: result.value.message });
+            }
+        } catch (error) {
+            await Swal.fire({ icon: 'error', title: 'Unable to Assign Substitute', text: error.response?.data?.message || error.message });
+        }
+    }
+
+    async _saveSubstitute(schedule, teacherId, reason = '') {
+        const { data } = await axios.post('../../api/session_substitute.php', {
+            operation: 'saveSubstitute',
+            preference_ids: schedule.preference_ids?.length ? schedule.preference_ids : [schedule.preference_id],
+            substitute_teacher_id: teacherId,
+            reason
+        });
+        if (data.status !== 'success') throw new Error(data.message || 'Unable to save the assignment.');
+        return data;
+    }
+
+    async removeSubstitute(schedule) {
+        const result = await Swal.fire({
+            title: 'Remove Substitute?', text: `This meeting will use ${schedule.regular_teacher || 'the regular teacher'} again.`,
+            icon: 'question', showCancelButton: true, confirmButtonText: 'Remove Substitute',
+            showLoaderOnConfirm: true, allowOutsideClick: () => !Swal.isLoading(),
+            preConfirm: async () => {
+                try { return await this._saveSubstitute(schedule, null); }
+                catch (error) { Swal.showValidationMessage(error.response?.data?.message || error.message); return false; }
+            }
+        });
+        if (result.isConfirmed) {
+            await this.loadSessionByEnrollment(this.currentEnrollmentId);
+            await Swal.fire({ icon: 'success', title: 'Substitute Removed', text: result.value.message });
+        }
+    }
+
+    _getBlockingEarlierLesson(schedule) {
+        const lessons = Array.isArray(this.currentSessionData?.lessons)
+            ? this.currentSessionData.lessons
+            : [];
+        const targetPreferenceIds = new Set(
+            (schedule.preference_ids?.length ? schedule.preference_ids : [schedule.preference_id])
+                .map(Number)
+                .filter(Number.isInteger)
+        );
+        const targetIndex = lessons.findIndex(lesson => {
+            const lessonPreferenceIds = lesson.preference_ids?.length
+                ? lesson.preference_ids
+                : [lesson.preference_id];
+            return lessonPreferenceIds.some(id => targetPreferenceIds.has(Number(id)));
+        });
+
+        if (targetIndex <= 0) return null;
+
+        return lessons.slice(0, targetIndex).find(lesson => {
+            const status = this.normalizeStatus(lesson.status);
+            // No-show is a terminal status and is already counted as completed
+            // by the enrollment progress calculation.
+            return !['completed', 'done', 'no-show'].includes(status);
+        }) || null;
+    }
+
+    async correctNoShow(schedule) {
+        if (this.isStudentView || !this.canCorrectNoShow || schedule.can_manage_session === false) return;
+        const result = await Swal.fire({
+            title: 'Correct No-show',
+            text: 'Choose the correct attendance status. The student will receive a correction email.',
+            input: 'select',
+            inputOptions: { ongoing: 'Ongoing — the session is in progress', done: 'Done — the student attended and the session finished' },
+            inputPlaceholder: 'Select the correct status',
+            inputValidator: value => !value ? 'Select the correct status.' : undefined,
+            showCancelButton: true,
+            confirmButtonText: 'Save Correction'
+        });
+        if (!result.isConfirmed) return;
+        if (!['ongoing', 'done'].includes(result.value)) return;
+        await this.updateScheduleStatus(schedule.preference_id, schedule.enrollment_details_id, schedule.date,
+            result.value, schedule.preference_ids || [], true);
+    }
+
+    async updateScheduleStatus(preferenceId, enrollmentDetailsId, scheduleDate, newStatus, preferenceIds = [], correctNoShow = false) {
         const isMergedMeeting = preferenceIds.length > 1;
         const payload = {
             operation: 'updateScheduleStatus',
@@ -554,15 +877,18 @@ _createProgressTimeline(data) {
             preference_ids: isMergedMeeting ? preferenceIds : [],
             enrollment_details_id: enrollmentDetailsId,
             schedule_date: scheduleDate,
-            new_status: newStatus
+            new_status: newStatus,
+            correct_no_show: correctNoShow
         };
 
         try {
-            if (['done', 'ongoing'].includes(newStatus) && this.isTeacherView) {
+            if (['done', 'ongoing', 'no-show'].includes(newStatus) && (correctNoShow || this.isTeacherView || this.isBranchAdminView || this.isSecretaryView || this.isOwnerView)) {
                 const isStarting = newStatus === 'ongoing';
                 Swal.fire({
-                    title: isStarting ? 'Starting Session...' : 'Completing Session...',
-                    text: isStarting
+                    title: correctNoShow ? 'Correcting No-show...' : (newStatus === 'no-show' ? 'Marking No-show...' : (isStarting ? 'Starting Session...' : 'Completing Session...')),
+                    text: correctNoShow ? 'Please wait while attendance is corrected and the correction email is sent.' : newStatus === 'no-show'
+                        ? 'Please wait while the session is marked as no-show and the email is sent.'
+                        : isStarting
                         ? 'Please wait while the session is started and the email is sent.'
                         : 'Please wait while the session is marked as done and the email is sent.',
                     allowOutsideClick: false,
@@ -575,19 +901,29 @@ _createProgressTimeline(data) {
             }
 
             let endpoint = this.scheduleUpdateEndpoint || '../../api/admin/schedule.php';
-            if (this.isTeacherView && newStatus === 'done') {
+            if (correctNoShow) {
+                endpoint = '../../api/owner/session_status.php';
+            } else if (this.isTeacherView && newStatus === 'done') {
                 endpoint = '../../api/done_session.php';
             } else if (this.isTeacherView && newStatus === 'ongoing') {
                 endpoint = '../../api/ongoing.php';
+            } else if (this.isTeacherView && newStatus === 'no-show') {
+                endpoint = '../../api/no_show.php';
+            } else if (this.isBranchAdminView && ['done', 'ongoing', 'no-show'].includes(newStatus)) {
+                endpoint = '../../api/branch_admin/session_status.php';
+            } else if (this.isSecretaryView && ['done', 'ongoing', 'no-show'].includes(newStatus)) {
+                endpoint = '../../api/secretary/session_status.php';
+            } else if (this.isOwnerView && ['done', 'ongoing', 'no-show'].includes(newStatus)) {
+                endpoint = '../../api/owner/session_status.php';
             }
             const response = await axios.post(endpoint, payload);
 
             if (response.data.status === 'success') {
-                const alreadyProcessed = response.data.already_done || response.data.already_ongoing;
-                const emailFailed = ['done', 'ongoing'].includes(newStatus)
+                const alreadyProcessed = response.data.already_done || response.data.already_ongoing || response.data.already_no_show;
+                const emailFailed = ['done', 'ongoing', 'no-show'].includes(newStatus)
                     && response.data.email_sent === false
                     && !alreadyProcessed;
-                const successTitle = newStatus === 'done'
+                const successTitle = correctNoShow ? 'Attendance Corrected' : newStatus === 'done'
                     ? 'Session Done'
                     : (newStatus === 'ongoing' ? 'Session Started' : 'Status Updated');
                 Swal.fire({
@@ -769,8 +1105,8 @@ _createProgressTimeline(data) {
                     </div>
                     <div class="col-md-4">
                         <div class="mb-3">
-                             <div class="text-muted small mb-1">Instructor</div>
-                             <strong>${data.instructor}</strong>
+                             <div class="text-muted small mb-1">Regular teacher</div>
+                             <strong>${escapeSessionHtml(data.instructor)}</strong>
                         </div>
                         <div>
                              <div class="text-muted small mb-1">Tags</div>

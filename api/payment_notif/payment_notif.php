@@ -1,17 +1,14 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
 
-session_start();
+
+if (session_status() === PHP_SESSION_NONE) session_start();
 
 header('Content-Type: application/json');
-header('Access-Control-Allow-Origin: *');
 
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
-
-require __DIR__ . '/../PHPMailer/src/Exception.php';
-require __DIR__ . '/../PHPMailer/src/PHPMailer.php';
-require __DIR__ . '/../PHPMailer/src/SMTP.php';
 include __DIR__ . '/../admin/connection-pdo.php';
+require_once __DIR__ . '/../email_service.php';
 
 class PaymentNotification {
     private $conn;
@@ -43,35 +40,9 @@ class PaymentNotification {
     }
 
     private function sendEmail($to, $subject, $message) {
-        $mail = new PHPMailer(true);
-        try {
-            $mail->isSMTP();
-            $mail->Host       = 'smtp.gmail.com';
-            $mail->SMTPAuth   = true;
-            $mail->Username   = 'espinosapaul810@gmail.com';
-            $mail->Password   = 'yjds vbuo gxas knkm';
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port       = 587;
-
-            $mail->SMTPOptions = [
-                'ssl' => [
-                    'verify_peer' => false,
-                    'verify_peer_name' => false,
-                    'allow_self_signed' => true
-                ]
-            ];
-
-            $mail->setFrom('espinosapaul810@gmail.com', 'CDO Tutorial Center');
-            $mail->addAddress($to);
-            $mail->isHTML(true);
-            $mail->Subject = $subject;
-            $mail->Body    = $message;
-
-            return $mail->send();
-        } catch (Exception $e) {
-            error_log('Payment notification email failed: ' . $mail->ErrorInfo);
-            return false;
-        }
+        return (new EmailService($this->conn))->send($to, $subject, $message, [
+            'from_name' => 'CDO Tutorial Center'
+        ]);
     }
 
     private function getCategoryQueryCondition(string $category): array {

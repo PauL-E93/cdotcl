@@ -1,12 +1,10 @@
 <?php
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
-
-require 'PHPMailer/src/Exception.php';
-require 'PHPMailer/src/PHPMailer.php';
-require 'PHPMailer/src/SMTP.php';
 include "admin/connection-pdo.php";
+require_once __DIR__ . '/email_service.php';
 require_once __DIR__ . '/notification_helper.php';
+require_once __DIR__ . '/enrollment_completion_helper.php';
+require_once __DIR__ . '/security/AuthGuard.php';
+require_once __DIR__ . '/security/ScheduleActionToken.php';
 
 class ScheduleConfirm {
     private $conn;
@@ -28,36 +26,9 @@ class ScheduleConfirm {
     }
 
     private function sendEmail($to, $subject, $message) {
-        $mail = new PHPMailer(true);
-        try {
-            $mail->isSMTP();
-            $mail->Host       = 'smtp.gmail.com';
-            $mail->SMTPAuth   = true;
-            $mail->Username   = 'espinosapaul810@gmail.com';
-            $mail->Password   = 'yjds vbuo gxas knkm';
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port       = 587;
-
-            $mail->SMTPOptions = [
-                'ssl' => [
-                    'verify_peer' => false,
-                    'verify_peer_name' => false,
-                    'allow_self_signed' => true
-                ]
-            ];
-
-            $mail->setFrom('espinosapaul810@gmail.com', 'CDO Tutor Schedule Reminder');
-            $mail->addAddress($to);
-
-            $mail->isHTML(true);
-            $mail->Subject = $subject;
-            $mail->Body    = $message;
-
-            return $mail->send();
-        } catch (Exception $e) {
-            error_log("Confirmation email failed: " . $mail->ErrorInfo);
-            return false;
-        }
+        return (new EmailService($this->conn))->send($to, $subject, $message, [
+            'from_name' => 'CDO Tutor Schedule Reminder'
+        ]);
     }
 
     private function getSchedule($enrollmentDetailsId, $scheduleDate) {
@@ -74,7 +45,7 @@ class ScheduleConfirm {
                     TRIM(CONCAT_WS(' ', s.first_name, s.last_name, NULLIF(TRIM(s.ext), ''))) AS student_name,
                     s.email AS student_email,
                     CONCAT(t.first_name, ' ', t.last_name) AS teacher_name,
-                    ed.preferred_teacher AS teacher_id,
+                    COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) AS teacher_id,
                     t.email AS teacher_email,
                     b.branch_name,
                     eh.branch_id
@@ -84,7 +55,7 @@ class ScheduleConfirm {
                 JOIN student s ON eh.student_id = s.student_id
                 LEFT JOIN program p ON ed.program_id = p.program_id
                 LEFT JOIN subject sub ON ed.subject_id = sub.subject_id
-                LEFT JOIN employee t ON ed.preferred_teacher = t.employee_id
+                LEFT JOIN employee t ON COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = t.employee_id
                 LEFT JOIN branch b ON eh.branch_id = b.branch_id
                 WHERE eps.enrollment_details_id = :enrollment_id
                   AND eps.date = :schedule_date
@@ -271,6 +242,16 @@ class ScheduleConfirm {
             return;
         }
 
+        $user = AuthGuard::user();
+        $signed = ScheduleActionToken::valid((int) $enrollmentDetailsId, (string) $scheduleDate,
+            $_GET['expires'] ?? null, $_GET['token'] ?? null);
+        if ((!$user || $user['user_type'] !== 'student' || $user['user_id'] !== (int) $schedule['student_id'])
+            && !$signed) {
+            http_response_code(403);
+            echo $this->renderHtmlPage('Confirmation Denied', 'Sign in as the student or use a current confirmation link.', false);
+            return;
+        }
+
         if ($schedule['status'] !== 'pending') {
             echo $this->renderHtmlPage('Already Confirmed', 'This session has already been confirmed or is no longer pending.', true);
             return;
@@ -280,6 +261,8 @@ class ScheduleConfirm {
             echo $this->renderHtmlPage('Confirmation Failed', 'Unable to update the schedule status. Please try again later.', false);
             return;
         }
+
+        syncEnrollmentCompletionStatus($this->conn, (int) $enrollmentDetailsId);
 
         $notifications = new NotificationService($this->conn);
         $notifications->notifyScheduleStatus($schedule, 'confirmed', 'student', $schedule['student_id']);

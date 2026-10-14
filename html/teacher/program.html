@@ -1,6 +1,7 @@
     <!DOCTYPE html>
     <html lang="en">
     <head>
+    <script src="../../js/utilities/upload_url.js?v=20261006-upload-images-r2"></script>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>CDO Enrollment</title>
@@ -10,13 +11,14 @@
 
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js?v=20261006-upload-images"></script>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-        <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js?v=20261006-upload-images"></script>
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-        <script type="module" src="../../js/index.js?v=20260823-grade-level-paging"></script>
+        <script type="module" src="../../js/index.js?v=20261014-penalty-permissions"></script>
 
-    </head>
+        <link rel="stylesheet" href="../../css/program_sections.css?v=20261014-search-only">
+</head>
     <body>
 
         <header id="dynamic-header"></header>
@@ -81,36 +83,6 @@
                     </div>
                 </div>
             </div>
-            <div class="stats-grid">
-                <div class="card stat-card">
-                    <div class="stat-info">
-                        <h4 class="mb-0 fw-bold" id="total_programs">0</h4> <small class="text-muted">Total Programs</small>
-                    </div>
-                    <div class="stat-icon">
-                        <i class="bi bi-journal-text fs-1 text-dark"></i>
-                    </div>
-                </div>
-
-                <div class="card stat-card">
-                    <div class="stat-info">
-                        <h4 class="mb-0 fw-bold" id="active_programs">0</h4> <small class="text-muted">Active Programs</small>
-                    </div>
-                    <div class="stat-icon">
-                        <i class="bi bi-check-circle-fill fs-1 text-success"></i>
-                    </div>
-                </div>
-
-
-                <div class="card stat-card">
-                    <div class="stat-info">
-                        <h4 class="mb-0 fw-bold" id="inactive_programs">0</h4> <small class="text-muted">Inactive Programs</small>
-                    </div>
-                    <div class="stat-icon">
-                        <i class="bi bi-x-circle-fill fs-1 text-danger"></i>
-                    </div>
-                </div>
-            </div>
-
  <h6 class="fw-bold mb-3 fs-5">Program list</h6>
 <div class="card content-panel">
     <div class="table-responsive">
@@ -121,6 +93,7 @@
                     <th style="background-color:#ea9aa6;">Description</th>
                     <th style="background-color:#ea9aa6;">Tuition</th>
                     <th style="background-color:#ea9aa6;">Duration</th>
+                    <th style="background-color:#ea9aa6;">Validity</th>
                     <th style="background-color:#ea9aa6;">Program type</th>
                     <th style="background-color:#ea9aa6;">Registration Fee</th>
                     <th style="background-color:#ea9aa6;">Penalty Rule</th>
@@ -131,7 +104,7 @@
                 </tr>
             </thead>
             <tbody id="program_table_body"> 
-                <tr><td colspan="11" class="text-center">Loading data...</td></tr>
+                <tr><td colspan="12" class="text-center">Loading data...</td></tr>
             </tbody>
         </table>
     </div>
@@ -149,6 +122,21 @@
                 </div>
             </div>
             </div>
+
+            <section class="card content-panel program-secondary-card shadow-sm p-3 mt-4 mb-4" id="session-automation-section">
+                <div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+                    <div><h6 class="fw-bold mb-1 fs-5">Session Automation</h6><small class="text-muted">Manage automatic attendance timing for tutorial sessions across all branches.</small></div>
+                    <button type="button" class="btn btn-sm btn-add shadow-sm px-3" id="add-session-automation" hidden><i class="bi bi-plus-lg me-1"></i>Add Policy</button>
+                </div>
+                <p class="small text-muted">Sessions must be started manually. Consecutive slots are treated as one meeting. Times use Philippine time.</p>
+                <div class="table-responsive">
+                    <table class="table table-custom table-hover align-middle">
+                        <thead><tr><th style="background-color:#ea9aa6;">Scope</th><th style="background-color:#ea9aa6;">Automatic no-show</th><th style="background-color:#ea9aa6;">Automatic completion</th><th style="background-color:#ea9aa6;">Effective from</th><th style="background-color:#ea9aa6;">Last updated</th><th style="background-color:#ea9aa6;">Actions</th></tr></thead>
+                        <tbody id="session-automation-table"><tr><td colspan="6" class="text-center">Loading automation settings...</td></tr></tbody>
+                    </table>
+                </div>
+                <p class="small text-muted mb-0" id="session-automation-worker" role="status"></p>
+            </section>
 
             <section class="card content-panel program-secondary-card shadow-sm p-3 mb-4" data-program-feature="types">
                 <div class="d-flex justify-content-between align-items-center mb-3 gap-2"><h6 class="fw-bold mb-0 fs-5">Program Type list</h6><button type="button" class="btn btn-sm btn-add shadow-sm px-3" id="btnAddProgramType" data-program-permission="create_types"><i class="bi bi-plus-lg me-1"></i>Add Program Type</button></div>
@@ -362,11 +350,54 @@
                 </div>
             </section>
 
+            <section class="card content-panel program-secondary-card shadow-sm p-3 mb-4" data-program-feature="payment_methods">
+                <div class="d-flex justify-content-between align-items-center mb-3 gap-3 flex-wrap">
+                    <div>
+                        <h6 class="fw-bold mb-1 fs-5">Payment Methods</h6>
+                        <small class="text-muted">Manage payment channels, receiving accounts, and QR codes.</small>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-add shadow-sm px-3" id="btnAddPaymentMethod" data-program-permission="create_payment_methods">
+                        <i class="bi bi-plus-lg me-1"></i>Add Payment Method
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-custom table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th style="background-color:#ea9aa6;">Payment Method</th>
+                                <th style="background-color:#ea9aa6;">Account Name</th>
+                                <th style="background-color:#ea9aa6;">Account Number</th>
+                                <th style="background-color:#ea9aa6;">QR Code</th>
+                                <th style="background-color:#ea9aa6;">Status</th>
+                                <th style="background-color:#ea9aa6;" class="text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="payment_method_table_body">
+                            <tr><td colspan="6" class="text-center">Loading data...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
             <section class="card content-panel program-secondary-card shadow-sm p-3 mb-4" data-program-feature="landing">
                 <h6 class="fw-bold mb-3 fs-5">Landing Page Content</h6>
                 <div class="mb-3"><div class="fw-semibold">Manage Landing Page</div><small class="text-muted">Changes are displayed on the public landing page.</small></div>
                 <form id="landing-page-form">
                     <div class="row g-3">
+                        <div class="col-12"><h6 class="fw-bold mb-0">Hero / Get Started</h6></div>
+                        <div class="col-md-4"><label class="form-label" for="landing-hero_eyebrow">Welcome Text</label><input class="form-control" type="text" id="landing-hero_eyebrow" placeholder="WELCOME TO CDO TUTOR!"></div>
+                        <div class="col-md-8"><label class="form-label" for="landing-hero_title">Main Heading</label><textarea class="form-control" id="landing-hero_title" rows="2" placeholder="Use a new line where the heading should break"></textarea></div>
+                        <div class="col-md-5"><label class="form-label" for="landing-hero_tagline">Tagline</label><input class="form-control" type="text" id="landing-hero_tagline"></div>
+                        <div class="col-md-7"><label class="form-label" for="landing-hero_description">Description</label><textarea class="form-control" id="landing-hero_description" rows="2"></textarea></div>
+                        <div class="col-md-4"><label class="form-label" for="landing-gmail">Get Started / Contact Email</label><input class="form-control" type="email" id="landing-gmail"></div>
+                        <div class="col-md-4"><label class="form-label" for="landing-contact_number">Get Started / Contact Number</label><input class="form-control" type="tel" id="landing-contact_number"></div>
+                        <div class="col-md-4"><label class="form-label" for="landing-facebook">Facebook URL</label><input class="form-control" type="url" id="landing-facebook"></div>
+                        <div class="col-12 mt-4"><h6 class="fw-bold mb-0">Landing Page Highlights</h6><small class="text-muted">Edit the followers, teachers, levels, and quality highlights.</small></div>
+                        <div class="col-md-3"><label class="form-label" for="landing-highlight_1_value">Followers Value</label><input class="form-control" type="text" id="landing-highlight_1_value" placeholder="5.3K+"><label class="form-label mt-2" for="landing-highlight_1_label">Followers Label</label><textarea class="form-control" id="landing-highlight_1_label" rows="2"></textarea></div>
+                        <div class="col-md-3"><label class="form-label" for="landing-highlight_2_value">Teachers Value</label><input class="form-control" type="text" id="landing-highlight_2_value" placeholder="Licensed"><label class="form-label mt-2" for="landing-highlight_2_label">Teachers Label</label><textarea class="form-control" id="landing-highlight_2_label" rows="2"></textarea></div>
+                        <div class="col-md-3"><label class="form-label" for="landing-highlight_3_value">Levels Value</label><input class="form-control" type="text" id="landing-highlight_3_value" placeholder="All Levels"><label class="form-label mt-2" for="landing-highlight_3_label">Levels Label</label><textarea class="form-control" id="landing-highlight_3_label" rows="2"></textarea></div>
+                        <div class="col-md-3"><label class="form-label" for="landing-highlight_4_value">Quality Value</label><input class="form-control" type="text" id="landing-highlight_4_value" placeholder="Quality"><label class="form-label mt-2" for="landing-highlight_4_label">Quality Label</label><textarea class="form-control" id="landing-highlight_4_label" rows="2"></textarea></div>
+                        <div class="col-12 mt-4"><h6 class="fw-bold mb-0">Announcements and Images</h6></div>
                         <div class="col-md-4"><label class="form-label" for="landing-announcement_1">Announcement 1</label><textarea class="form-control" id="landing-announcement_1" rows="3"></textarea></div>
                         <div class="col-md-4"><label class="form-label" for="landing-announcement_2">Announcement 2</label><textarea class="form-control" id="landing-announcement_2" rows="3"></textarea></div>
                         <div class="col-md-4"><label class="form-label" for="landing-announcement_3">Announcement 3</label><textarea class="form-control" id="landing-announcement_3" rows="3"></textarea></div>
@@ -376,9 +407,6 @@
                         <div class="col-md-6"><label class="form-label" for="landing-mission">Mission</label><textarea class="form-control" id="landing-mission" rows="4"></textarea></div>
                         <div class="col-md-6"><label class="form-label" for="landing-vision">Vision</label><textarea class="form-control" id="landing-vision" rows="4"></textarea></div>
                         <div class="col-12"><label class="form-label" for="landing-core_values">Core Values</label><textarea class="form-control" id="landing-core_values" rows="3" placeholder="One value per line, e.g. Courageous"></textarea></div>
-                        <div class="col-md-4"><label class="form-label" for="landing-gmail">Email</label><input class="form-control" type="email" id="landing-gmail"></div>
-                        <div class="col-md-4"><label class="form-label" for="landing-contact_number">Contact Number</label><input class="form-control" type="tel" id="landing-contact_number"></div>
-                        <div class="col-md-4"><label class="form-label" for="landing-facebook">Facebook URL</label><input class="form-control" type="url" id="landing-facebook"></div>
                     </div>
                     <div class="mt-3 text-end"><button id="landing-page-save" class="btn btn-add shadow-sm px-4" data-program-permission="edit_landing" type="submit">Save Landing Page Content</button></div>
                 </form>
@@ -455,5 +483,21 @@
 </div>
         
 
+<div class="modal fade" id="paymentMethodModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="paymentMethodModalLabel">Payment Method</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="paymentMethodForm" novalidate></form>
+            </div>
+            <div class="modal-footer" id="paymentMethodModalFooter">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
     </body>
     </html>

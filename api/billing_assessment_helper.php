@@ -21,7 +21,9 @@ function ensureBillingAssessmentSchema(PDO $conn): void
     if ((int)$tableCheck->fetchColumn() === 7
         && stripos((string)$statusCheck, "'cancelled'") !== false
         && stripos((string)$headerStatusCheck, "'incomplete'") !== false
-        && stripos((string)$detailsStatusCheck, "'withdrawn'") !== false) {
+        && stripos((string)$headerStatusCheck, "'completed'") !== false
+        && stripos((string)$detailsStatusCheck, "'incomplete'") !== false
+        && stripos((string)$detailsStatusCheck, "'completed'") !== false) {
         $ready = true;
         return;
     }
@@ -150,7 +152,8 @@ function insertBillingScheduleItem(PDO $conn, int $billingId, string $type, ?int
     $stmt = $conn->prepare('INSERT INTO billing_schedule_items
         (billing_schedule_id, item_type, reference_id, description, quantity, unit_price, line_total, penalty_eligible)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    $stmt->execute([$billingId, $type, $referenceId, $description, $quantity, $unitPrice, $lineTotal, $penaltyEligible ? 1 : 0]);
+    $stmt->execute([$billingId, $type, $referenceId, $description, $quantity, $unitPrice, $lineTotal,
+        $penaltyEligible && in_array($type, ['tuition', 'tuition_balance'], true) ? 1 : 0]);
 }
 
 function ensureEnrollmentServiceSubscription(PDO $conn, int $detailsId, array $snapshot, ?int $employeeId = null): void

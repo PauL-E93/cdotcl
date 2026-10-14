@@ -3,231 +3,138 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="CDO Tutor and Learning Center offers warm, playful preschool, playschool, and tutorial programs led by licensed teachers." />
     <base href="/tutorial_center/" />
-    <title>CDO Tutor Landing Page</title>
-    <link rel="stylesheet" href="css/landingpage.css?v=20260814-sticky-header" />
+    <title>CDO Tutor &amp; Learning Center | Learn, Play &amp; Grow</title>
+    <link rel="icon" type="image/png" href="assist/logo.png?v=20260928" />
+    <link rel="shortcut icon" type="image/png" href="assist/logo.png?v=20260928" />
+    <link rel="apple-touch-icon" href="assist/logo.png?v=20260928" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&amp;family=Nunito:wght@400;600;700;800;900&amp;display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="css/landingpage.css?v=20261004-subject-names" />
 </head>
 <body>
+    <a class="skip-link" href="#home">Skip to content</a>
     <header class="landing-header">
-        <div class="landing-header__brand">
+        <a class="landing-header__brand" href="#home" aria-label="CDO Tutor home">
             <img class="landing-logo" src="assist/logo.png" alt="CDO Tutor logo" />
-            <div>
-                <p class="landing-brand__label">CDO TUTOR AND LEARNING CENTER</p>
-                <p class="landing-brand__sub">Since 2020</p>
-            </div>
-        </div>
-
-        <nav class="landing-nav">
-            <a class="landing-nav__link active" href="#home">Home</a>
-            <a class="landing-nav__link" href="#about">About Us</a>
+            <span><strong class="landing-brand__label">CDO Tutor</strong><span class="landing-brand__sub">Learning Center · Since 2020</span></span>
+        </a>
+        <nav class="landing-nav" aria-label="Main navigation">
+            <a class="landing-nav__link" href="#home">Home</a>
+            <a class="landing-nav__link" href="#news">News</a>
             <a class="landing-nav__link" href="#programs">Programs</a>
-            <a class="landing-nav__link" href="#contact">Contact Us</a>
+            <a class="landing-nav__link" href="#about">About</a>
+            <a class="landing-nav__link" href="#centers">Centers</a>
+            <a class="landing-nav__link" href="#faq">FAQ</a>
+            <a class="landing-nav__link" href="#contact">Contact</a>
         </nav>
-
         <div class="landing-header__actions">
-            <a class="landing-login-btn" href="login.html" aria-label="Log in">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
-                    <path d="M4.5 21a7.5 7.5 0 0 1 15 0" />
-                </svg>
-                Login
-            </a>
-            <a class="landing-cta-btn" data-enroll-link href="new_student_enrollment.html">Enroll Now →</a>
+            <a class="landing-login-btn" href="login.html" aria-label="Log in to your account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></svg><span>Login</span></a>
+            <a class="landing-cta-btn" data-enroll-link href="new_student_enrollment.html">Enroll now <span aria-hidden="true">→</span></a>
         </div>
     </header>
 
     <main>
         <section id="home" class="landing-hero">
+            <div class="hero-doodle hero-doodle--pencil" aria-hidden="true">✏️</div><div class="hero-doodle hero-doodle--star" aria-hidden="true">★</div><div class="hero-doodle hero-doodle--abc" aria-hidden="true">ABC</div>
             <div class="landing-hero__content">
-                <p class="landing-hero__eyebrow">WELCOME TO CDO TUTOR!</p>
-                <h1 class="landing-hero__title">We Are<br />Your Teachers!</h1>
-                <p class="landing-hero__tagline">Kind friendly, dedicated professionals</p>
-                <p class="landing-hero__description">
-                    We are licensed professional teachers who cater all levels and all subjects with excellent and quality services.
-                </p>
-                <div class="landing-hero__actions">
-                    <button class="hero-button" type="button">Get Started →</button>
-                    <div class="landing-contact">
-                        <span>0926-113-8886</span>
-                        <span>CDOTUTOR@gmail.com</span>
-                    </div>
-                </div>
+                <p class="landing-hero__eyebrow" data-landing-hero-eyebrow><span aria-hidden="true">✦</span> Welcome to CDO Tutor!</p>
+                <h1 class="landing-hero__title" data-landing-hero-title>Big dreams<br /><span>start little.</span></h1>
+                <p class="landing-hero__tagline" data-landing-hero-tagline>Where learning feels like play!</p>
+                <p class="landing-hero__description" data-landing-hero-description>Caring, licensed teachers helping every child learn with confidence through joyful preschool, playschool, and personalized tutorial sessions.</p>
+                <div class="hero-program-tags" aria-label="Programs offered"><span><i aria-hidden="true">●</i> Playschool</span><span><i aria-hidden="true">●</i> Preschool</span><span><i aria-hidden="true">●</i> Tutorial</span></div>
+                <div class="landing-hero__actions"><button class="hero-button" type="button">Start learning <span aria-hidden="true">→</span></button><a class="hero-secondary-link" href="#programs">Explore programs <span aria-hidden="true">↓</span></a></div>
             </div>
-
-            <div class="landing-hero__visual">
+            <div class="landing-hero__visual" aria-label="Happy learning moments at CDO Tutor">
+                <div class="hero-blob" aria-hidden="true"></div>
                 <div class="hero-images">
-                    <figure class="hero-image hero-image--large">
-                        <img data-landing-picture="1" src="assist/723685185_2263092917561392_2859432923824606914_n.png" alt="CDO Tutor group photo" />
-                    </figure>
-                    <figure class="hero-image hero-image--small hero-image--top">
-                        <img data-landing-picture="2" src="assist/724804351_939952112391118_113109581726964794_n.png" alt="Children with rainbow drawings" />
-                    </figure>
-                    <figure class="hero-image hero-image--small hero-image--bottom">
-                        <img data-landing-picture="3" src="assist/725014929_1310244674623681_4579140312404427672_n.png" alt="Student writing at desk" />
-                    </figure>
+                    <figure class="hero-image hero-image--large"><img data-landing-picture="1" src="assist/723685185_2263092917561392_2859432923824606914_n.png" alt="Teachers and learners at CDO Tutor" /></figure>
+                    <figure class="hero-image hero-image--small hero-image--top"><img data-landing-picture="2" src="assist/724804351_939952112391118_113109581726964794_n.png" alt="Children proudly holding rainbow drawings" /></figure>
+                    <figure class="hero-image hero-image--small hero-image--bottom"><img data-landing-picture="3" src="assist/725014929_1310244674623681_4579140312404427672_n.png" alt="Student enjoying a writing activity" /></figure>
                 </div>
+                <div class="hero-float-card hero-float-card--top"><span aria-hidden="true">⭐</span><strong>Joyful</strong><small>learning every day</small></div>
+                <div class="hero-float-card hero-float-card--bottom"><span aria-hidden="true">📚</span><strong>All levels</strong><small>all subjects</small></div>
             </div>
-
-            <section class="landing-section landing-section--announcements" aria-labelledby="announcements-title">
-                <div class="landing-section__heading">
-                    <p class="section-eyebrow">LATEST NEWS</p>
-                    <h2 id="announcements-title">Announcements</h2>
-                    <p class="announcement-intro">Stay updated with the latest news from CDO Tutor.</p>
-                </div>
-                <div class="announcement-grid" data-announcements></div>
-            </section>
+            <div class="hero-wave" aria-hidden="true"></div>
         </section>
 
-        <section class="landing-proof" aria-label="CDO Tutor highlights">
+        <section class="landing-proof" aria-label="Why families trust CDO Tutor">
             <div class="proof-stats">
-                <article class="proof-stat">
-                    <svg class="proof-stat__icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
-                        <path d="M16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
-                        <path d="M3 20v-3a4 4 0 0 1 4-4h2a4 4 0 0 1 4 4v3" />
-                        <path d="M13 13h4a4 4 0 0 1 4 4v3" />
-                    </svg>
-                    <div>
-                        <strong>5.3K+</strong>
-                        <span>Followers<br />and growing</span>
-                    </div>
-                </article>
-
-                <article class="proof-stat">
-                    <svg class="proof-stat__icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="m2 9 10-5 10 5-10 5-10-5Z" />
-                        <path d="M6 11v5c2 2 10 2 12 0v-5" />
-                        <path d="M22 9v6" />
-                    </svg>
-                    <div>
-                        <strong>Licensed</strong>
-                        <span>Professional<br />Teachers</span>
-                    </div>
-                </article>
-
-                <article class="proof-stat">
-                    <svg class="proof-stat__icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="m4 7 8-4 8 4-8 4-8-4Z" />
-                        <path d="m4 12 8 4 8-4" />
-                        <path d="m4 17 8 4 8-4" />
-                    </svg>
-                    <div>
-                        <strong>All Levels</strong>
-                        <span>All Subjects<br />Covered</span>
-                    </div>
-                </article>
-
-                <article class="proof-stat">
-                    <svg class="proof-stat__icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M12 3 14 6l4 .5-1.5 3.5 1.5 3.5-4 .5-2 3-2-3-4-.5 1.5-3.5L6 6.5 10 6l2-3Z" />
-                        <path d="m9 21 3-4 3 4" />
-                        <path d="m10 11 1.5 1.5L15 9" />
-                    </svg>
-                    <div>
-                        <strong>Quality</strong>
-                        <span>Education You<br />Can Trust</span>
-                    </div>
-                </article>
+                <article class="proof-stat proof-stat--yellow"><span class="proof-stat__emoji" aria-hidden="true">😊</span><div><strong data-landing-highlight-value="1">5.3K+</strong><span data-landing-highlight-label="1">Happy community</span></div></article>
+                <article class="proof-stat proof-stat--blue"><span class="proof-stat__emoji" aria-hidden="true">🎓</span><div><strong data-landing-highlight-value="2">Licensed</strong><span data-landing-highlight-label="2">Professional teachers</span></div></article>
+                <article class="proof-stat proof-stat--pink"><span class="proof-stat__emoji" aria-hidden="true">📖</span><div><strong data-landing-highlight-value="3">All Levels</strong><span data-landing-highlight-label="3">All subjects covered</span></div></article>
+                <article class="proof-stat proof-stat--green"><span class="proof-stat__emoji" aria-hidden="true">🌟</span><div><strong data-landing-highlight-value="4">Quality</strong><span data-landing-highlight-label="4">Education you can trust</span></div></article>
             </div>
+        </section>
 
-            <div class="why-choose">
-                <p class="section-eyebrow">WHY CHOOSE CDO TUTOR?</p>
-                <h2>Helping Learners <span>Achieve More</span></h2>
+        <section id="news" class="landing-section landing-section--announcements" aria-labelledby="announcements-title">
+            <div class="landing-section__heading"><p class="section-eyebrow">What’s new?</p><h2 id="announcements-title">School <span>news</span></h2><p class="announcement-intro">Fresh news, activities, and enrollment updates from our learning community.</p></div>
+            <div class="announcement-grid" data-announcements></div>
+        </section>
 
-                <div class="why-cards">
-                    <article class="why-card">
-                        <h3>Personalize Learning</h3>
-                        <p>We tailor each session to fit your learning needs.</p>
-                    </article>
-                    <article class="why-card">
-                        <h3>Experienced Teachers</h3>
-                        <p>Licensed professionals with a passion for teaching.</p>
-                    </article>
-                    <article class="why-card">
-                        <h3>Proven Result</h3>
-                        <p>Helping students improve with confidence.</p>
-                    </article>
-                    <article class="why-card">
-                        <h3>Supportive Community</h3>
-                        <p>We care for every learner like family.</p>
-                    </article>
-                </div>
+        <section id="programs" class="landing-section landing-section--programs">
+            <div class="section-heading"><p class="section-eyebrow">Choose your learning adventure</p><h2>A happy place to <span>learn &amp; grow</span></h2><p>Age-appropriate programs filled with discovery, encouragement, and plenty of smiles.</p></div>
+            <div class="program-cards">
+                <article class="program-card program-card--sunny"><div class="program-card__art" aria-hidden="true"><span>🧸</span><i>★</i></div><p class="program-card__age">Little explorers</p><h3>Playschool</h3><p>Play-based activities that build social skills, curiosity, and independence in a safe and caring space.</p><details class="program-details">
+                    <summary class="program-details__toggle">Discover playschool <span aria-hidden="true">+</span></summary>
+                    <div class="program-details__body">
+                        <h4>What is playschool?</h4>
+                        <p>Playschool introduces young children to learning through play. In a caring environment, children practice interacting with others, expressing themselves, and becoming more independent.</p>
+                        <ul><li>Play and hands-on activities encourage curiosity and creativity.</li><li>Shared activities help children practice taking turns, communicating, and making friends.</li><li>Simple routines help children feel comfortable in a learning setting.</li></ul>
+                        <a class="landing-cta-btn" data-enroll-link href="new_student_enrollment.html">Enroll now <span aria-hidden="true">&rarr;</span></a>
+                    </div>
+                </details></article>
+                <article class="program-card program-card--berry"><div class="program-card__art" aria-hidden="true"><span>🎨</span><i>✦</i></div><p class="program-card__age">Ready for big school</p><h3>Preschool</h3><p>Early literacy, numbers, art, and hands-on discovery to prepare young learners for their next big step.</p><details class="program-details">
+                    <summary class="program-details__toggle">Discover preschool <span aria-hidden="true">+</span></summary>
+                    <div class="program-details__body">
+                        <h4>What is preschool?</h4>
+                        <p>Preschool builds a foundation for formal schooling through guided activities and hands-on discovery. Children develop early learning skills while continuing to learn through play.</p>
+                        <ul><li>Early literacy activities introduce listening, language, and letters.</li><li>Number activities help children explore counting, patterns, and basic concepts.</li><li>Art and group activities encourage creativity, cooperation, and confidence.</li></ul>
+                        <a class="landing-cta-btn" data-enroll-link href="new_student_enrollment.html">Enroll now <span aria-hidden="true">&rarr;</span></a>
+                    </div>
+                </details></article>
+                <article class="program-card program-card--sky"><div class="program-card__art" aria-hidden="true"><span>✏️</span><i>ABC</i></div><p class="program-card__age">Personalized support</p><h3>Tutorial</h3><p>Focused one-on-one or small-group guidance that helps students understand lessons and grow in confidence.</p><details class="program-details">
+                    <summary class="program-details__toggle">Explore tutorial <span aria-hidden="true">+</span></summary>
+                    <div class="program-details__body">
+                        <h4>What is tutorial?</h4>
+                        <p>Tutorial provides focused learning support for students who need help understanding lessons or strengthening their skills. One-on-one or small-group guidance gives students opportunities to ask questions and practice with encouragement.</p>
+                        <ul><li>Guided explanations help students work through lessons they find challenging.</li><li>Practice activities support understanding and reinforce learning.</li><li>Personalized support helps students build confidence and work toward their learning goals.</li></ul>
+                        <h4>Subjects offered</h4>
+                        <div class="tutorial-subjects" data-tutorial-subjects aria-live="polite" aria-busy="true"><p>Loading available subjects...</p></div>
+                        <a class="landing-cta-btn" data-enroll-link href="new_student_enrollment.html">Enroll now <span aria-hidden="true">&rarr;</span></a>
+                    </div>
+                </details></article>
             </div>
+        </section>
+
+        <section id="about" class="landing-section landing-section--about">
+            <div class="about-collage" aria-hidden="true"><div class="about-book"><span>LEARN</span><span>PLAY</span><span>GROW</span></div><div class="about-rainbow"><i></i><i></i><i></i></div><span class="about-star about-star--one">★</span><span class="about-star about-star--two">✦</span></div>
+            <div class="landing-section__text"><p class="section-eyebrow">More than lessons</p><h2>We nurture the <span>whole child.</span></h2><p>At CDO Tutor, children are known, supported, and celebrated. Our teachers create warm learning experiences that develop academic skills while encouraging creativity, kindness, and confidence.</p><ul class="about-checks"><li><span aria-hidden="true">✓</span> Caring, licensed professional teachers</li><li><span aria-hidden="true">✓</span> Engaging and age-appropriate activities</li><li><span aria-hidden="true">✓</span> A safe, friendly, family-like community</li></ul><a class="text-link" href="#mission-vision">Meet our guiding values <span aria-hidden="true">→</span></a></div>
         </section>
 
         <section id="mission-vision" class="landing-section mission-vision" aria-labelledby="mission-vision-title">
-            <div class="mission-vision__heading">
-                <p class="section-eyebrow">WHAT GUIDES US</p>
-                <h2 id="mission-vision-title">Mission, Vision &amp; Core Values</h2>
-            </div>
-            <div class="mission-vision__grid" data-mission-vision-content>
-                <article class="mission-vision__panel">
-                    <span class="mission-vision__number" aria-hidden="true">01</span>
-                    <h3>Mission</h3>
-                    <p>
-                        To provide good customer service satisfaction. Excellent learning that will nurture a child academically, emotionally, socially, and physically. Keeping positive, harmonious, enjoyable learning and working environments.
-                    </p>
-                </article>
-                <article class="mission-vision__panel">
-                    <span class="mission-vision__number" aria-hidden="true">02</span>
-                    <h3>Vision</h3>
-                    <p>
-                        To become a nationally-recognized learning center and school with a hundred of excellence teachers and students.
-                    </p>
-                </article>
-                <article class="mission-vision__panel mission-vision__panel--values">
-                    <span class="mission-vision__number" aria-hidden="true">03</span>
-                    <h3>Core Values</h3>
-                    <ul class="core-values" aria-label="CDO Tutor core values">
-                        <li><span class="core-values__letter" aria-hidden="true">C</span><span>Courageous</span></li>
-                        <li><span class="core-values__letter" aria-hidden="true">D</span><span>Disciplined</span></li>
-                        <li><span class="core-values__letter" aria-hidden="true">O</span><span>Optimistic</span></li>
-                        <li><span class="core-values__letter" aria-hidden="true">T</span><span>Talented</span></li>
-                        <li><span class="core-values__letter" aria-hidden="true">L</span><span>Limitless</span></li>
-                        <li><span class="core-values__letter" aria-hidden="true">C</span><span>Courteous</span></li>
-                    </ul>
-                </article>
-            </div>
+            <div class="mission-vision__heading"><p class="section-eyebrow">The heart behind our school</p><h2 id="mission-vision-title">What guides <span>every lesson</span></h2></div>
+            <div class="mission-vision__grid" data-mission-vision-content></div>
         </section>
 
-        <section id="about" class="landing-section landing-section--highlight">
-            <div class="landing-section__text">
-                <h2>About Us</h2>
-                <p>
-                    CDO Tutor provides caring, nurturing instruction that supports each child’s learning journey. Our team delivers engaging lessons, warm classrooms, and well-rounded academic support.
-                </p>
-            </div>
+        <section id="centers" class="enrollment-guide center-directory-section" aria-labelledby="centers-title">
+            <div class="enrollment-guide__heading"><p class="section-eyebrow">Come learn with us</p><h2 id="centers-title">Find your nearest <span>learning center</span></h2><p>Choose the most convenient CDO Tutor location for your family.</p></div>
+            <div class="enrollment-branches center-directory"><div class="enrollment-card-title"><span class="enrollment-title-icon" aria-hidden="true">📍</span><div><p class="enrollment-card-kicker">Active locations</p><h3>Center details</h3></div></div><div class="enrollment-branch-grid" data-enrollment-branches><p class="enrollment-branch-status">Loading center details...</p></div></div>
         </section>
 
-        <section id="programs" class="landing-section landing-section--cards">
-            <h2>Programs</h2>
-            <div class="program-cards">
-                <article class="program-card">
-                    <h3>Preschool</h3>
-                    <p>Foundational learning through games, arts, and early literacy.</p>
-                </article>
-                <article class="program-card">
-                    <h3>Tutorial</h3>
-                    <p>Subject-focused support to help students build confidence and grades.</p>
-                </article>
-                <article class="program-card">
-                    <h3>Special Services</h3>
-                    <p>Personalized attention for learners who need extra support.</p>
-                </article>
-            </div>
+        <section id="faq" class="landing-section landing-section--faq" aria-labelledby="faq-title">
+            <div class="faq-heading"><p class="section-eyebrow">Questions from families</p><h2 id="faq-title">Frequently asked <span>questions</span></h2><p>Find quick answers about CDO Tutor and our learning programs.</p></div>
+            <div class="faq-list" data-faq-list><p class="faq-empty">Loading frequently asked questions...</p></div>
         </section>
 
         <section id="contact" class="landing-section landing-section--footer">
-            <div>
-                <h2>Contact Us</h2>
-                <p>Reach us today to schedule a free consultation or enroll your child.</p>
-                <p><strong>Phone: </strong><a data-landing-phone-link href="tel:09261138886" class="footer-contact-link"><span data-landing-phone>0926-113-8886</span></a></p>
-                <p><strong>Email: </strong><a data-landing-email-link href="mailto:CDOTUTOR@gmail.com" class="footer-contact-link"><span data-landing-email>CDOTUTOR@gmail.com</span></a></p>
-                <p><strong>Facebook: </strong><a data-landing-facebook-link href="https://www.facebook.com/CDOTUTOR" target="_blank" rel="noopener noreferrer" class="footer-contact-link"><span data-landing-facebook>facebook.com/CDOTUTOR</span></a></p>
-            </div>
+            <div class="footer-doodles" aria-hidden="true"><span>✏️</span><span>★</span><span>📚</span></div>
+            <div class="footer-main"><p class="section-eyebrow">Ready when you are</p><h2>Let’s make learning <span>your child’s favorite adventure!</span></h2><p>Talk with our friendly team or reserve a learning slot today.</p><div class="footer-actions"><a class="landing-cta-btn" data-enroll-link href="new_student_enrollment.html">Enroll your child <span aria-hidden="true">→</span></a><a class="footer-phone" data-landing-phone-link href="tel:09261138886"><span aria-hidden="true">☎</span><span data-landing-phone>0926-113-8886</span></a></div></div>
+            <div class="footer-bottom"><a class="footer-brand" href="#home"><img src="assist/logo.png" alt="" /><span><strong>CDO Tutor</strong><small>Learn · Play · Grow</small></span></a><div class="footer-contact-list"><a data-landing-email-link href="mailto:CDOTUTOR@gmail.com"><span data-landing-email>CDOTUTOR@gmail.com</span></a><a data-landing-facebook-link href="https://www.facebook.com/CDOTUTOR" target="_blank" rel="noopener noreferrer"><span data-landing-facebook>facebook.com/CDOTUTOR</span></a></div><p>© 2026 CDO Tutor &amp; Learning Center</p></div>
         </section>
     </main>
-
-    <script type="module" src="js/index.js?v=20260823-hide-public-sidebar"></script>
+    <script type="module" src="js/index.js?v=20261004-subject-names"></script>
 </body>
 </html>

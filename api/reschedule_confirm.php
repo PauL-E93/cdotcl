@@ -6,6 +6,9 @@ require 'PHPMailer/src/Exception.php';
 require 'PHPMailer/src/PHPMailer.php';
 require 'PHPMailer/src/SMTP.php';
 include "admin/connection-pdo.php";
+require_once __DIR__ . '/security/AuthGuard.php';
+require_once __DIR__ . '/security/ScheduleActionToken.php';
+require_once __DIR__ . '/tutorial_validity_helper.php';
 
 class RescheduleConfirm {
     private $conn;
@@ -13,6 +16,7 @@ class RescheduleConfirm {
     public function __construct() {
         global $conn;
         $this->conn = $conn;
+        ensureTutorialValiditySchema($this->conn);
     }
 
     private function getSchedule($enrollmentDetailsId, $scheduleDate) {
@@ -22,8 +26,8 @@ class RescheduleConfirm {
                     eps.day,
                     eps.start_time,
                     eps.end_time,
-                    eps.status,
-                    ed.preferred_teacher,
+                    eps.status, ed.validity_start_date, ed.validity_end_date,
+                    COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) AS preferred_teacher,
                     (
                         SELECT MAX(eps2.date)
                         FROM enrollment_preferred_schedule eps2
@@ -32,6 +36,7 @@ class RescheduleConfirm {
                     p.name AS program_name,
                     sub.subject_name,
                     TRIM(CONCAT_WS(' ', s.first_name, s.last_name, NULLIF(TRIM(s.ext), ''))) AS student_name,
+                    s.student_id,
                     s.email AS student_email,
                     CONCAT(t.first_name, ' ', t.last_name) AS teacher_name,
                     t.email AS teacher_email,
@@ -43,7 +48,7 @@ class RescheduleConfirm {
                 JOIN student s ON eh.student_id = s.student_id
                 LEFT JOIN program p ON ed.program_id = p.program_id
                 LEFT JOIN subject sub ON ed.subject_id = sub.subject_id
-                LEFT JOIN employee t ON ed.preferred_teacher = t.employee_id
+                LEFT JOIN employee t ON COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = t.employee_id
                 LEFT JOIN branch b ON eh.branch_id = b.branch_id
                 WHERE eps.enrollment_details_id = :enrollment_id
                   AND eps.date = :schedule_date
@@ -69,7 +74,11 @@ class RescheduleConfirm {
         $scheduleDate = new DateTime($lastSessionDateValue);
         $minDate = $scheduleDate->modify('+1 day')->format('Y-m-d');
         $today = (new DateTime())->format('Y-m-d');
-        $minDate = max($minDate, $today);
+        $minDate = !empty($schedule['validity_end_date'])
+            ? max($today, $schedule['validity_start_date'] ?? '')
+            : max($minDate, $today);
+        $validUntil = $schedule['validity_end_date'] ?? '';
+        $validityLabel = $validUntil ? 'Sessions are valid through ' . htmlspecialchars(tutorialValidityLabel($validUntil), ENT_QUOTES, 'UTF-8') . ', inclusive.' : '';
 
         return "
         <!DOCTYPE html>
@@ -117,9 +126,11 @@ class RescheduleConfirm {
                         </div>
 
                         <form id='rescheduleForm'>
+                            <p class='small text-muted'>{$validityLabel}</p>
                             <input type='hidden' id='enrollmentId' value='{$schedule['enrollment_details_id']}'>
                             <input type='hidden' id='originalDate' value='{$schedule['date']}'>
                             <input type='hidden' id='authToken' value=''>
+                            <input type='hidden' id='authExpires' value=''>
                             <input type='hidden' id='preferredTeacher' value='{$schedule['preferred_teacher']}'>
 
                             <div class='form-group'>
@@ -140,14 +151,16 @@ class RescheduleConfirm {
                             <div class='row'>
                                 <div class='col-md-6'>
                                     <div class='form-group'>
-                                        <label for='startTime' class='form-label'>Start Time</label>
-                                        <input type='time' class='form-control' id='startTime' required>
+                                        <label for='startTimeDisplay' class='form-label'>Start Time</label>
+                                        <input type='hidden' id='startTime'>
+                                        <button type='button' class='form-control enrollment-time-trigger' id='startTimeDisplay' aria-label='Choose start time' aria-haspopup='dialog' aria-expanded='false' disabled>Select a date</button>
                                     </div>
                                 </div>
                                 <div class='col-md-6'>
                                     <div class='form-group'>
-                                        <label for='endTime' class='form-label'>End Time</label>
-                                        <input type='time' class='form-control' id='endTime' required>
+                                        <label for='endTimeDisplay' class='form-label'>End Time</label>
+                                        <input type='hidden' id='endTime'>
+                                        <button type='button' class='form-control enrollment-time-trigger' id='endTimeDisplay' aria-label='Choose end time' aria-haspopup='dialog' aria-expanded='false' disabled>Select a date</button>
                                     </div>
                                 </div>
                             </div>
@@ -177,20 +190,24 @@ class RescheduleConfirm {
 
             <script src='https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js'></script>
             <script type='module'>
-                import { initStudentDatePicker } from '../js/studentmodule/studentDatePicker.js';
+                import { initStudentDatePicker } from '../js/studentmodule/studentDatePicker.js?v=20261012-email-reschedule';
+                import { initEnrollmentTimePickers, refreshEnrollmentTimePickers } from '../js/modules/enrollment_time_picker.js?v=20261012-email-reschedule';
 
                 const urlParams = new URLSearchParams(window.location.search);
                 const tokenParam = urlParams.get('token') || '';
+                document.getElementById('authExpires').value = urlParams.get('expires') || '';
                 if (tokenParam) {
                     document.getElementById('authToken').value = tokenParam;
                 }
 
                 const minDate = '{$minDate}';
+                const validUntil = '{$validUntil}';
                 const teacherId = document.getElementById('preferredTeacher').value;
 
                 window.parseTimeToMinutes = parseTimeToMinutes;
                 window.minutesToTime = minutesToTime;
                 window.subtractInterval = subtractInterval;
+                initEnrollmentTimePickers({ startTimeId: 'startTime', endTimeId: 'endTime', hiddenDateId: 'newDate' });
 
                 window.validateTeacherDateSelection = function validateTeacherDateSelection() {
                     const dateValue = document.getElementById('newDate')?.value || '';
@@ -217,6 +234,7 @@ class RescheduleConfirm {
                     startTimeId: 'startTime',
                     endTimeId: 'endTime',
                     validateCallback: window.validateTeacherDateSelection,
+                    onDateSelected: refreshEnrollmentTimePickers,
                     parseTimeToMinutes,
                     containerMaxWidth: '460px'
                 });
@@ -234,6 +252,7 @@ class RescheduleConfirm {
                     const endTime = document.getElementById('endTime').value;
                     const reason = document.getElementById('reason').value;
 
+                    if (validUntil && (newDate < minDate || newDate > validUntil)) { showError('Choose a session date within the tutorial validity period.'); return; }
                     if (!newDate || !startTime || !endTime) {
                         showError('Please fill in all required fields.');
                         return;
@@ -256,13 +275,13 @@ class RescheduleConfirm {
 
                     const startMinutes = parseTimeToMinutes(startTime);
                     const endMinutes = parseTimeToMinutes(endTime);
-                    const overlaps = available.some(slot => {
+                    const fitsAvailableSlot = available.some(slot => {
                         const slotStart = parseTimeToMinutes(slot.start);
                         const slotEnd = parseTimeToMinutes(slot.end);
-                        return startMinutes < slotEnd && endMinutes > slotStart;
+                        return startMinutes >= slotStart && endMinutes <= slotEnd;
                     });
 
-                    if (!overlaps) {
+                    if (!fitsAvailableSlot) {
                         showError('The selected time is not within the available slots for this teacher.');
                         return;
                     }
@@ -281,6 +300,7 @@ class RescheduleConfirm {
                             original_enrollment_details_id: parseInt(enrollmentId),
                             original_date: originalDate,
                             token: authToken,
+                            expires: document.getElementById('authExpires').value,
                             new_schedules: [{
                                 date: newDate,
                                 day: dayName,
@@ -327,6 +347,7 @@ class RescheduleConfirm {
                     if (hiddenDate) {
                         hiddenDate.value = '';
                     }
+                    refreshEnrollmentTimePickers();
                     if (calendarContainer) {
                         calendarContainer.style.display = 'none';
                     }
@@ -337,7 +358,14 @@ class RescheduleConfirm {
                     }
 
                     try {
-                        const response = await axios.get('admin/enrollment.php?operation=getTeacherAvailableSlots&teacher_id=' + encodeURIComponent(teacherId));
+                        const availabilityUrl = new URL('admin/enrollment.php', location.href);
+                        availabilityUrl.searchParams.set('operation', 'getTeacherAvailableSlots');
+                        availabilityUrl.searchParams.set('teacher_id', teacherId);
+                        availabilityUrl.searchParams.set('enrollment_details_id', document.getElementById('enrollmentId').value);
+                        availabilityUrl.searchParams.set('schedule_date', document.getElementById('originalDate').value);
+                        availabilityUrl.searchParams.set('expires', document.getElementById('authExpires').value);
+                        availabilityUrl.searchParams.set('token', document.getElementById('authToken').value);
+                        const response = await axios.get(availabilityUrl.href);
                         if (response.data.status !== 'success') {
                             if (dateInput) {
                                 dateInput.value = '';
@@ -348,7 +376,7 @@ class RescheduleConfirm {
 
                         window.teacherAvailableSlots = response.data.data.slots || [];
                         window.teacherBookedSlots = response.data.data.bookings || [];
-                        window.teacherAvailableDates = getAvailableTeacherDates(window.teacherAvailableSlots, window.teacherBookedSlots, minDate, 180);
+                        window.teacherAvailableDates = getAvailableTeacherDates(window.teacherAvailableSlots, window.teacherBookedSlots, minDate, 180).filter(date => !validUntil || date <= validUntil);
 
                         if (dateInput) {
                             dateInput.value = '';
@@ -365,6 +393,8 @@ class RescheduleConfirm {
                 }
 
                 function getAvailableTeacherDates(slots, bookings, minAllowedDate, daysAhead = 180) {
+                    window.teacherAvailableSlotsPerDate = {};
+                    window.teacherFullShiftsPerDate = {};
                     if (!Array.isArray(slots) || slots.length === 0) {
                         return [];
                     }
@@ -399,12 +429,21 @@ class RescheduleConfirm {
                             continue;
                         }
 
-                        const shift = daySlots[0];
-                        window.teacherFullShiftsPerDate[formatted] = { start: shift.start_time, end: shift.end_time };
-
-                        const shiftStart = parseTimeToMinutes(shift.start_time);
-                        const shiftEnd = parseTimeToMinutes(shift.end_time);
-                        let remaining = [{ start: shiftStart, end: shiftEnd }];
+                        const shifts = daySlots.map(slot => ({ start: parseTimeToMinutes(slot.start_time), end: parseTimeToMinutes(slot.end_time) }))
+                            .filter(slot => slot.end > slot.start)
+                            .sort((a, b) => a.start - b.start)
+                            .reduce((merged, slot) => {
+                                const last = merged[merged.length - 1];
+                                if (last && slot.start <= last.end) last.end = Math.max(last.end, slot.end);
+                                else merged.push({ ...slot });
+                                return merged;
+                            }, []);
+                        if (!shifts.length) continue;
+                        window.teacherFullShiftsPerDate[formatted] = {
+                            start: minutesToTime(shifts[0].start), end: minutesToTime(shifts[shifts.length - 1].end),
+                            totalMinutes: shifts.reduce((total, shift) => total + shift.end - shift.start, 0)
+                        };
+                        let remaining = shifts.map(shift => ({ ...shift }));
 
                         const booked = bookingsByDate[formatted] || [];
                         booked.forEach(item => {
@@ -557,6 +596,19 @@ class RescheduleConfirm {
             return;
         }
 
+        $user = AuthGuard::user();
+        $signed = ScheduleActionToken::validReschedule((int) $enrollmentDetailsId, (string) $scheduleDate,
+            (string) ($schedule['student_email'] ?? ''), $_GET['expires'] ?? null, $_GET['token'] ?? null);
+        if ((!$user || $user['user_type'] !== 'student' || $user['user_id'] !== (int) $schedule['student_id'])
+            && !$signed) {
+            http_response_code(403);
+            echo $this->renderErrorPage('Access Denied', 'Sign in as the student or use a current reschedule link.');
+            return;
+        }
+
+        if (!empty($schedule['validity_end_date']) && (new DateTimeImmutable('now', new DateTimeZone('Asia/Manila')))->format('Y-m-d') > $schedule['validity_end_date']) {
+            echo $this->renderErrorPage('Tutorial Expired', 'This package has expired. Contact the center to request an authorized validity extension.'); return;
+        }
         echo $this->renderRescheduleForm($schedule);
     }
 }

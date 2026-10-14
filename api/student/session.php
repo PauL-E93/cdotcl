@@ -1,6 +1,8 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 
 class StudentSession {
     private function normalizeRole($role) {
@@ -9,7 +11,10 @@ class StudentSession {
     }
 
     private function getAccessScope() {
-        $role = $this->normalizeRole($_SESSION['user_role'] ?? '');
+        $role = $this->normalizeRole(
+            $_SESSION['user_role']
+                ?? ($_SESSION['auth_user']['role_name'] ?? '')
+        );
 
         if ($role === 'student') {
             $studentId = intval($_SESSION['student_id'] ?? $_SESSION['user_id'] ?? 0);
@@ -26,6 +31,18 @@ class StudentSession {
 
         if ($role === 'branch admin') {
             $branchId = intval($_SESSION['branch_id'] ?? 0);
+            if ($branchId <= 0) {
+                $employeeId = intval($_SESSION['employee_id'] ?? $_SESSION['user_id'] ?? 0);
+                if ($employeeId > 0) {
+                    include "../admin/connection-pdo.php";
+                    $branchStmt = $conn->prepare('SELECT branch_id FROM employee WHERE employee_id = ? LIMIT 1');
+                    $branchStmt->execute([$employeeId]);
+                    $branchId = intval($branchStmt->fetchColumn() ?: 0);
+                    if ($branchId > 0) {
+                        $_SESSION['branch_id'] = $branchId;
+                    }
+                }
+            }
             if ($branchId <= 0) {
                 throw new Exception('Branch admin account is not assigned to a branch.');
             }
@@ -45,8 +62,8 @@ class StudentSession {
 
             return [
                 'role' => $role,
-                'where' => '(ed.preferred_teacher = :teacher_id OR sec.employee_id = :teacher_id)',
-                'params' => [':teacher_id' => $teacherId]
+                'where' => '(ed.preferred_teacher = :teacher_id OR sec.employee_id = :section_teacher_id OR EXISTS (SELECT 1 FROM enrollment_preferred_schedule assigned_session WHERE assigned_session.enrollment_details_id = ed.enrollment_details_id AND assigned_session.substitute_teacher_id = :substitute_teacher_id))',
+                'params' => [':teacher_id' => $teacherId, ':section_teacher_id' => $teacherId, ':substitute_teacher_id' => $teacherId]
             ];
         }
 
@@ -72,12 +89,16 @@ class StudentSession {
         include "../admin/connection-pdo.php";
 
         try {
-            if (!isset($_SESSION['user_role'])) {
+            if (empty($_SESSION['user_role']) && empty($_SESSION['auth_user']['role_name'])) {
                 echo json_encode(['status' => 'error', 'message' => 'Unauthorized']);
                 return;
             }
 
             $scope = $this->getAccessScope();
+            $onlyActive = !empty($_GET['only_active']);
+            $statusFilter = $onlyActive
+                ? "COALESCE(NULLIF(eh.status, ''), ed.status) IN ('enrolled', 'completed')"
+                : "ed.status IN ('pending', 'enrolled', 'completed')";
 
             // Get all enrollments
             $sql = "SELECT DISTINCT ed.enrollment_details_id,
@@ -91,7 +112,7 @@ class StudentSession {
                            ) AS teacher_name,
                            TRIM(CONCAT_WS(' ', s.first_name, s.last_name, NULLIF(TRIM(s.ext), ''))) AS student_name,
                            b.branch_name,
-                           ed.status
+                           COALESCE(NULLIF(eh.status, ''), ed.status) AS status
                     FROM enrollment_details ed
                     JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id
                     JOIN student s ON eh.student_id = s.student_id
@@ -102,7 +123,7 @@ class StudentSession {
                     LEFT JOIN employee section_teacher ON sec.employee_id = section_teacher.employee_id
                     LEFT JOIN branch b ON eh.branch_id = b.branch_id
                     WHERE {$scope['where']}
-                      AND ed.status IN ('active', 'pending', 'enrolled', 'completed', 'session done')
+                      AND {$statusFilter}
                     ORDER BY ed.enrollment_details_id DESC";
 
             $stmt = $conn->prepare($sql);
@@ -158,7 +179,7 @@ class StudentSession {
         include "../admin/connection-pdo.php";
 
         try {
-            if (!isset($_SESSION['user_role'])) {
+            if (empty($_SESSION['user_role']) && empty($_SESSION['auth_user']['role_name'])) {
                 echo json_encode(['status' => 'error', 'message' => 'Unauthorized']);
                 return;
             }
@@ -170,6 +191,10 @@ class StudentSession {
             }
 
             $scope = $this->getAccessScope();
+            $onlyActive = !empty($_GET['only_active']);
+            $statusFilter = $onlyActive
+                ? "AND COALESCE(NULLIF(eh.status, ''), ed.status) IN ('enrolled', 'completed')"
+                : '';
 
             // Verify the current role can access this enrollment.
             $verifySQL = "SELECT ed.enrollment_details_id 
@@ -177,7 +202,8 @@ class StudentSession {
                          JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id
                          LEFT JOIN sections sec ON ed.section_id = sec.section_id
                          WHERE ed.enrollment_details_id = :enrollment_details_id
-                           AND {$scope['where']}";
+                           AND {$scope['where']}
+                           {$statusFilter}";
             
             $verifyStmt = $conn->prepare($verifySQL);
             $verifyStmt->execute(array_merge(
@@ -297,6 +323,10 @@ class StudentSession {
 
             // Get all sessions for timeline (or generate placeholders if none)
             $allSessionsSql = "SELECT eps.preference_id,
+                                      eps.substitute_teacher_id,
+                                      eps.substitute_reason,
+                                      COALESCE(eps.substitute_teacher_id, ed.preferred_teacher, sec.employee_id) AS effective_teacher_id,
+                                      CONCAT(substitute.first_name, ' ', substitute.last_name) AS substitute_teacher_name,
                                       eps.enrollment_details_id,
                                       eps.date,
                                       eps.day,
@@ -325,9 +355,10 @@ class StudentSession {
                                LEFT JOIN program p ON ed.program_id = p.program_id
                                LEFT JOIN subject sub ON ed.subject_id = sub.subject_id
                                LEFT JOIN employee t ON ed.preferred_teacher = t.employee_id
+                               LEFT JOIN employee substitute ON eps.substitute_teacher_id = substitute.employee_id
                                LEFT JOIN employee section_teacher ON sec.employee_id = section_teacher.employee_id
                                WHERE eps.enrollment_details_id = :enrollment_details_id
-                               ORDER BY eps.date ASC, eps.start_time ASC";
+                               ORDER BY eps.date ASC, eps.start_time ASC, eps.preference_id ASC";
 
             $allSessionsStmt = $conn->prepare($allSessionsSql);
             $allSessionsStmt->execute([':enrollment_details_id' => $enrollmentDetailsId]);
@@ -368,7 +399,13 @@ class StudentSession {
                         'hasSchedule' => true,
                         'preference_id' => $session['preference_id'],
                         'enrollment_details_id' => $session['enrollment_details_id'],
-                        'preferred_teacher' => $session['preferred_teacher'],
+                        'preferred_teacher' => $session['effective_teacher_id'],
+                        'regular_teacher_id' => $session['preferred_teacher'],
+                        'regular_teacher' => $session['teacher_name'],
+                        'substitute_teacher_id' => $session['substitute_teacher_id'],
+                        'substitute_teacher' => $session['substitute_teacher_name'],
+                        'substitute_reason' => $session['substitute_reason'],
+                        'can_manage_session' => $scope['role'] !== 'teacher' || (int)$session['effective_teacher_id'] === (int)($_SESSION['employee_id'] ?? 0),
                         'date' => $session['date'],
                         'last_session_date' => $lastSessionDate,
                         'day' => $session['day'],
@@ -376,7 +413,7 @@ class StudentSession {
                         'endTime' => $session['end_time_raw'],
                         'program' => $session['program_name'],
                         'subject' => $session['subject_name'],
-                        'teacher' => $session['teacher_name'],
+                        'teacher' => $session['substitute_teacher_name'] ?: $session['teacher_name'],
                         'student' => $session['student_name'],
                         'branch' => $session['branch_name'],
                         'branch_location' => $session['branch_location'],
@@ -411,6 +448,7 @@ class StudentSession {
                     'timeRange' => $timeRange,
                     'totalDuration' => $totalDuration,
                     'overallProgress' => $overallProgress,
+                    'isFullyCompleted' => $totalSessions > 0 && $completedSessions >= $totalSessions,
                     'tags' => array_filter([
                         $sessionData['program_name'],
                         $sessionData['subject_name'],
@@ -420,6 +458,7 @@ class StudentSession {
                     'enrollmentDate' => $enrollmentDate->format('M d, Y'),
                     'sessionStatus' => $sessionStatus,
                     'enrollmentDetailsId' => $sessionData['enrollment_details_id'],
+                    'programId' => (int)($sessionData['program_id'] ?? 0),
                     'noScheduledSessions' => $noSchedules
                 ]
             ];

@@ -1,6 +1,8 @@
-import { openPrePlayReportCard } from '../studentmodule/preplay_report_card.js?v=20260814-school-year-curriculum';
+import { appendAgreementLink } from './agreements.js';
+import { openPrePlayReportCard } from '../studentmodule/preplay_report_card.js?v=20260907-quarter-visibility';
 import { applyEnrollmentPagePermissions, canUseEnrollmentPermission, guardEnrollmentPermission, initEnrollmentPermissions, shouldApplyEnrollmentRbac } from './enrollment_rbac.js';
 import { applyPaymentPagePermissions, canUsePaymentPermission, guardPaymentPermission, initPaymentPermissions, isPaymentModulePage, shouldApplyPaymentRbac } from './payment_rbac.js';
+import { canUseOnlineApplicationPermission } from './enrollment_applications.js?v=20261006-upload-images-r2';
 import { startAutoRefresh } from '../utilities/auto_refresh.js';
 
 // js/modules/view_enrollment.js
@@ -10,6 +12,7 @@ let paginationManager;
 let currentEnrollmentDetails = null;
 let currentViewOnly = true;
 let currentApplicationPlacement = null;
+const PENDING_PREPLAY_PLACEMENT_KEY = 'pendingPrePlayApplicationPlacement';
 const PAYMENT_PAGE_REFRESH_MS = 15000;
 const enrollmentFilters = {
     search: '',
@@ -17,8 +20,25 @@ const enrollmentFilters = {
     subject: '',
     teacher: '',
     branch: '',
+    schoolYear: '',
     summary: 'total'
 };
+
+function usesPrePlayPlacementColumns() {
+    return document.querySelector('#paymentTableBody')?.closest('table')
+        ?.querySelector('thead th:nth-child(3)')?.textContent.trim() === 'Section';
+}
+
+function getPrePlayPlacementValues(item) {
+    const classId = item.class_id_from_section || item.class_id;
+    return [item.section_name || 'Not assigned', classId ? `Class ${classId}` : 'Not assigned'];
+}
+
+function escapePrePlayTableValue(value) {
+    return String(value).replace(/[&<>"']/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[character]);
+}
 
 function formatStudentName(details = {}) {
     return [details.first_name, details.last_name, details.ext]
@@ -120,13 +140,7 @@ function formatEnrolledBy(item) {
 }
 
 function resolvePaymentProofUrl(proofPath) {
-    if (!proofPath) return '';
-    if (/^(?:https?:)?\/\//.test(proofPath)) {
-        return proofPath;
-    }
-
-    const cleaned = String(proofPath).replace(/^\/+/, '');
-    return `../../${cleaned}`;
+    return window.resolveUploadUrl(proofPath);
 }
 
 function isStudentPrePlayPage() {
@@ -136,7 +150,8 @@ function isStudentPrePlayPage() {
 function shouldIncludePrePlayApplications() {
     const pathname = window.location.pathname.toLowerCase();
     return (pathname.includes('enrollement_pre_play.html') || pathname.includes('payment_pre_play.html'))
-        && ['/owner/', '/secretary/', '/branch_admin/', '/auditor/'].some(rolePath => pathname.includes(rolePath));
+        && !pathname.includes('/student/')
+        && canUseOnlineApplicationPermission('view_online_applications');
 }
 
 function getEnrollmentApiUrl(operation, params = '') {
@@ -173,6 +188,9 @@ function getPrePlayListUrl(summaryFilter = 'total') {
     if (enrollmentFilters.teacher) {
         params.push(`teacher=${encodeURIComponent(enrollmentFilters.teacher)}`);
     }
+    if (enrollmentFilters.schoolYear) {
+        params.push(`school_year_id=${encodeURIComponent(enrollmentFilters.schoolYear)}`);
+    }
     if (enrollmentFilters.branch) {
         params.push(`branch_id=${encodeURIComponent(enrollmentFilters.branch)}`);
     }
@@ -187,7 +205,7 @@ function getPrePlayStatsUrl() {
 
     return isStudentPrePlayPage()
         ? getEnrollmentApiUrl('getPrePlayEnrollmentStats')
-        : getEnrollmentApiUrl('getEnrollmentStats', `&type=preschool${includeApplications}`);
+        : getEnrollmentApiUrl('getEnrollmentStats', `&type=preschool${includeApplications}&school_year_id=${encodeURIComponent(enrollmentFilters.schoolYear)}`);
 }
 
 // Function to determine if program is preschool and open appropriate billing modal
@@ -238,6 +256,18 @@ document.addEventListener("DOMContentLoaded", async () => {
         setupEnrollmentTableExport();
         loadEnrollmentStats();
         setupPaymentPageAutoRefresh();
+        if (isPrePlayEnrollmentPage()) {
+            const pendingPlacement = sessionStorage.getItem(PENDING_PREPLAY_PLACEMENT_KEY);
+            if (pendingPlacement) {
+                sessionStorage.removeItem(PENDING_PREPLAY_PLACEMENT_KEY);
+                try {
+                    const { applicationId, enrollmentDetailsId } = JSON.parse(pendingPlacement);
+                    window.openPrePlayApplicationPlacement(applicationId, enrollmentDetailsId);
+                } catch (error) {
+                    console.error('Unable to resume class and section placement:', error);
+                }
+            }
+        }
     }
 });
 
@@ -381,15 +411,20 @@ async function getAllPrePlayExportData() {
     }
 
     const paymentPage = isPaymentModulePage();
-    const headers = ['Student ID', 'Student Name', 'Subject', 'Tutor', 'Enrollment Date', 'Status'];
+    const placementColumns = usesPrePlayPlacementColumns();
+    const headers = ['Student ID', 'Student Name', ...(placementColumns ? ['Section', 'Class'] : ['Subject', 'Tutor']), 'Enrollment Date', 'Status'];
     const rows = (response.data.data || []).map(item => [
         item.student_id_number || item.student_id || 'N/A',
         item.student_name || 'N/A',
-        item.program_name || item.subject_name || 'N/A',
-        item.teacher_name || 'Not assigned',
+        ...(placementColumns ? getPrePlayPlacementValues(item) : [
+            item.program_name || item.subject_name || 'N/A',
+            item.teacher_name || 'Not assigned'
+        ]),
         item.enrollment_date || 'N/A',
         paymentPage
-            ? (String(item.status || '').toLowerCase().trim() === 'incomplete' ? 'Incomplete' : (item.payment_status || 'Unpaid'))
+            ? (String(item.application_status || '').toLowerCase() === 'ready_for_scheduling'
+                ? 'Ready for Class & Section'
+                : (String(item.status || '').toLowerCase().trim() === 'incomplete' ? 'Incomplete' : (item.payment_status || 'Unpaid')))
             : (item.status || 'N/A').toUpperCase()
     ]);
 
@@ -504,6 +539,7 @@ function setupEnrollmentFilterControls() {
     const subjectSelect = document.getElementById('enrollment-subject-filter');
     const teacherSelect = document.getElementById('enrollment-teacher-filter');
     const branchSelect = document.getElementById('enrollment-branch-filter');
+    const schoolYearSelect = document.getElementById('enrollment-school-year-filter');
     const applyButton = document.getElementById('enrollment-apply-filters');
 
     if (!paginationManager) return;
@@ -527,6 +563,15 @@ function setupEnrollmentFilterControls() {
                 paginationManager.apiUrl = getPrePlayListUrl(enrollmentFilters.summary);
                 paginationManager.loadPage(1);
             }
+        });
+    }
+
+    if (schoolYearSelect) {
+        schoolYearSelect.addEventListener('change', () => {
+            enrollmentFilters.schoolYear = schoolYearSelect.value;
+            paginationManager.apiUrl = getPrePlayListUrl(enrollmentFilters.summary);
+            paginationManager.loadPage(1);
+            loadEnrollmentStats();
         });
     }
 
@@ -569,6 +614,8 @@ function setupEnrollmentFilterControls() {
             enrollmentFilters.subject = subjectSelect?.value || '';
             enrollmentFilters.teacher = teacherSelect?.value || '';
             enrollmentFilters.branch = branchSelect?.value || '';
+            enrollmentFilters.schoolYear = schoolYearSelect?.value || '';
+            loadEnrollmentStats();
             paginationManager.apiUrl = getPrePlayListUrl(enrollmentFilters.summary);
             paginationManager.loadPage(1);
         });
@@ -602,14 +649,22 @@ function renderEnrollments(enrollments) {
             cancelled: 'CANCELLED'
         };
         const applicationStatus = String(item.application_status || '').toLowerCase();
-        const isPendingOnlineApplication = Boolean(item.application_id && applicationStatusLabels[applicationStatus]);
+        const isReadyForPlacement = useOwnerPaymentStatus
+            && Boolean(item.application_id)
+            && applicationStatus === 'ready_for_scheduling';
+        const isStudentWaitingForCenter = isStudentPrePlayPage()
+            && ['pending_review', 'approved_for_payment', 'ready_for_scheduling'].includes(applicationStatus);
+        const isPendingOnlineApplication = !isStudentPrePlayPage()
+            && Boolean(item.application_id && applicationStatusLabels[applicationStatus]);
         const isOnlineApplicationPaymentTask = useOwnerPaymentStatus
             && Boolean(item.application_id)
             && !item.enrollment_details_id
             && ['pending_review', 'approved_for_payment'].includes(applicationStatus);
         const displayStatus = isOnlineApplicationPaymentTask
             ? applicationStatusLabels[applicationStatus]
-            : (useOwnerPaymentStatus ? paymentStatus : (applicationStatusLabels[applicationStatus] || (item.status || '').toUpperCase()));
+            : (useOwnerPaymentStatus
+                ? (isReadyForPlacement ? applicationStatusLabels[applicationStatus] : paymentStatus)
+                : (applicationStatusLabels[applicationStatus] || (item.status || '').toUpperCase()));
 
         let statusBadge;
         if (isOnlineApplicationPaymentTask) {
@@ -622,28 +677,31 @@ function renderEnrollments(enrollments) {
                 'Unpaid': 'danger',
                 'Incomplete': 'warning text-dark'
             };
-            statusBadge = paymentStatusClasses[paymentStatus] || 'secondary';
+            statusBadge = isReadyForPlacement ? 'primary' : (paymentStatusClasses[paymentStatus] || 'secondary');
         } else if (isPendingOnlineApplication) {
             statusBadge = {
                 ready_for_scheduling: 'primary',
                 rejected: 'danger',
                 cancelled: 'secondary'
             }[applicationStatus] || 'warning text-dark';
+        } else if (isStudentWaitingForCenter) {
+            statusBadge = applicationStatus === 'ready_for_scheduling'
+                ? 'primary'
+                : (applicationStatus === 'approved_for_payment' ? 'info text-dark' : 'warning text-dark');
         } else {
             switch (enrollmentLifecycleStatus) {
-                case 'active':
                 case 'enrolled':
                     statusBadge = 'success';
+                    break;
+                case 'completed':
+                    statusBadge = 'theme-pink';
+                    break;
+                case 'approved':
+                    statusBadge = 'primary';
                     break;
                 case 'pending':
                 case 'incomplete':
                     statusBadge = 'warning text-dark';
-                    break;
-                case 'cancelled':
-                    statusBadge = 'danger';
-                    break;
-                case 'session done':
-                    statusBadge = 'info';
                     break;
                 default:
                     statusBadge = 'secondary';
@@ -663,9 +721,14 @@ function renderEnrollments(enrollments) {
 
         if (isOnlineApplicationPaymentTask) {
             const applicationPaymentMethod = String(item.application_payment_method || '').toLowerCase();
+            const canReviewApplication = canUseOnlineApplicationPermission('approve_online_applications')
+                || canUseOnlineApplicationPermission('reject_online_applications');
+            const canReceiveApplicationPayment = canUseOnlineApplicationPermission('receive_online_application_payment');
             const paymentTaskLabel = applicationStatus === 'approved_for_payment'
-                ? 'Pay Enrollment'
-                : (applicationPaymentMethod.includes('gcash') ? 'Check GCash Payment' : 'Review & Pay Enrollment');
+                ? (canReceiveApplicationPayment ? 'Pay Enrollment' : 'View Application')
+                : (applicationPaymentMethod.includes('gcash') && canReviewApplication && canReceiveApplicationPayment
+                    ? 'Check GCash Payment'
+                    : (canReviewApplication ? 'Review Application' : 'View Application'));
             actionButtons = `
                 <div class="dropdown" onclick="event.stopPropagation();">
                     <button class="btn btn-sm btn-outline-secondary border-0" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Online application payment actions">
@@ -678,10 +741,20 @@ function renderEnrollments(enrollments) {
             `;
         } else if (isPaymentPage) {
             const payCall = isPreschoolPage ? `openBillingPlayPreModal(${item.enrollment_details_id})` : `openBillingModalByProgram(${item.enrollment_details_id}, '${item.program_name || ''}')`;
+            const studentCompletionAction = isStudentPrePlayPage() && status === 'incomplete' && !isStudentWaitingForCenter;
             const paymentActions = [
-                `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); ${payCall}"><i class="bi bi-credit-card me-2"></i>${canCreatePayment ? 'Pay' : 'View Billing'}</a></li>`,
+                `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); ${studentCompletionAction ? `window.completeStudentPrePlayEnrollmentFromPayment(${item.enrollment_details_id})` : payCall}"><i class="bi bi-credit-card me-2"></i>${studentCompletionAction ? 'Complete Enrollment' : (canCreatePayment && !isReadyForPlacement && !isStudentWaitingForCenter ? 'Pay' : 'View Billing')}</a></li>`,
                 `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); openPrePlayPaymentHistoryModal(${item.enrollment_details_id}, ${isStudentPrePlayPage() || !canApprovePayment})"><i class="bi bi-eye me-2"></i>View</a></li>`
             ];
+            if (isReadyForPlacement) {
+                const canPlace = canUseOnlineApplicationPermission('finalize_online_applications');
+                const canViewApplication = canUseOnlineApplicationPermission('view_online_applications');
+                if (canPlace || canViewApplication) {
+                    paymentActions.unshift(`<li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); ${canPlace ? `window.openPrePlayApplicationPlacement(${Number(item.application_id)}, ${Number(item.enrollment_details_id)})` : `window.viewNewStudentApplication(${Number(item.application_id)})`}"><i class="bi bi-diagram-3 me-2"></i>${canPlace ? 'Assign Class & Section' : 'View Application'}</a></li>`);
+                }
+            } else if (status === 'incomplete' && !isStudentPrePlayPage() && canApproveEnrollment) {
+                paymentActions.unshift(`<li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); openPendingEnrollmentCompletion(${item.enrollment_details_id}, 'preschool')"><i class="bi bi-clipboard-check me-2"></i>Complete Onsite Enrollment</a></li>`);
+            }
             if (canViewPaymentAssessment && ['/owner/', '/secretary/', '/branch_admin/', '/auditor/', '/teacher/'].some(rolePath => pagePath.includes(rolePath))) {
                 paymentActions.push(`<li><a class="dropdown-item fw-semibold text-dark" href="#" onclick="event.preventDefault(); openPaymentAssessment(${item.enrollment_details_id})"><i class="bi bi-clipboard2-check me-2"></i>Assessment</a></li>`);
             }
@@ -742,6 +815,9 @@ function renderEnrollments(enrollments) {
                     enrollmentActions.push(`<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); viewPrePlayDetails(${item.enrollment_details_id}, true)">View</a></li>`);
                     enrollmentActions.push(`<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); window.viewPrePlayReportCard(${item.enrollment_details_id})">View Report Card</a></li>`);
                 }
+                if (canEditClassSection() && canUseEnrollmentPermission('edit')) {
+                    enrollmentActions.push(`<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); window.editPrePlayEnrollment(${item.enrollment_details_id})">Edit Branch, Class &amp; Section</a></li>`);
+                }
                 if (canApproveEnrollment && canComplete) {
                     enrollmentActions.push(`<li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); openPendingEnrollmentCompletion(${item.enrollment_details_id}, 'preschool')">Complete</a></li>`);
                 }
@@ -780,8 +856,9 @@ function renderEnrollments(enrollments) {
             <tr>
                 <td>${item.student_id_number || item.student_id || 'N/A'}</td>
                 <td>${item.student_name}</td>
-                <td>${item.program_name || item.subject_name || 'N/A'}</td>
-                <td>${item.teacher_name || 'Not assigned'}</td>
+                ${usesPrePlayPlacementColumns()
+                    ? getPrePlayPlacementValues(item).map(value => `<td>${escapePrePlayTableValue(value)}</td>`).join('')
+                    : `<td>${item.program_name || item.subject_name || 'N/A'}</td><td>${item.teacher_name || 'Not assigned'}</td>`}
                 <td>${item.enrollment_date}</td>
                 <td><span class="badge bg-${statusBadge}">${displayStatus}</span></td>
                 <td>
@@ -803,10 +880,10 @@ function loadEnrollmentStats() {
                 document.getElementById('new_enrollments').innerText = stats.new;
                 document.getElementById('pending_applications').innerText = stats.pending;
                 const incompleteElement = document.getElementById('incomplete_enrollments');
-                const cancellationsElement = document.getElementById('cancellations');
+                const completedElement = document.getElementById('completed_enrollments');
 
                 if (incompleteElement) incompleteElement.innerText = stats.incomplete;
-                if (cancellationsElement) cancellationsElement.innerText = stats.cancelled;
+                if (completedElement) completedElement.innerText = stats.completed;
             }
         }
     })
@@ -826,8 +903,18 @@ window.editPrePlayEnrollment = function(id) {
 };
 
 window.openPrePlayApplicationPlacement = function(applicationId, enrollmentDetailsId) {
+    if (!canUseOnlineApplicationPermission('finalize_online_applications')) {
+        Swal.fire('Access Restricted', 'You do not have permission to assign classes or finalize online applications.', 'warning');
+        return;
+    }
     if (!applicationId || !enrollmentDetailsId) {
         Swal.fire('Placement Unavailable', 'This application does not have a valid enrollment record.', 'error');
+        return;
+    }
+
+    if (!isPrePlayEnrollmentPage()) {
+        sessionStorage.setItem(PENDING_PREPLAY_PLACEMENT_KEY, JSON.stringify({ applicationId, enrollmentDetailsId }));
+        window.location.assign('./enrollement_pre_play.html');
         return;
     }
 
@@ -848,7 +935,7 @@ function getCurrentClassId(details) {
 
 function formatClassLabel(item) {
     const branch = item.branch_name ? ` (${item.branch_name})` : '';
-    return `${item.program_name || 'Class ' + item.class_id}${branch}`;
+    return `Class ${item.class_id}${item.program_name ? ` - ${item.program_name}` : ''}${branch}`;
 }
 
 function loadEnrollmentFilterLookups() {
@@ -863,6 +950,12 @@ function loadEnrollmentFilterLookups() {
             const subjectSelect = document.getElementById('enrollment-subject-filter');
             const teacherSelect = document.getElementById('enrollment-teacher-filter');
             const branchSelect = document.getElementById('enrollment-branch-filter');
+
+            const schoolYearSelect = document.getElementById('enrollment-school-year-filter');
+            if (schoolYearSelect && Array.isArray(data.filter_school_years)) {
+                setSelectOptions(schoolYearSelect, data.filter_school_years, 'All School Years', 'school_year_id', item => item.school_year);
+                schoolYearSelect.value = enrollmentFilters.schoolYear;
+            }
 
             if (Array.isArray(data.statuses)) {
                 populateEnrollmentStatusOptions(statusSelect, data.statuses, shouldIncludePrePlayApplications());
@@ -885,12 +978,12 @@ function loadEnrollmentFilterLookups() {
 }
 
 const prePlayApplicationStatusOptions = [
-    ['application_pending_review', 'Online Application — Pending Review'],
-    ['application_approved_for_payment', 'Online Application — Awaiting Center Payment'],
-    ['application_ready_for_scheduling', 'Online Application — Payment Received / Ready for Class & Section'],
-    ['application_enrolled', 'Online Application — Enrolled'],
-    ['application_rejected', 'Online Application — Rejected'],
-    ['application_cancelled', 'Online Application — Cancelled']
+    ['application_pending_review', 'Pending Review'],
+    ['application_approved_for_payment', 'Awaiting Center Payment'],
+    ['application_ready_for_scheduling', 'Payment Received / Ready for Class & Section'],
+    ['application_enrolled', 'Enrolled'],
+    ['application_rejected', 'Rejected'],
+    ['application_cancelled', 'Cancelled']
 ];
 
 function populateEnrollmentStatusOptions(statusSelect, statuses = [], includeApplicationStatuses = false) {
@@ -911,7 +1004,7 @@ function populateEnrollmentStatusOptions(statusSelect, statuses = [], includeApp
 
     if (includeApplicationStatuses) {
         const applicationGroup = document.createElement('optgroup');
-        applicationGroup.label = 'Online Application Status';
+        applicationGroup.label = 'Online Application';
         prePlayApplicationStatusOptions.forEach(([value, label]) => {
             const option = document.createElement('option');
             option.value = value;
@@ -964,6 +1057,7 @@ function ensureClassSectionSelects() {
         classSelect = document.createElement('select');
         classSelect.id = 'update_class';
         classSelect.className = 'form-select form-select-sm fw-normal';
+        classSelect.setAttribute('aria-label', 'Class');
         classEl.replaceWith(classSelect);
     }
 
@@ -972,6 +1066,7 @@ function ensureClassSectionSelects() {
         sectionSelect = document.createElement('select');
         sectionSelect.id = 'update_section';
         sectionSelect.className = 'form-select form-select-sm fw-normal';
+        sectionSelect.setAttribute('aria-label', 'Section');
         sectionEl.replaceWith(sectionSelect);
     }
 
@@ -979,6 +1074,14 @@ function ensureClassSectionSelects() {
 }
 
 function restoreClassSectionReadOnlyFields() {
+    const branchSelect = document.getElementById('update_branch');
+    if (branchSelect) {
+        const branchValue = document.createElement('div');
+        branchValue.id = 'view_branch';
+        branchValue.className = 'fw-bold';
+        branchValue.textContent = '...';
+        branchSelect.replaceWith(branchValue);
+    }
     const classSelect = document.getElementById('update_class');
     if (classSelect) {
         const classValue = document.createElement('div');
@@ -1008,13 +1111,28 @@ function setupClassSectionControls(lookups, details) {
     const sections = lookups.sections || [];
     const { classSelect, sectionSelect } = controls;
     const programId = details.program_id ? String(details.program_id) : '';
+    let branchSelect = null;
+    const branchEl = document.getElementById('view_branch');
+    if (!currentApplicationPlacement && branchEl) {
+        branchSelect = document.createElement('select');
+        branchSelect.id = 'update_branch';
+        branchSelect.className = 'form-select form-select-sm fw-normal';
+        branchSelect.setAttribute('aria-label', 'Branch');
+        branchEl.replaceWith(branchSelect);
+        setSelectOptions(branchSelect, lookups.branches || [], 'Select Branch', 'branch_id', item => item.branch_name);
+        branchSelect.value = details.branch_id || '';
+    }
 
-    const availableClasses = classes.filter(item => {
-        const status = (item.status || '').toLowerCase();
-        const matchesProgram = !programId || String(item.program_id) === programId;
-        const matchesBranch = !details.branch_id || String(item.branch_id) === String(details.branch_id);
-        return matchesProgram && matchesBranch && (!status || status === 'open' || status === 'active');
-    });
+    const renderClasses = () => {
+        const branchId = branchSelect ? branchSelect.value : details.branch_id;
+        const availableClasses = classes.filter(item => {
+            const status = (item.status || '').toLowerCase();
+            const matchesProgram = !programId || String(item.program_id) === programId;
+            const matchesBranch = branchId && String(item.branch_id) === String(branchId);
+            return matchesProgram && matchesBranch && (!status || status === 'open' || status === 'active');
+        });
+        setSelectOptions(classSelect, availableClasses, branchId ? 'Select Class' : 'Select Branch First', 'class_id', formatClassLabel);
+    };
 
     const renderSections = selectedClassId => {
         const availableSections = sections.filter(item => {
@@ -1025,7 +1143,7 @@ function setupClassSectionControls(lookups, details) {
         setSelectOptions(sectionSelect, availableSections, selectedClassId ? 'Select Section' : 'Select Class First', 'section_id', item => item.section_name || `Section ${item.section_id}`);
     };
 
-    setSelectOptions(classSelect, availableClasses, 'Select Class', 'class_id', formatClassLabel);
+    renderClasses();
 
     const currentClassId = getCurrentClassId(details);
     if (currentClassId && !classSelect.querySelector(`option[value="${currentClassId}"]`)) {
@@ -1054,6 +1172,14 @@ function setupClassSectionControls(lookups, details) {
         if (teacherEl) teacherEl.innerText = 'Not assigned';
         if (scheduleEl) scheduleEl.innerText = 'Not set';
     };
+
+    if (branchSelect) {
+        branchSelect.onchange = () => {
+            renderClasses();
+            classSelect.value = '';
+            classSelect.onchange();
+        };
+    }
 
     sectionSelect.onchange = () => {
         const selected = sections.find(item => String(item.section_id) === String(sectionSelect.value));
@@ -1112,7 +1238,9 @@ window.viewPrePlayDetails = function(id, viewOnly = true, applicationPlacement =
             if (modalTitle) {
                 modalTitle.innerHTML = currentApplicationPlacement
                     ? '<span class="preplay-modal-title-icon" aria-hidden="true"><i class="bi bi-diagram-3"></i></span>Assign Class &amp; Section'
-                    : '<span class="preplay-modal-title-icon" aria-hidden="true"><i class="bi bi-person"></i></span>Manage Enrollment';
+                    : (currentViewOnly
+                        ? '<span class="preplay-modal-title-icon" aria-hidden="true"><i class="bi bi-person"></i></span>Manage Enrollment'
+                        : '<span class="preplay-modal-title-icon" aria-hidden="true"><i class="bi bi-pencil-square"></i></span>Edit Branch, Class &amp; Section');
             }
 
             const teachers = resLookup.data.teachers || [];
@@ -1218,6 +1346,7 @@ window.viewPrePlayDetails = function(id, viewOnly = true, applicationPlacement =
 
             // Show Modal
             console.log('Showing modal');
+            appendAgreementLink(document.querySelector('#viewEnrollmentModal .modal-body'), d.enrollment_details_id);
             const modalElement = document.getElementById('viewEnrollmentModal');
             if (modalElement) {
                 const modal = new bootstrap.Modal(modalElement);
@@ -1392,6 +1521,7 @@ window.savePrePlayEnrollmentUpdates = function() {
 
     const id = document.getElementById('update_enrollment_id')?.value || currentEnrollmentDetails?.enrollment_details_id;
     const teacherSelect = document.getElementById('update_teacher');
+    const branchSelect = document.getElementById('update_branch');
     const classSelect = document.getElementById('update_class');
     const sectionSelect = document.getElementById('update_section');
     const saveButton = document.querySelector('#viewEnrollmentModal .modal-footer .btn-primary');
@@ -1404,18 +1534,22 @@ window.savePrePlayEnrollmentUpdates = function() {
         ? (teacherSelect.value || currentEnrollmentDetails?.preferred_teacher || null)
         : (currentEnrollmentDetails?.preferred_teacher || null);
     const classId = classSelect
-        ? (classSelect.value || getCurrentClassId(currentEnrollmentDetails || {}))
+        ? classSelect.value
         : getCurrentClassId(currentEnrollmentDetails || {});
     const sectionId = sectionSelect
-        ? (sectionSelect.value || currentEnrollmentDetails?.section_id || null)
+        ? sectionSelect.value
         : (currentEnrollmentDetails?.section_id || null);
+    const branchId = branchSelect ? branchSelect.value : currentEnrollmentDetails?.branch_id;
 
     if (!id) {
         return Swal.fire("Error", "Enrollment ID is missing.", "error");
     }
+    if (branchSelect && !branchId) {
+        return Swal.fire('Branch Required', 'Select a branch for this enrollment.', 'warning');
+    }
 
-    if (currentApplicationPlacement && (!classId || !sectionId)) {
-        return Swal.fire('Class and Section Required', 'Select both a class and a section to complete this preschool enrollment.', 'warning');
+    if ((currentApplicationPlacement || canEditClassSection()) && (!classId || !sectionId)) {
+        return Swal.fire('Class and Section Required', 'Select both a class and a section for this preschool enrollment.', 'warning');
     }
     
     let summaryTime = editSchedules.length > 0 
@@ -1453,8 +1587,13 @@ window.savePrePlayEnrollmentUpdates = function() {
             return axios.post('../../api/enrollment_application.php', body);
         })()
         : axios.post("../../api/admin/enrollment.php", {
-            operation: "updateEnrollment",
-            json: JSON.stringify(data)
+            operation: canEditClassSection() ? "updatePrePlayPlacement" : "updateEnrollment",
+            json: JSON.stringify(canEditClassSection() ? {
+                enrollment_details_id: id,
+                branch_id: branchId,
+                class_id: classId,
+                section_id: sectionId
+            } : data)
         });
 
     request.then(res => {
@@ -1535,14 +1674,16 @@ function openPrePlayPaymentHistoryModal(enrollment_details_id, viewOnly = false)
 
         const statusLabel = enrollmentStatus ? enrollmentStatus.toUpperCase() : 'UNKNOWN';
         const normalizedEnrollmentStatus = enrollmentStatus.toLowerCase();
-        const enrollmentStatusTone = ['enrolled', 'received', 'complete', 'completed', 'active'].includes(normalizedEnrollmentStatus)
-            ? 'success'
+        const enrollmentStatusTone = ['complete', 'completed'].includes(normalizedEnrollmentStatus)
+            ? 'completed'
+            : ['enrolled', 'received', 'active'].includes(normalizedEnrollmentStatus)
+                ? 'success'
             : ['pending', 'incomplete'].includes(normalizedEnrollmentStatus)
                 ? 'pending'
                 : ['declined', 'cancelled', 'canceled'].includes(normalizedEnrollmentStatus)
                     ? 'danger'
                     : 'neutral';
-        const enrollmentStatusIcon = enrollmentStatusTone === 'success'
+        const enrollmentStatusIcon = ['success', 'completed'].includes(enrollmentStatusTone)
             ? 'bi-check-circle'
             : enrollmentStatusTone === 'pending'
                 ? 'bi-clock'
@@ -1614,7 +1755,7 @@ function openPrePlayPaymentHistoryModal(enrollment_details_id, viewOnly = false)
             const amountValue = totalAmountPaid.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             const canReviewPendingPayment = showActions && payment.payment_status === 'Pending';
             const screenshotHtml = payment.payment_screenshot_path
-                ? `<img src="${resolvePaymentProofUrl(payment.payment_screenshot_path)}" alt="GCash payment screenshot" class="img-fluid rounded-3" style="max-height: 420px; object-fit: contain;">`
+                ? `<img src="${resolvePaymentProofUrl(payment.payment_screenshot_path)}" alt="Payment screenshot" class="img-fluid rounded-3" style="max-height: 420px; object-fit: contain;">`
                 : '<div class="text-muted py-5">No payment screenshot was uploaded for this record.</div>';
 
             Swal.fire({
@@ -1632,7 +1773,7 @@ function openPrePlayPaymentHistoryModal(enrollment_details_id, viewOnly = false)
                 reverseButtons: true,
                 html: `
                     <div class="text-start">
-                        <label class="form-label fw-bold text-secondary small mb-1">GCash Payment Screenshot</label>
+                        <label class="form-label fw-bold text-secondary small mb-1">Payment Screenshot</label>
                         <div class="border rounded-3 p-2 bg-light text-center mb-3">
                             ${screenshotHtml}
                         </div>
@@ -1644,7 +1785,7 @@ function openPrePlayPaymentHistoryModal(enrollment_details_id, viewOnly = false)
                             </div>
                         </div>
                         <div>
-                            <label class="form-label fw-bold text-secondary small mb-1">GCash Reference Number</label>
+                            <label class="form-label fw-bold text-secondary small mb-1">Reference Number</label>
                             <input type="text" class="form-control" value="${payment.reference_no || ''}" readonly>
                         </div>
                     </div>

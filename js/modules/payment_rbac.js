@@ -8,7 +8,8 @@ const DEFAULT_PAYMENT_PERMISSIONS = {
     approve: true,
     export: true,
     view_assessment: true,
-    manage_assessment: true
+    manage_assessment: true,
+    adjust_penalty: false
 };
 
 let currentPaymentRole = '';

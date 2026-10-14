@@ -31,6 +31,10 @@ function getPasswordModalTemplate() {
                                     <input type="text" class="form-control" id="passwordUsername" placeholder="Enter new username" required>
                                 </div>
                                 <div class="col-md-12">
+                                    <label class="form-label">Current Password</label>
+                                    <input type="password" class="form-control" id="passwordCurrent" autocomplete="current-password" required>
+                                </div>
+                                <div class="col-md-12">
                                     <label class="form-label">New Password</label>
                                     ${getPasswordInputMarkup({
                                         inputId: 'passwordNew',
@@ -63,16 +67,16 @@ function getPasswordModalTemplate() {
     `;
 }
 
-export function setupPasswordModal(profileData) {
+export function setupPasswordModal(profileData, onComplete) {
     const passwordBtn = document.getElementById('passwordStudentProfileBtn');
     if (!passwordBtn) return;
 
     passwordBtn.addEventListener('click', () => {
-        openPasswordModal(profileData);
+        openPasswordModal(profileData, onComplete);
     });
 }
 
-function openPasswordModal(profileData) {
+function openPasswordModal(profileData, onComplete) {
     const usernameInput = document.getElementById('passwordUsername');
     const newPasswordInput = document.getElementById('passwordNew');
     const confirmPasswordInput = document.getElementById('passwordConfirm');
@@ -83,6 +87,7 @@ function openPasswordModal(profileData) {
 
     usernameInput.value = profileData.username || profileData.email || '';
     newPasswordInput.value = '';
+    document.getElementById('passwordCurrent').value = '';
     confirmPasswordInput.value = '';
 
     const modalElement = document.getElementById('changePasswordModal');
@@ -100,18 +105,19 @@ function openPasswordModal(profileData) {
         saveButton
     });
 
-    saveButton.onclick = () => handleSavePassword(profileData.student_id);
+    saveButton.onclick = () => handleSavePassword(profileData.student_id, onComplete);
 
     const modal = new bootstrap.Modal(modalElement);
     modal.show();
 }
 
-function handleSavePassword(studentId) {
+function handleSavePassword(studentId, onComplete) {
     const username = document.getElementById('passwordUsername')?.value.trim();
     const newPassword = document.getElementById('passwordNew')?.value.trim();
+    const currentPassword = document.getElementById('passwordCurrent')?.value;
     const confirmPassword = document.getElementById('passwordConfirm')?.value.trim();
 
-    if (!username || !newPassword || !confirmPassword) {
+    if (!username || !currentPassword || !newPassword || !confirmPassword) {
         Swal.fire('Required fields', 'Please complete all fields before saving.', 'warning');
         return;
     }
@@ -136,6 +142,7 @@ function handleSavePassword(studentId) {
             student_id: studentId,
             username,
             new_password: newPassword,
+            current_password: currentPassword,
             confirm_password: confirmPassword
         })
     })
@@ -146,6 +153,7 @@ function handleSavePassword(studentId) {
             const modalElement = document.getElementById('changePasswordModal');
             const modalInstance = bootstrap.Modal.getInstance(modalElement);
             modalInstance?.hide();
+            onComplete?.(res);
         } else {
             Swal.fire('Error', res.message || 'Unable to update password.', 'error');
         }

@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/security/AuthGuard.php';
+AuthGuard::requireUser();
+
 header('Content-Type: application/json');
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -33,11 +36,34 @@ class NotificationAPI {
         }
 
         $stmt = $this->conn->prepare("
-            SELECT notification_id, title, message, is_read, created_at
+            SELECT notification_id, title, message, is_read, created_at, dismissed_at
+            FROM notification
+            WHERE user_id = :user_id AND user_type IN (:user_type, :alternate_user_type)
+              AND dismissed_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT 100
+        ");
+        $stmt->execute($this->identityParams());
+        $notifications = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        echo json_encode([
+            'status' => 'success',
+            'data' => $notifications,
+            'count' => count($notifications)
+        ]);
+    }
+
+    public function getNotificationHistory() {
+        if (!$this->isAuthenticated()) {
+            $this->respondUnauthorized();
+            return;
+        }
+
+        $stmt = $this->conn->prepare("
+            SELECT notification_id, title, message, is_read, created_at, dismissed_at
             FROM notification
             WHERE user_id = :user_id AND user_type IN (:user_type, :alternate_user_type)
             ORDER BY created_at DESC
-            LIMIT 100
         ");
         $stmt->execute($this->identityParams());
         $notifications = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -91,7 +117,7 @@ class NotificationAPI {
         echo json_encode(['status' => 'success', 'message' => 'Notifications marked as read']);
     }
 
-    public function deleteNotification($json) {
+    public function dismissNotification($json) {
         $data = json_decode($json, true) ?: [];
         $notificationId = intval($data['notification_id'] ?? 0);
 
@@ -101,7 +127,8 @@ class NotificationAPI {
         }
 
         $stmt = $this->conn->prepare("
-            DELETE FROM notification
+            UPDATE notification
+            SET dismissed_at = COALESCE(dismissed_at, NOW()), is_read = 1
             WHERE notification_id = :notification_id
               AND user_id = :user_id
               AND user_type IN (:user_type, :alternate_user_type)
@@ -111,7 +138,7 @@ class NotificationAPI {
             $this->identityParams()
         ));
 
-        echo json_encode(['status' => 'success', 'message' => 'Notification deleted']);
+        echo json_encode(['status' => 'success', 'message' => 'Notification dismissed']);
     }
 
     private function identityParams() {
@@ -140,6 +167,9 @@ switch ($operation) {
     case 'getNotifications':
         $notifications->getNotifications();
         break;
+    case 'getNotificationHistory':
+        $notifications->getNotificationHistory();
+        break;
     case 'markAsRead':
     case 'updateNotification':
         $notifications->markAsRead($json);
@@ -148,7 +178,8 @@ switch ($operation) {
         $notifications->markAllAsRead();
         break;
     case 'deleteNotification':
-        $notifications->deleteNotification($json);
+    case 'dismissNotification':
+        $notifications->dismissNotification($json);
         break;
     default:
         echo json_encode(['status' => 'error', 'message' => 'Invalid operation']);

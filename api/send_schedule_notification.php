@@ -1,19 +1,16 @@
 <?php
+require_once __DIR__ . '/security/AuthGuard.php';
+AuthGuard::requireUser();
+
 
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
-
-require 'PHPMailer/src/Exception.php';
-require 'PHPMailer/src/PHPMailer.php';
-require 'PHPMailer/src/SMTP.php';
-include "admin/connection-pdo.php";
+include __DIR__ . '/admin/connection-pdo.php';
+require_once __DIR__ . '/email_service.php';
 require_once __DIR__ . '/notification_helper.php';
 require_once __DIR__ . '/app_url_helper.php';
 
@@ -28,36 +25,9 @@ class SendScheduleNotification {
     }
 
     private function sendEmail($to, $subject, $message) {
-        $mail = new PHPMailer(true);
-        try {
-            $mail->isSMTP();
-            $mail->Host       = 'smtp.gmail.com';
-            $mail->SMTPAuth   = true;
-            $mail->Username   = 'espinosapaul810@gmail.com';
-            $mail->Password   = 'yjds vbuo gxas knkm';
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port       = 587;
-
-            $mail->SMTPOptions = [
-                'ssl' => [
-                    'verify_peer' => false,
-                    'verify_peer_name' => false,
-                    'allow_self_signed' => true
-                ]
-            ];
-
-            $mail->setFrom('espinosapaul810@gmail.com', 'CDO Tutor Schedule Reminder');
-            $mail->addAddress($to);
-
-            $mail->isHTML(true);
-            $mail->Subject = $subject;
-            $mail->Body    = $message;
-
-            return $mail->send();
-        } catch (Exception $e) {
-            error_log("Email sending failed: " . $mail->ErrorInfo);
-            return false;
-        }
+        return (new EmailService($this->conn))->send($to, $subject, $message, [
+            'from_name' => 'CDO Tutor Schedule Reminder'
+        ]);
     }
 
     private function getSchedule($enrollmentDetailsId, $scheduleDate) {
@@ -75,7 +45,7 @@ class SendScheduleNotification {
                 throw new \Exception('Unauthorized');
             }
 
-            $accessSql = ' AND ed.preferred_teacher = :employee_id';
+            $accessSql = ' AND COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = :employee_id';
             $params[':employee_id'] = $employeeId;
         } elseif ($role === 'branch admin') {
             $branchId = intval($_SESSION['branch_id'] ?? 0);
@@ -109,7 +79,7 @@ class SendScheduleNotification {
                     TRIM(CONCAT_WS(' ', s.first_name, s.last_name, NULLIF(TRIM(s.ext), ''))) AS student_name,
                     s.email AS student_email,
                     CONCAT(t.first_name, ' ', t.last_name) AS teacher_name,
-                    ed.preferred_teacher AS teacher_id,
+                    COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) AS teacher_id,
                     t.email AS teacher_email,
                     b.branch_name
                 FROM enrollment_preferred_schedule eps
@@ -118,7 +88,7 @@ class SendScheduleNotification {
                 LEFT JOIN program p ON ed.program_id = p.program_id
                 LEFT JOIN subject sub ON ed.subject_id = sub.subject_id
                 LEFT JOIN student s ON eh.student_id = s.student_id
-                LEFT JOIN employee t ON ed.preferred_teacher = t.employee_id
+                LEFT JOIN employee t ON COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = t.employee_id
                 LEFT JOIN branch b ON eh.branch_id = b.branch_id
                 WHERE eps.enrollment_details_id = :enrollment_id
                   AND eps.date = :schedule_date
@@ -133,17 +103,16 @@ class SendScheduleNotification {
     }
 
     private function buildRescheduleUrl($enrollmentDetailsId, $scheduleDate, $studentEmail) {
-        $token = $this->generateRescheduleToken($enrollmentDetailsId, $scheduleDate, $studentEmail);
-        return cdoBuildAppUrl('api/reschedule_confirm.php?enrollment_details_id=' . urlencode($enrollmentDetailsId) . '&schedule_date=' . urlencode($scheduleDate) . '&token=' . urlencode($token));
-    }
-
-    private function generateRescheduleToken($enrollmentDetailsId, $scheduleDate, $studentEmail) {
-        $secret = 'cdo_tutor_reschedule_secret_2026';
-        return hash_hmac('sha256', $enrollmentDetailsId . '|' . $scheduleDate . '|' . $studentEmail, $secret);
+        require_once __DIR__ . '/security/ScheduleActionToken.php';
+        return cdoBuildAppUrl('api/reschedule_confirm.php?enrollment_details_id=' . urlencode($enrollmentDetailsId)
+            . '&schedule_date=' . urlencode($scheduleDate)
+            . '&' . ScheduleActionToken::rescheduleQuery((int) $enrollmentDetailsId, $scheduleDate, $studentEmail));
     }
 
     private function buildConfirmUrl($enrollmentDetailsId, $scheduleDate) {
-        return cdoBuildAppUrl('api/schedule_confirm.php?enrollment_details_id=' . urlencode($enrollmentDetailsId) . '&schedule_date=' . urlencode($scheduleDate));
+        require_once __DIR__ . '/security/ScheduleActionToken.php';
+        return cdoBuildAppUrl('api/schedule_confirm.php?enrollment_details_id=' . urlencode($enrollmentDetailsId)
+            . '&schedule_date=' . urlencode($scheduleDate) . '&' . ScheduleActionToken::query((int) $enrollmentDetailsId, $scheduleDate));
     }
 
     private function buildStudentEmailContent($schedule, $confirmUrl = '', $rescheduleUrl = '') {
@@ -272,6 +241,19 @@ class SendScheduleNotification {
     }
 
     public function handle() {
+        try {
+            return $this->processRequest();
+        } catch (Throwable $error) {
+            error_log('Schedule notification failed: ' . $error->getMessage());
+            http_response_code(500);
+            $message = $error->getMessage() === 'Schedule signing key is unavailable.'
+                ? 'Schedule email could not be sent because CDO_TUTOR_SECRET_KEY is missing or invalid on the hosting server. Configure a base64-encoded 32-byte key in api/config/runtime.local.php. Preserve the existing key if one is already in use.'
+                : 'The schedule notification could not be completed. Check the server PHP error log for details before retrying.';
+            return ['success' => false, 'message' => $message];
+        }
+    }
+
+    private function processRequest() {
         $payload = json_decode(file_get_contents('php://input'), true);
         if (!is_array($payload)) {
             return ['success' => false, 'message' => 'Invalid request body'];
@@ -285,6 +267,8 @@ class SendScheduleNotification {
 
         try {
             $schedule = $this->getSchedule($enrollmentDetailsId, $scheduleDate);
+        } catch (PDOException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return ['success' => false, 'message' => $e->getMessage()];
         }
@@ -332,12 +316,18 @@ class SendScheduleNotification {
         }
 
         if (empty($recipients) && $inAppRecipients === 0) {
-            return ['success' => false, 'message' => 'Notification could not be sent to any recipient'];
+            return ['success' => false, 'message' => 'No email or in-app notification could be delivered. Check the recipient addresses, owner Gmail app password, and SMTP settings on the hosting server.'];
         }
+
+        $expectedEmails = (int) !empty($schedule['student_email']) + (int) !empty($schedule['teacher_email']);
+        $emailWarning = count($recipients) < $expectedEmails || empty($recipients);
 
         return [
             'success' => true,
-            'message' => 'Notification sent successfully',
+            'message' => $emailWarning
+                ? 'In-app notifications or some emails were delivered, but email delivery is incomplete. Check the owner email, Gmail app password, and SMTP settings on the hosting server.'
+                : 'Notification sent successfully',
+            'email_warning' => $emailWarning,
             'recipients' => $recipients,
             'in_app_recipients' => $inAppRecipients
         ];

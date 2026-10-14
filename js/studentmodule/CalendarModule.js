@@ -130,7 +130,6 @@ export default class CalendarModule {
         const subjectSelect = document.getElementById('schedule-subject-filter');
         const teacherSelect = document.getElementById('schedule-teacher-filter');
         const typeSelect = document.getElementById('schedule-type-filter');
-        const applyButton = document.getElementById('schedule-apply-filters');
         let searchTimer;
 
         const refresh = () => {
@@ -149,7 +148,6 @@ export default class CalendarModule {
         });
         [statusSelect, subjectSelect, teacherSelect, typeSelect]
             .forEach(select => select?.addEventListener('change', refresh));
-        applyButton?.addEventListener('click', refresh);
     }
 
     setScheduleFilterOptions(selectId, values, placeholder) {
@@ -285,7 +283,7 @@ export default class CalendarModule {
                     </button>
                 ` : ''}
                 ${s.allowNotification ? `
-                    <div style="position:absolute; top:12px; right:88px; width:32px; height:32px; border-radius:10px; background:#f8fafc; display:flex; align-items:center; justify-content:center; color:#2563eb; font-size:1rem; cursor:pointer; transition: all 0.2s ease;" title="Send Notification" onclick="event.stopPropagation(); sendScheduleNotification(${s.enrollment_details_id || 0}, '${s.date}')">
+                    <div style="position:absolute; top:12px; right:88px; width:32px; height:32px; border-radius:10px; background:#f8fafc; display:flex; align-items:center; justify-content:center; color:#2563eb; font-size:1rem; cursor:pointer; transition: all 0.2s ease;" title="Send Notification" data-schedule-status="${this.escapeHtml(s.status)}" onclick="event.stopPropagation(); sendScheduleNotification(${s.enrollment_details_id || 0}, '${s.date}', this.dataset.scheduleStatus)">
                         <i class="bi bi-envelope"></i>
                     </div>
                 ` : ''}
@@ -614,7 +612,17 @@ export default class CalendarModule {
 }
 
 // Global function for sending schedule notifications
-window.sendScheduleNotification = async function(enrollmentDetailsId, scheduleDate) {
+window.sendScheduleNotification = async function(enrollmentDetailsId, scheduleDate, scheduleStatus) {
+    if (String(scheduleStatus || '').trim().toLowerCase() === 'done') {
+        Swal.fire({
+            icon: 'info',
+            title: 'Session Already Done',
+            text: 'This session is already done. There is no need to send an email notification.',
+            confirmButtonText: 'OK'
+        });
+        return;
+    }
+
     // Validate inputs - allow 0 for ID, but check for null/undefined
     if (enrollmentDetailsId == null || !scheduleDate || (typeof scheduleDate === 'string' && scheduleDate.trim() === '')) {
         Swal.fire({
@@ -673,9 +681,9 @@ window.sendScheduleNotification = async function(enrollmentDetailsId, scheduleDa
                 }
 
                 Swal.fire({
-                    icon: 'success',
-                    title: 'Notification Sent!',
-                    text: recipientText,
+                    icon: result.email_warning ? 'warning' : 'success',
+                    title: result.email_warning ? 'Email Delivery Incomplete' : 'Notification Sent!',
+                    text: result.email_warning ? result.message : recipientText,
                     confirmButtonText: 'OK'
                 });
             } else {

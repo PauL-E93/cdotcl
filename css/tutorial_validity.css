@@ -1,0 +1,61 @@
+.tutorial-validity-card,
+.tutorial-validity-modal {
+    --validity-pink: var(--primary-pink, #ea9aa6);
+    --validity-dark-pink: var(--dark-pink, #d7768e);
+    --validity-soft: var(--soft-pink, #f9e7ec);
+    color: #292329;
+}
+.tutorial-validity-card {
+    margin-top: 18px;
+    padding: 20px;
+    border: 1px solid #efd1d9;
+    border-radius: 12px;
+    background: #fff;
+}
+.tutorial-validity-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.tutorial-validity-heading { display: flex; align-items: center; gap: 12px; }
+.tutorial-validity-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; background: var(--validity-soft); color: #a44d65; font-size: 20px; flex-shrink: 0; }
+.tutorial-validity-title { margin: 0; font-size: 16px; font-weight: 700; }
+.tutorial-validity-subtitle { margin: 3px 0 0; color: #716771; font-size: 12px; }
+.tutorial-validity-badge { display: inline-block; margin-left: 8px; padding: 4px 9px; border-radius: 20px; background: var(--validity-soft); color: #8f4057; font-size: 11px; font-weight: 600; vertical-align: middle; }
+.tutorial-validity-badge.expired { background: #fce8e8; color: #aa3945; }
+.tutorial-validity-badge.review { background: #fff2dc; color: #8c651f; }
+.tutorial-validity-card .tutorial-validity-button,
+.tutorial-validity-modal .tutorial-validity-save {
+    border: 1px solid var(--validity-pink);
+    border-radius: 8px;
+    padding: 9px 15px;
+    background: var(--validity-pink);
+    color: #332128;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.tutorial-validity-card .tutorial-validity-button:hover,
+.tutorial-validity-modal .tutorial-validity-save:hover { background: var(--validity-dark-pink); border-color: var(--validity-dark-pink); color: #fff; }
+.tutorial-validity-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+.tutorial-validity-field { padding: 14px; border-radius: 9px; background: #fff8fa; border: 1px solid #f5e3e9; }
+.tutorial-validity-field span { display: block; font-size: 11px; color: #776672; margin-bottom: 6px; }
+.tutorial-validity-field strong { display: block; font-size: 13px; font-weight: 600; }
+.tutorial-validity-note { margin: 13px 0 0; color: #716771; font-size: 12px; line-height: 1.6; }
+.tutorial-validity-history { margin-top: 16px; padding-top: 14px; border-top: 1px solid #f1e2e7; font-size: 12px; }
+.tutorial-validity-history summary { cursor: pointer; color: #a44d65; font-weight: 600; }
+.tutorial-validity-history ul { padding-left: 18px; margin: 10px 0 0; }
+.tutorial-validity-history li { margin-bottom: 9px; line-height: 1.6; overflow-wrap: anywhere; }
+.tutorial-validity-modal.swal2-popup { border-radius: 16px; padding: 24px; }
+.tutorial-validity-modal .swal2-title { font-size: 22px; color: #332128; }
+.tutorial-validity-modal .swal2-html-container { margin: 18px 0 0; text-align: left; font-size: 14px; }
+.tutorial-validity-modal .form-label { font-size: 13px; color: #66535d; font-weight: 600; }
+.tutorial-validity-modal .form-control { border: 1px solid #ead7de; border-radius: 8px; padding: 11px 12px; font-size: 14px; background-color: #fff; }
+.tutorial-validity-modal .form-control:focus { border-color: var(--validity-pink); box-shadow: 0 0 0 3px #f9e7ec; }
+.tutorial-validity-modal .tutorial-validity-cancel { border: 1px solid #e6dbe0; border-radius: 8px; padding: 9px 15px; background: #fff; color: #66535d; font-size: 13px; cursor: pointer; }
+.tutorial-validity-modal .swal2-actions { gap: 10px; }
+.tutorial-validity-date { position: relative; margin-bottom: 16px; }
+.tutorial-validity-date input[type="date"] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+.tutorial-validity-date:focus-within { border-radius: 8px; outline: 2px solid var(--validity-pink); outline-offset: 2px; }
+.tutorial-validity-date .bi { position: absolute; right: 13px; top: 12px; color: #a44d65; pointer-events: none; }
+.tutorial-validity-date .form-control { padding-right: 38px; }
+.tutorial-validity-modal .tutorial-validity-window { padding: 12px; margin-bottom: 16px; border-radius: 8px; background: var(--validity-soft); color: #8f4057; font-size: 12px; }
+.tutorial-validity-modal .alert-info { background: var(--validity-soft); border-color: #efd1d9; color: #8f4057; }
+.tutorial-validity-modal .card.bg-light { background: #fff8fa !important; border-color: #efd1d9; border-radius: 12px; }
+@media (max-width: 600px) { .tutorial-validity-grid { grid-template-columns: 1fr; } .tutorial-validity-card { padding: 16px; } .tutorial-validity-header .tutorial-validity-button { width: 100%; } }

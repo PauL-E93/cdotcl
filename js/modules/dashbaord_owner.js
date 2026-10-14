@@ -1,3 +1,4 @@
+import { birthdayToday, birthdayPeriod, birthdayRows } from '../utilities/student_birthdays.js';
 import { startAutoRefresh } from '../utilities/auto_refresh.js';
 
 const ENDPOINT = '../../api/owner/dashboard.php';
@@ -6,7 +7,7 @@ const DASHBOARD_REFRESH_MS = 15000;
 const state = {
     branchPerformance: [], branches: [], enrollmentTrend: [], programEnrollments: [], paymentTrend: [],
     paymentOverview: [], pendingPayments: [], recentEmployees: [], recentEnrollments: [],
-    summaryAll: {}
+    studentBirthdays: [], summaryAll: {}, loaded: false
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -16,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('owner-program-period')?.addEventListener('change', renderProgramEnrollments);
     document.getElementById('owner-payment-period')?.addEventListener('change', renderPaymentOverview);
     document.getElementById('owner-center-period')?.addEventListener('change', renderBranchPerformance);
+    document.getElementById('owner-birthday-period')?.addEventListener('change', renderBirthdays);
     setupDashboardModals();
     loadDashboard();
     startAutoRefresh({ callback: loadDashboard, intervalMs: DASHBOARD_REFRESH_MS });
@@ -36,7 +38,10 @@ async function loadDashboard() {
         state.pendingPayments = payload.pending_payments || [];
         state.recentEmployees = payload.recent_employees || [];
         state.recentEnrollments = payload.recent_enrollments || [];
+        state.studentBirthdays = payload.student_birthdays || [];
         state.summaryAll = payload.summary_all || {};
+        state.loaded = true;
+        document.getElementById('owner-dashboard-error').textContent = '';
         populateBranchFilter();
         renderAll();
     } catch (error) {
@@ -49,12 +54,14 @@ async function loadDashboard() {
 function populateBranchFilter() {
     const select = document.getElementById('owner-branch-filter');
     if (!select) return;
-    const hasUnassigned = [state.paymentOverview, state.pendingPayments, state.recentEmployees, state.recentEnrollments, state.enrollmentTrend]
+    const selected = select.value;
+    const hasUnassigned = [state.paymentOverview, state.pendingPayments, state.recentEmployees, state.recentEnrollments, state.enrollmentTrend, state.studentBirthdays]
         .some(rows => rows.some(row => branchId(row.branch_id) === 'unassigned'));
     select.innerHTML = ['<option value="all">All Centers</option>',
         ...state.branches.map(branch => `<option value="${escapeHtml(branch.branch_id)}">${escapeHtml(String(branch.branch_name || '').trim())}</option>`),
         hasUnassigned ? '<option value="unassigned">Unassigned Center</option>' : ''
     ].join('');
+    if (Array.from(select.options).some(option => option.value === selected)) select.value = selected;
 }
 
 function renderAll() {
@@ -65,7 +72,33 @@ function renderAll() {
     renderBranchPerformance();
     renderRecentEnrollments();
     renderPendingPayments();
+    renderBirthdays();
     configureDashboardTriggers();
+}
+
+function renderBirthdays() {
+    const element = document.getElementById('owner-student-birthdays');
+    if (!element) return;
+    const period = document.getElementById('owner-birthday-period')?.value || 'month';
+    const today = birthdayToday();
+    const { start, end } = birthdayPeriod(period, today);
+    const format = date => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const label = period === 'year' ? String(today.getFullYear()) : period === 'month'
+        ? today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        : period === 'week' ? `${format(start)} - ${format(end)} (Mon-Sun)` : format(today);
+    setText('owner-birthday-range', label);
+    const rows = birthdayRows(filterRows(state.studentBirthdays), period, today);
+    setText('owner-birthday-count', formatNumber(rows.length));
+    if (!state.loaded) {
+        element.innerHTML = emptyRow(4, 'Birthdays could not be loaded. Please refresh the page.');
+        return;
+    }
+    element.innerHTML = rows.length ? rows.map(row => `<tr>
+        <td>${escapeHtml(row.student_name || 'Unnamed Student')}${row.isToday ? '<span class="owner-birthday-today">Today</span>' : ''}</td>
+        <td>${escapeHtml(row.birth.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}</td>
+        <td>${formatNumber(row.age)}</td>
+        <td>${escapeHtml([...row.centers].join(', '))}</td>
+    </tr>`).join('') : emptyRow(4, 'No student birthdays for this period.');
 }
 
 function renderSummary() {

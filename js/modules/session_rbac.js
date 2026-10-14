@@ -1,6 +1,7 @@
 import { getResolvedRolePermissions, initRbacPermissions, normalizeRbacRoleKey } from "../utilities/rbac_navigation.js";
 
 const DEFAULT_SESSION_PERMISSIONS = {
+    correct_no_show: false,
     view: true,
     create: true,
     edit: true,

@@ -1,0 +1,229 @@
+:root {
+    --request-pink: #e85d88;
+    --request-pink-dark: #d74b78;
+    --request-soft: #fff1f6;
+    --request-border: #eadfe4;
+    --request-text: #172033;
+    --request-muted: #667085;
+}
+
+.enrollment-request-page {
+    color: var(--request-text);
+    padding-bottom: 56px;
+}
+
+.request-topbar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 28px;
+}
+
+.request-topbar h1 {
+    margin: 8px 0 6px;
+    font-size: clamp(1.8rem, 3vw, 2.5rem);
+    font-weight: 800;
+}
+
+.request-topbar p { margin: 0; color: var(--request-muted); }
+.request-back-link { color: var(--request-pink-dark); font-weight: 650; text-decoration: none; }
+.request-security-pill { display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; color: #176c51; background: #eaf9f3; border-radius: 999px; font-size: .86rem; font-weight: 700; white-space: nowrap; }
+
+.request-steps {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    margin-bottom: 24px;
+    overflow: hidden;
+    border: 1px solid var(--request-border);
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 10px 30px rgba(41, 24, 32, .06);
+}
+
+.request-step { display: flex; align-items: center; gap: 12px; padding: 18px 20px; color: #89909d; border-right: 1px solid var(--request-border); }
+.request-step:last-child { border-right: 0; }
+.request-step > span { display: grid; width: 34px; height: 34px; place-items: center; flex: 0 0 auto; border: 1px solid #d9dde5; border-radius: 50%; font-weight: 750; }
+.request-step div { display: grid; }
+.request-step strong { font-size: .94rem; }
+.request-step small { font-size: .76rem; }
+.request-step.active { color: var(--request-text); background: var(--request-soft); }
+.request-step.active > span { color: #fff; border-color: var(--request-pink); background: var(--request-pink); }
+.request-step.complete > span { color: #fff; border-color: #23906b; background: #23906b; }
+
+.request-card { padding: clamp(22px, 4vw, 38px); border: 1px solid var(--request-border); border-radius: 20px; background: #fff; box-shadow: 0 18px 48px rgba(62, 37, 48, .08); }
+.request-section-heading { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 28px; padding-bottom: 22px; border-bottom: 1px solid #edf0f4; }
+.request-section-heading p, .request-eyebrow { margin: 0 0 3px; color: var(--request-pink-dark); font-size: .75rem; font-weight: 800; letter-spacing: .1em; }
+.request-section-heading h2 { margin: 0 0 5px; font-size: 1.45rem; font-weight: 780; }
+.request-section-heading small { color: var(--request-muted); }
+.request-heading-icon { display: grid; width: 48px; height: 48px; place-items: center; flex: 0 0 auto; color: var(--request-pink-dark); background: var(--request-soft); border: 1px solid #f3cbd8; border-radius: 13px; font-size: 1.25rem; }
+
+.request-panel { padding: 22px; border: 1px solid var(--request-border); border-radius: 14px; background: #fff; }
+.request-panel h3 { margin: 0 0 18px; font-size: 1.05rem; font-weight: 750; }
+.request-panel .form-label { color: #344054; font-size: .87rem; font-weight: 650; }
+.request-panel .form-control, .request-panel .form-select { min-height: 46px; border-color: #d9dde5; }
+.request-panel .form-control:focus, .request-panel .form-select:focus { border-color: var(--request-pink); box-shadow: 0 0 0 .2rem rgba(232, 93, 136, .12); }
+
+.request-fee-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.request-fee-grid > div { display: grid; gap: 3px; padding: 15px; background: #f7f8fa; border-radius: 10px; }
+.request-fee-grid span { color: var(--request-muted); font-size: .8rem; }
+.request-fee-grid .accent { color: var(--request-pink-dark); background: var(--request-soft); }
+
+.request-payment-title { color: var(--request-pink) !important; }
+.request-gcash-account { display: grid; grid-template-columns: minmax(0, 1fr) 275px; gap: 28px; align-items: center; padding: 24px 26px; color: #253047; border: 1px solid #f3c7d4; border-radius: 14px; background: #fffafb; }
+.request-gcash-account:empty { display: none; }
+.request-payment-recipient { min-width: 0; }
+.request-payment-kicker { display: flex; align-items: center; gap: 8px; color: var(--request-pink); font-size: .78rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.request-payment-method { display: block; margin: 8px 0 20px; color: var(--request-text); font-size: 1.12rem; }
+.request-gcash-account dl { display: grid; gap: 14px; margin: 0; }
+.request-gcash-account dl div { display: grid; grid-template-columns: 145px minmax(0, 1fr); gap: 16px; align-items: center; }
+.request-gcash-account dt { color: var(--request-muted); font-size: .82rem; font-weight: 700; }
+.request-gcash-account dd { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0; color: var(--request-text); font-size: 1rem; font-weight: 750; }
+.request-copy-button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; color: var(--request-pink-dark); border: 1px solid #f2b8ca; border-radius: 8px; background: #fff; font-size: .78rem; font-weight: 700; }
+.request-copy-button:hover { color: #fff; border-color: var(--request-pink); background: var(--request-pink); }
+.request-payment-reminder { margin: 20px 0 0; color: var(--request-muted); font-size: .82rem; }
+.request-payment-reminder i { margin-right: 6px; }
+.request-qr-card { display: grid; min-height: 250px; align-content: center; justify-items: center; padding: 12px; border: 1px solid #f3c7d4; border-radius: 13px; background: #fff; }
+.request-gcash-account .request-qr-card img { width: auto; max-width: 100%; height: 210px; border-radius: 0; object-fit: contain; background: #fff; }
+.request-view-qr { display: inline-flex; align-items: center; gap: 5px; margin-top: 9px; padding: 0; color: var(--request-pink-dark); border: 0; background: transparent; font-size: .78rem; font-weight: 750; }
+.request-view-qr:hover { color: #b62d5b; text-decoration: underline; }
+.request-receipt-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin: 22px 0 16px; }
+.request-receipt-title { color: var(--request-text); font-size: 1rem; font-weight: 750; }
+.request-receipt-title span { display: inline-block; margin-left: 8px; padding: 4px 10px; color: var(--request-pink-dark); border: 1px solid #f2b8ca; border-radius: 999px; font-size: .73rem; }
+.request-receipt-heading p { max-width: 640px; margin: 7px 0 0; color: var(--request-muted); font-size: .9rem; line-height: 1.5; }
+.request-receipt-heading #requestReadReceipt { min-width: 180px; flex: 0 0 auto; font-weight: 700; }
+.request-upload { display: grid; min-height: 205px; place-items: center; align-content: center; padding: 30px 18px; color: var(--request-muted); border: 2px dashed var(--request-pink); border-radius: 12px; background: var(--request-soft); cursor: pointer; text-align: center; transition: border-color .2s ease, background-color .2s ease, transform .2s ease; }
+.request-upload:hover, .request-upload.dragover { border-color: var(--request-pink-dark); background: #ffe7f0; transform: translateY(-1px); }
+.request-upload input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.request-upload i { margin-bottom: 10px; color: var(--request-pink); font-size: 2.2rem; }
+.request-upload strong { color: var(--request-text); font-size: 1rem; }
+.request-upload span { margin-top: 6px; font-size: .86rem; }
+.request-upload small { margin-top: 12px; color: var(--request-muted); font-size: .75rem; }
+.request-ocr-status { margin: 10px 0 0; color: var(--request-muted); font-size: .8rem; }
+.request-proof-preview { max-width: 100%; max-height: 320px; border-radius: 10px; }
+
+.request-qr-popup { overflow: hidden !important; border: 1px solid #f3c7d4 !important; border-radius: 20px !important; }
+.request-qr-popup .swal2-html-container { margin: 0 24px !important; overflow: hidden !important; }
+.request-qr-modal { display: grid; justify-items: center; }
+.request-qr-modal img { display: block; width: auto; max-width: 100%; height: auto; max-height: 58vh; object-fit: contain; }
+.request-qr-modal p { margin: 14px 0 0; color: var(--request-muted); font-size: .92rem; }
+.request-qr-close { min-width: 120px; padding: 10px 22px; color: #fff; border: 0; border-radius: 8px; background: var(--request-pink); font-weight: 700; }
+.request-qr-close:hover { background: var(--request-pink-dark); }
+
+.request-side-note { display: flex; gap: 13px; padding: 20px; color: #744d5c; border: 1px solid #f1cfda; border-radius: 14px; background: var(--request-soft); }
+.request-side-note i { color: var(--request-pink-dark); font-size: 1.2rem; }
+.request-side-note p { margin: 6px 0 0; font-size: .9rem; line-height: 1.6; }
+.request-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 28px; padding-top: 22px; border-top: 1px solid #edf0f4; }
+.request-actions .btn { min-height: 45px; padding-inline: 22px; border-radius: 9px; font-weight: 650; }
+.request-actions .btn-primary, .request-success .btn-primary { border-color: var(--request-pink); background: var(--request-pink); }
+.request-actions .btn-primary:hover, .request-success .btn-primary:hover { border-color: var(--request-pink-dark); background: var(--request-pink-dark); }
+
+.request-payment-complete { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; padding: 15px 18px; color: #176c51; border: 1px solid #bce9d9; border-radius: 12px; background: #effbf7; }
+.request-payment-complete > i { font-size: 1.3rem; }
+.request-payment-complete div { display: grid; }
+.request-payment-complete span { font-size: .84rem; }
+.request-subjects { display: flex; flex-wrap: wrap; gap: 9px; padding: 10px; min-height: 46px; border: 1px solid #d9dde5; border-radius: 8px; }
+.request-subject-option { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; background: #f7f8fa; border-radius: 8px; cursor: pointer; font-size: .86rem; }
+.request-subject-option:has(input:checked) { color: var(--request-pink-dark); background: var(--request-soft); }
+.request-subject-option input { accent-color: var(--request-pink); }
+.request-subject-control { position: relative; }
+.request-subject-toggle { display: flex; width: 100%; min-height: 46px; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 13px; color: var(--request-text); border: 1px solid #d9dde5; border-radius: 8px; background: #fff; text-align: left; }
+.request-subject-toggle:hover, .request-subject-toggle:focus, .request-subject-toggle.open { border-color: var(--request-pink); box-shadow: 0 0 0 .2rem rgba(232, 93, 136, .12); outline: 0; }
+.request-subject-toggle > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.request-subject-toggle > i { flex: 0 0 auto; transition: transform .2s ease; }
+.request-subject-toggle.open > i { transform: rotate(180deg); }
+.request-subject-menu { position: absolute; z-index: 1070; top: calc(100% + 7px); right: 0; left: 0; max-height: 230px; overflow-y: auto; padding: 7px; border: 1px solid #d9dde5; border-radius: 9px; background: #fff; box-shadow: 0 16px 36px rgba(55, 38, 45, .15); }
+.request-subject-menu .request-subjects { display: grid; gap: 3px; min-height: 0; padding: 0; border: 0; }
+.request-subject-menu .request-subject-option { display: flex; width: 100%; padding: 10px 11px; }
+.request-subject-menu .request-subject-option:hover { background: var(--request-soft); }
+
+.request-availability-builder { display: grid; grid-template-columns: 1.1fr 1fr auto 1fr auto; gap: 10px; align-items: center; }
+.request-availability-list { display: flex; flex-wrap: wrap; gap: 9px; min-height: 54px; margin-top: 15px; padding: 12px; border: 1px solid #e3e6eb; border-radius: 10px; background: #fafbfc; }
+.request-availability-list > p { margin: auto 0; color: var(--request-muted); font-size: .85rem; }
+.request-availability-item { display: inline-flex; align-items: center; gap: 9px; padding: 8px 10px; color: #344054; border: 1px solid #e7d3da; border-radius: 9px; background: #fff; font-size: .84rem; }
+.request-availability-item button { padding: 0; color: #b42318; border: 0; background: none; }
+
+.request-success { max-width: 650px; margin: 20px auto; text-align: center; }
+.request-success > span { display: grid; width: 78px; height: 78px; margin: 0 auto 20px; place-items: center; color: #fff; border-radius: 50%; background: #23906b; font-size: 2.1rem; }
+.request-success h2 { font-weight: 800; }
+.request-success > p:not(.request-eyebrow) { color: var(--request-muted); line-height: 1.7; }
+.request-success-actions { display: flex; justify-content: center; gap: 10px; margin-top: 24px; }
+
+#studentEnrollmentRequestModal {
+    --tutorial-accent: #e85d88;
+    --tutorial-accent-dark: #d94f7a;
+    --tutorial-soft: #fff0f5;
+    --tutorial-border: #f5c6d5;
+    --tutorial-neutral-border: #dfe3ea;
+    --tutorial-text: #172033;
+    --tutorial-muted: #697386;
+}
+#studentEnrollmentRequestModal .modal-dialog { max-width: min(1180px, calc(100vw - 32px)); }
+#studentEnrollmentRequestModal .modal-content { max-height: calc(100vh - 32px); padding-bottom: 0; overflow: hidden; border: 0; border-radius: 20px; box-shadow: 0 22px 65px rgba(94, 29, 52, .18); }
+#studentEnrollmentRequestModal .modal-header { align-items: center; padding: 18px 28px; border-bottom: 1px solid #edf0f4; background: #fff; }
+#studentEnrollmentRequestModal .modal-header .request-heading-icon { width: 44px; height: 44px; color: var(--tutorial-accent); border-color: var(--tutorial-border); border-radius: 10px; background: var(--tutorial-soft); font-size: 21px; }
+#studentEnrollmentRequestModal .modal-title { margin: 0; color: var(--tutorial-text); font-size: 25px; font-weight: 750; }
+#studentEnrollmentRequestModal .modal-header small { color: var(--tutorial-muted) !important; font-size: 13px; }
+#studentEnrollmentRequestModal .modal-body { padding: 15px 28px 22px; background: #fff; }
+#studentEnrollmentRequestModal .request-steps { margin-bottom: 14px; overflow: hidden; border-color: var(--tutorial-border); border-radius: 12px; box-shadow: none; }
+#studentEnrollmentRequestModal .request-step { min-height: 72px; padding: 13px 18px; border-color: var(--tutorial-border); }
+#studentEnrollmentRequestModal .request-step.active { color: var(--tutorial-text); background: var(--tutorial-soft); }
+#studentEnrollmentRequestModal .request-step.active > span { border-color: var(--tutorial-accent); background: var(--tutorial-accent); }
+#studentEnrollmentRequestModal .request-card { padding: 0; border: 0; border-radius: 0; box-shadow: none; }
+#studentEnrollmentRequestModal .request-section-heading { margin-bottom: 14px; padding: 14px 18px; border: 1px solid var(--tutorial-border); border-radius: 9px; background: #fff9fb; }
+#studentEnrollmentRequestModal .request-section-heading .request-heading-icon { width: 40px; height: 40px; color: var(--tutorial-accent-dark); border-color: var(--tutorial-border); border-radius: 10px; background: var(--tutorial-soft); font-size: 18px; }
+#studentEnrollmentRequestModal .request-section-heading p { color: var(--tutorial-accent-dark); }
+#studentEnrollmentRequestModal .request-section-heading h2 { color: var(--tutorial-text); font-size: 21px; font-weight: 750; }
+#studentEnrollmentRequestModal .request-section-heading small { color: var(--tutorial-muted); }
+#studentEnrollmentRequestModal .request-panel { margin-bottom: 14px; padding: 18px; border-color: var(--tutorial-border); border-radius: 12px; background: #fff; }
+#studentEnrollmentRequestModal .request-panel-title { display: flex; align-items: center; gap: 12px; margin: 0 0 15px; color: var(--tutorial-text); font-size: 18px; font-weight: 700; }
+#studentEnrollmentRequestModal .request-panel-title > span { display: inline-flex; width: 34px; height: 34px; flex: 0 0 auto; align-items: center; justify-content: center; color: var(--tutorial-accent); border: 1px solid var(--tutorial-border); border-radius: 10px; background: var(--tutorial-soft); font-size: 16px; }
+#studentEnrollmentRequestModal .request-payment-title { margin-bottom: 20px; font-size: 22px; }
+#studentEnrollmentRequestModal .request-payment-title > span { width: 42px; height: 42px; font-size: 18px; }
+#studentEnrollmentRequestModal .request-panel .form-label { margin-bottom: 7px; color: var(--tutorial-text); font-size: 13px; font-weight: 500; }
+#studentEnrollmentRequestModal .request-panel .form-control,
+#studentEnrollmentRequestModal .request-panel .form-select,
+#studentEnrollmentRequestModal .request-panel .input-group-text { min-height: 44px; color: var(--tutorial-text); border-color: var(--tutorial-neutral-border); border-radius: 7px; font-size: 14px; }
+#studentEnrollmentRequestModal .request-panel .form-control:focus,
+#studentEnrollmentRequestModal .request-panel .form-select:focus { border-color: var(--tutorial-accent); box-shadow: 0 0 0 .2rem rgba(232, 93, 136, .12); }
+#studentEnrollmentRequestModal .request-panel .form-control:disabled,
+#studentEnrollmentRequestModal .request-panel .form-select:disabled { color: #5f6673; background: #f8f8f9; opacity: 1; }
+#studentEnrollmentRequestModal .request-fee-grid > div { border: 1px solid #edf0f4; border-radius: 9px; }
+#studentEnrollmentRequestModal .request-fee-grid .accent { border-color: var(--tutorial-border); background: var(--tutorial-soft); }
+#studentEnrollmentRequestModal .request-subject-toggle { min-height: 44px; border-color: var(--tutorial-neutral-border); border-radius: 7px; font-size: 14px; }
+#studentEnrollmentRequestModal .request-subject-menu { border-color: var(--tutorial-neutral-border); }
+#studentEnrollmentRequestModal .request-subject-option { border-radius: 7px; }
+#studentEnrollmentRequestModal .request-subject-option:has(input:checked) { color: var(--tutorial-accent-dark); background: var(--tutorial-soft); }
+#studentEnrollmentRequestModal .request-availability-builder .btn-outline-primary,
+#studentEnrollmentRequestModal #requestReadReceipt { min-height: 44px; color: var(--tutorial-accent-dark); border-color: var(--tutorial-border); border-radius: 7px; }
+#studentEnrollmentRequestModal .request-availability-builder .btn-outline-primary:hover,
+#studentEnrollmentRequestModal #requestReadReceipt:hover { color: #fff; border-color: var(--tutorial-accent); background: var(--tutorial-accent); }
+#studentEnrollmentRequestModal .request-payment-complete { margin-bottom: 14px; border-radius: 9px; }
+#studentEnrollmentRequestModal .request-actions { gap: 12px; margin-top: 14px; padding: 14px 0 0; }
+#studentEnrollmentRequestModal .request-actions .btn,
+#studentEnrollmentRequestModal .request-success-actions .btn { display: inline-flex; min-height: 45px; align-items: center; justify-content: center; gap: 9px; padding: 10px 24px; border-radius: 8px; font-weight: 600; }
+#studentEnrollmentRequestModal .request-actions .btn-light,
+#studentEnrollmentRequestModal .request-success-actions .btn-light { min-width: 105px; color: var(--tutorial-text); border: 1px solid var(--tutorial-neutral-border); background: #fff; }
+#studentEnrollmentRequestModal .request-actions .btn-primary,
+#studentEnrollmentRequestModal .request-success-actions .btn-primary { min-width: 210px; color: #fff; border: 0; background: linear-gradient(100deg, var(--tutorial-accent), #f07ba0); box-shadow: 0 9px 20px rgba(232, 93, 136, .22); }
+
+@media (max-width: 767.98px) {
+    .request-topbar { display: block; }
+    .request-security-pill { margin-top: 16px; }
+    .request-steps { grid-template-columns: 1fr; }
+    .request-step { border-right: 0; border-bottom: 1px solid var(--request-border); }
+    .request-step:last-child { border-bottom: 0; }
+    .request-availability-builder { grid-template-columns: 1fr; }
+    .request-gcash-account { grid-template-columns: 1fr; gap: 18px; padding: 18px; }
+    .request-gcash-account dl div { grid-template-columns: 1fr; gap: 4px; }
+    .request-qr-card { min-height: auto; }
+    .request-receipt-heading { align-items: stretch; flex-direction: column; }
+    .request-receipt-heading #requestReadReceipt { width: 100%; }
+    .request-availability-builder > span { text-align: center; }
+    .request-actions, .request-success-actions { align-items: stretch; flex-direction: column-reverse; }
+    .request-actions .btn, .request-success-actions .btn { width: 100%; }
+    #studentEnrollmentRequestModal .modal-dialog { max-width: calc(100vw - 16px); margin: 8px auto; }
+    #studentEnrollmentRequestModal .modal-header, #studentEnrollmentRequestModal .modal-body { padding-left: 18px; padding-right: 18px; }
+    #studentEnrollmentRequestModal .modal-title { font-size: 21px; }
+    #studentEnrollmentRequestModal .request-section-heading { padding: 13px 14px; }
+}

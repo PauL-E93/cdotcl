@@ -4,7 +4,14 @@
  */
 import { showPaymentReceipt } from "./receipt.js";
 import { canUsePaymentPermission, guardPaymentPermission, isPaymentModulePage } from "./payment_rbac.js";
+import { canUseOnlineApplicationPermission } from "./enrollment_applications.js?v=20261006-upload-images-r2";
 import { chooseBillingStatementExportFormat, exportBillingStatementData } from "../utilities/billing_statement_export.js";
+import { penaltyAdjustmentCard, bindPenaltyAdjustments } from './penalty_adjustment.js';
+
+function formatAdditionalFeeLabel(billingType) {
+    // Older charges stored the order ID at the end of the fee label.
+    return String(billingType || 'Additional Product').replace(/\s+#\d+\s*$/, '');
+}
 
 function formatReceiptDueDate(dateValue) {
     if (!dateValue) return '';
@@ -80,6 +87,14 @@ function ensureAdminPrePlayBillingStyles() {
         .admin-preplay-modal-container{padding:6px}
         .admin-preplay-popup{--app-pink:#e85d88;--app-pink-dark:#d94b78;--app-soft:#fff4f7;--app-border:#f4c4d3;--app-ink:#1d2a3b;--app-muted:#667085;width:min(1000px,calc(100vw - 20px))!important;max-width:1000px!important}
         .admin-preplay-popup .swal2-html-container{margin-inline:1em}
+        .preplay-billing-summary-card{border:1px solid var(--app-border)!important;border-radius:18px!important;background:#fff!important;box-shadow:0 3px 10px rgba(90,44,59,.05)}
+        .preplay-billing-summary-heading{display:flex;align-items:center;gap:14px;margin:0 0 26px;color:var(--app-pink);font-size:1.35rem;font-weight:750}
+        .preplay-billing-summary-icon{display:grid;flex:0 0 46px;width:46px;height:46px;place-items:center;border-radius:12px;color:var(--app-pink);background:#fdeaf0;font-size:1.25rem}
+        .preplay-billing-summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 48px;align-items:start}
+        .preplay-billing-summary-item{min-width:0}
+        .preplay-billing-summary-item .small{margin-bottom:3px}
+        .preplay-billing-summary-item .fw-bold{overflow-wrap:anywhere;line-height:1.35}
+        .preplay-billing-summary-item--wide{grid-column:1/-1}
         .admin-preplay-timeline-content{display:grid;grid-template-columns:minmax(150px,1fr) minmax(270px,1.25fr) auto;align-items:center;gap:16px;min-width:0;flex:1}
         .admin-preplay-timeline-main{min-width:0}
         .admin-preplay-timeline-title{font-weight:700;overflow-wrap:anywhere}
@@ -127,6 +142,8 @@ function ensureAdminPrePlayBillingStyles() {
             .admin-preplay-payment-title{gap:10px;margin-bottom:14px;font-size:1.2rem}
             .admin-preplay-payment-grid{grid-template-columns:1fr;gap:15px}
             .admin-preplay-payment-field.full{grid-column:auto}
+            .preplay-billing-summary-heading{margin-bottom:20px;font-size:1.2rem}
+            .preplay-billing-summary-grid{gap:16px 24px}
             .admin-preplay-popup .billing-container .row.g-3{--bs-gutter-y:12px}
             .admin-preplay-popup .billing-container .d-flex.justify-content-between{gap:12px}
             .admin-preplay-popup .billing-container .d-flex.justify-content-between>*{min-width:0;overflow-wrap:anywhere}
@@ -134,6 +151,7 @@ function ensureAdminPrePlayBillingStyles() {
             .admin-preplay-popup .swal2-confirm,.admin-preplay-popup .swal2-cancel{width:100%;margin:0;min-height:48px}
         }
         @media(max-width:380px){
+            .preplay-billing-summary-grid{grid-template-columns:1fr}
             .admin-preplay-timeline-metrics{grid-template-columns:1fr}
             .admin-preplay-popup .payment-timeline-indicator{width:2rem}
             .admin-preplay-popup .payment-timeline-marker{width:2rem;height:2rem}
@@ -222,7 +240,7 @@ function downloadPrePlayBillingStatementPdf({
     } else {
         miscBilling.forEach(item => feeRows.push(['Program Item Fees', money(item.amount || item.total_amount)]));
     }
-    additionalProductBilling.forEach(item => feeRows.push([item.billing_type || 'Additional Product', money(item.amount || item.total_amount)]));
+    additionalProductBilling.forEach(item => feeRows.push([formatAdditionalFeeLabel(item.billing_type), money(item.amount || item.total_amount)]));
     if (data.services && servicesTotal > 0) feeRows.push([`Services (${data.services})`, money(servicesTotal)]);
 
     if (feeRows.length) {
@@ -416,7 +434,7 @@ window.exportPrePlayBillingStatement = async function(enrollmentId) {
             } else {
                 miscBilling.forEach(item => feeRows.push(['Program Item Fees', getAmount(item)]));
             }
-            additionalProductBilling.forEach(item => feeRows.push([item.billing_type || 'Additional Product', getAmount(item)]));
+            additionalProductBilling.forEach(item => feeRows.push([formatAdditionalFeeLabel(item.billing_type), getAmount(item)]));
             if (hasMonthlyService && servicesTotal > 0) feeRows.push([`Services (${data.services})`, servicesTotal]);
             const recordedTotalPaid = Number(data.total_paid);
             const effectiveTotalPaid = Number.isFinite(recordedTotalPaid) ? recordedTotalPaid : totalPaymentsMade;
@@ -487,9 +505,13 @@ window.exportPrePlayBillingStatement = async function(enrollmentId) {
     }
 };
 
-function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProducts = [], totalPaymentsMade = 0, showPayment = true, enrollmentStatus = 'unknown', paymentsHistory = [], enrollmentDetails = {}) {
+function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProducts = [], totalPaymentsMade = 0, showPayment = true, enrollmentStatus = 'unknown', paymentsHistory = [], enrollmentDetails = {}, paymentDraft = null) {
     ensureAdminPrePlayBillingStyles();
     const isIncompleteEnrollment = String(enrollmentStatus || '').toLowerCase() === 'incomplete';
+    const isReadyForPlacement = Boolean(enrollmentDetails.application_id)
+        && String(enrollmentDetails.application_status || '').toLowerCase() === 'ready_for_scheduling';
+    const canPlaceApplication = canUseOnlineApplicationPermission('finalize_online_applications');
+    const canViewApplication = canUseOnlineApplicationPermission('view_online_applications');
     // 1. DATA CALCULATIONS (FIFO LOGIC)
     const allBillingItems = data.schedule ? data.schedule : [];
     
@@ -676,12 +698,16 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
     `).join('');
     const additionalProductRows = additionalProductBilling.map(item => `
         <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
-            <div class="text-muted">${item.billing_type || 'Additional Product'}</div>
+            <div class="text-muted">${formatAdditionalFeeLabel(item.billing_type)}</div>
             <div class="fw-bold text-danger">₱${formatCurrency(item.amount || item.total_amount)}</div>
         </div>
     `).join('');
 
-    const paymentSection = isIncompleteEnrollment ? `
+    const paymentSection = isReadyForPlacement ? `
+        <div class="alert alert-info text-center mx-3">
+            <i class="bi bi-diagram-3"></i> Payment has been received. Assign a class and section to finish this enrollment.
+        </div>
+    ` : isIncompleteEnrollment ? `
         <div class="alert alert-warning text-center mx-3">
             <i class="bi bi-exclamation-triangle"></i> This enrollment is incomplete. Please complete the enrollment first.
         </div>
@@ -720,26 +746,30 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
 
     const html = `
         <div class="billing-container text-start" style="font-family: 'Segoe UI', sans-serif; color: #334155;">
-            <div class="card border-0 shadow-sm mb-4" style="border-radius: 18px; background: rgba(255, 236, 240, 0.8);">
+            <div class="card preplay-billing-summary-card mb-4">
                 <div class="card-body p-4">
-                    <div class="row gx-3 gy-3">
-                        <div class="col-md-6">
+                    <h3 class="preplay-billing-summary-heading">
+                        <span class="preplay-billing-summary-icon"><i class="bi bi-person-circle" aria-hidden="true"></i></span>
+                        Enrollment Details
+                    </h3>
+                    <div class="preplay-billing-summary-grid">
+                        <div class="preplay-billing-summary-item">
                             <div class="small text-muted">Name</div>
                             <div class="fw-bold">${data.student_name}</div>
                         </div>
-                        <div class="col-md-6">
+                        <div class="preplay-billing-summary-item">
                             <div class="small text-muted">Program</div>
                             <div class="fw-bold">${data.program_name}</div>
                         </div>
-                        <div class="col-md-4">
+                        <div class="preplay-billing-summary-item">
                             <div class="small text-muted">Class</div>
                             <div class="fw-bold">${(enrollmentDetails.class_id_from_section || enrollmentDetails.class_id) ? 'Class ' + (enrollmentDetails.class_id_from_section || enrollmentDetails.class_id) : 'N/A'}</div>
                         </div>
-                        <div class="col-md-4">
+                        <div class="preplay-billing-summary-item">
                             <div class="small text-muted">Section</div>
                             <div class="fw-bold">${enrollmentDetails.section_name && enrollmentDetails.section_name !== 'N/A' ? enrollmentDetails.section_name : 'N/A'}</div>
                         </div>
-                        <div class="col-md-4">
+                        <div class="preplay-billing-summary-item preplay-billing-summary-item--wide">
                             <div class="small text-muted">Section Teacher</div>
                             <div class="fw-bold">${(enrollmentDetails.section_teacher_name || enrollmentDetails.teacher_name) ? (enrollmentDetails.section_teacher_name || enrollmentDetails.teacher_name) : 'Not assigned'}</div>
                         </div>
@@ -836,6 +866,7 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                 <div class="text-muted small"><i class="bi bi-eye"></i> Billing statement y.</div>
             </div>
 
+            ${penaltyAdjustmentCard(allBillingItems)}
             ${paymentSection}
         </div>`;
 
@@ -845,9 +876,11 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
         html: html,
         width: '1000px',
         showCloseButton: true,
-        showCancelButton: showPayment && !isFullyPaid && !isIncompleteEnrollment,
-        confirmButtonText: isIncompleteEnrollment
-            ? 'pls complete the enrollment'
+        showCancelButton: showPayment && !isFullyPaid && !isIncompleteEnrollment && !isReadyForPlacement,
+        confirmButtonText: isReadyForPlacement
+            ? (canPlaceApplication ? 'Assign Class & Section' : (canViewApplication ? 'View Application' : 'Close'))
+            : isIncompleteEnrollment
+            ? 'Complete Onsite Enrollment'
             : ((showPayment && !isFullyPaid) ? 'Confirm Payment' : 'Close'),
         confirmButtonColor: '#e85d88',
         cancelButtonText: '<i class="bi bi-x-circle" aria-hidden="true"></i> Cancel',
@@ -858,24 +891,26 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
             popup: 'admin-preplay-popup'
         },
         didOpen: () => {
+            bindPenaltyAdjustments(allBillingItems, () => window.openBillingPlayPreModal(enrollmentId, showPayment));
             const methodSelect = document.getElementById('modalPaymentMethod');
             const referenceContainer = document.getElementById('referenceContainer');
             const paymentInput = document.getElementById('modalPaymentAmount');
-            const maxBalance = parseFloat(paymentInput?.dataset.maxBalance || 0);
+
+            if (paymentDraft && paymentInput && methodSelect) {
+                paymentInput.value = paymentDraft.amount;
+                methodSelect.value = paymentDraft.method;
+                document.getElementById('modalReferenceNo').value = paymentDraft.ref || '';
+                const methodName = methodSelect.options[methodSelect.selectedIndex]?.text.toLowerCase() || '';
+                if (referenceContainer) referenceContainer.style.display = methodName.includes('gcash') ? 'block' : 'none';
+            }
 
             methodSelect?.addEventListener('change', function() {
                 referenceContainer.style.display = this.options[this.selectedIndex].text.toLowerCase().includes('gcash') ? 'block' : 'none';
             });
 
-            paymentInput?.addEventListener('input', function() {
-                const val = parseFloat(this.value) || 0;
-                if (val > maxBalance) {
-                    this.value = maxBalance.toFixed(2);
-                }
-            });
         },
         preConfirm: () => {
-            if (isIncompleteEnrollment || !showPayment || isFullyPaid) return true;
+            if (isReadyForPlacement || isIncompleteEnrollment || !showPayment || isFullyPaid) return true;
             const amount = parseFloat(document.getElementById('modalPaymentAmount').value);
             const method = document.getElementById('modalPaymentMethod').value;
             const methodSelect = document.getElementById('modalPaymentMethod');
@@ -883,6 +918,11 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
             const methodName = selectedOption.text.toLowerCase();
             const ref = document.getElementById('modalReferenceNo')?.value.trim() || null;
             if (!amount || amount <= 0) { Swal.showValidationMessage('Enter valid amount'); return false; }
+            if (amount > balance) {
+                Swal.showValidationMessage(`Please adjust the payment amount. You can pay up to PHP ${Number(balance).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, your outstanding balance.`);
+                document.getElementById('modalPaymentAmount').focus();
+                return false;
+            }
             if (!method) { Swal.showValidationMessage('Select method'); return false; }
             if (methodName.includes('gcash') && !ref) {
                 Swal.showValidationMessage('Please enter a reference number for GCash payment');
@@ -897,6 +937,15 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
         }
     }).then((result) => {
         if (!result.isConfirmed) {
+            return;
+        }
+
+        if (isReadyForPlacement) {
+            if (canPlaceApplication) {
+                window.openPrePlayApplicationPlacement(Number(enrollmentDetails.application_id), Number(enrollmentId));
+            } else if (canViewApplication) {
+                window.viewNewStudentApplication(Number(enrollmentDetails.application_id));
+            }
             return;
         }
 
@@ -951,7 +1000,13 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                         .then(() => showPaymentReceipt(receiptData))
                         .then(() => location.reload());
                 } else {
-                    Swal.fire('Error', res.data.message || 'Failed to record payment.', 'error');
+                    Swal.fire({
+                        title: 'Please check the payment',
+                        text: res.data.message || 'The payment could not be recorded. Please review the details and try again.',
+                        icon: 'warning',
+                        confirmButtonText: 'Back to Payment',
+                        confirmButtonColor: '#e85d88'
+                    }).then(() => renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProducts, totalPaymentsMade, showPayment, enrollmentStatus, paymentsHistory, enrollmentDetails, result.value));
                 }
             }).catch((err) => {
                 console.error(err);

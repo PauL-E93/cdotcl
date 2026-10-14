@@ -1,6 +1,12 @@
+import { AgreementForm } from './modules/agreements.js?v=20261014-select-all';
 (() => {
+    const agreementForm = new AgreementForm(document.getElementById('newStudentAgreements'));
     const API_URL = 'api/enrollment_application.php';
     const PH_ADDRESS_API_BASE = 'https://psgc.cloud/api/v2';
+    const DRAFT_KEY = 'cdoTutorEnrollmentDraftV1';
+    let draftReady = false;
+    let otpCountdownInterval = null;
+    let otpSending = false;
     // Remove legacy browser-saved tracking tokens; tracking now uses student details.
     try { localStorage.removeItem('cdoTutorEnrollmentApplications'); } catch (_) {}
     const NCR_ADDRESS_OPTION = { code: '1300000000', name: 'Metro Manila (NCR)' };
@@ -9,6 +15,10 @@
         lookups: null,
         verificationId: null,
         verificationToken: null,
+        verificationEmail: '',
+        verificationExpiresAt: 0,
+        otpResendAvailableAt: 0,
+        tracking: null,
         availability: [],
         availableSteps: new Set([1]),
         currentApplication: null,
@@ -18,6 +28,133 @@
     };
 
     const $ = id => document.getElementById(id);
+    const draftFields = ['firstName', 'middleName', 'lastName', 'extension', 'nickname', 'birthday',
+        'gender', 'healthNote', 'guardianName', 'guardianContact', 'guardianRelationship',
+        'otherGuardianRelationship', 'email', 'street', 'addressNote', 'program', 'branch',
+        'gradeLevel', 'otherSubjectName', 'goal', 'preferredSessionHours', 'availabilityDay', 'availabilityStart', 'availabilityEnd'];
+
+    function clearDraft() {
+        try { sessionStorage.removeItem(DRAFT_KEY); } catch (_) {}
+    }
+
+    function saveDraft() {
+        if (!draftReady) return;
+        try {
+            const fields = Object.fromEntries(draftFields.map(id => [id, $(id).value]));
+            const address = Object.fromEntries(['province', 'city', 'barangay'].map(id =>
+                [id, { value: $(id).value, code: selectedAddressCode($(id)) }]));
+            sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+                version: 1, savedAt: Date.now(), fields, address,
+                subjects: [...document.querySelectorAll('#subjectPicker input:checked')].map(input => input.value),
+                availability: state.availability, step: state.step, availableSteps: [...state.availableSteps],
+                verificationId: state.verificationId, verificationToken: state.verificationToken,
+                verificationEmail: state.verificationEmail, verificationExpiresAt: state.verificationExpiresAt,
+                otpResendAvailableAt: state.otpResendAvailableAt,
+                tracking: state.tracking,
+                includeService: Boolean(state.financialPreview?.service_id),
+                serviceId: state.financialPreview?.service_id || null,
+                payment: Object.fromEntries(['applicationPaymentMethod', 'applicationPaymentAmount', 'applicationPaymentReference']
+                    .map(id => [id, $(id)?.value || '']))
+            }));
+            $('enrollmentDraftStatus').textContent = 'Progress saved in this tab. You can safely refresh. Payment screenshots must be selected again.';
+        } catch (_) {
+            $('enrollmentDraftStatus').textContent = 'Your browser cannot save progress. Keep this page open until you submit.';
+        }
+    }
+
+    function readDraft() {
+        try {
+            const draft = JSON.parse(sessionStorage.getItem(DRAFT_KEY));
+            if (!draft) return null;
+            if (draft.version !== 1 || !draft.fields || !Number.isFinite(draft.savedAt)
+                || Date.now() - draft.savedAt > 24 * 60 * 60 * 1000) {
+                clearDraft();
+                return null;
+            }
+            return draft;
+        } catch (_) { clearDraft(); return null; }
+    }
+
+    async function restoreDraft(draft) {
+        if (!draft) return;
+        state.otpResendAvailableAt = Number(draft.otpResendAvailableAt) || 0;
+        updateOtpResendButton();
+        draftFields.forEach(id => {
+            if (typeof draft.fields[id] === 'string') $(id).value = draft.fields[id];
+        });
+        // Address choices depend on the province/city, so rebuild them in order.
+        const restoreAddressValue = id => {
+            const saved = draft.address?.[id];
+            if (!saved?.value) return;
+            const select = $(id);
+            if (![...select.options].some(option => option.value === saved.value)) {
+                const option = new Option(saved.value, saved.value);
+                option.dataset.code = saved.code || '';
+                select.add(option);
+            }
+            select.value = saved.value;
+            select.disabled = false;
+        };
+        restoreAddressValue('province');
+        try { await loadCities(selectedAddressCode($('province'))); } catch (_) {}
+        restoreAddressValue('city');
+        try { await loadBarangays(selectedAddressCode($('city'))); } catch (_) {}
+        restoreAddressValue('barangay');
+        document.querySelectorAll('#subjectPicker input').forEach(input => {
+            input.checked = Array.isArray(draft.subjects) && draft.subjects.includes(input.value);
+        });
+        state.availability = Array.isArray(draft.availability) ? draft.availability.filter(slot =>
+            slot && typeof slot.day === 'string' && /^\d{2}:\d{2}$/.test(slot.start_time)
+            && /^\d{2}:\d{2}$/.test(slot.end_time)) : [];
+        updateGuardianRelationshipField();
+        updateSubjectSelection();
+        updateProgramPreferenceFields();
+        agreementForm.setProgram($('program').value, $('guardianName').value, selectedProgram()?.program_type_name || selectedProgram()?.program_type || '');
+        renderAvailability();
+        const program = selectedProgram();
+        $('programSummary').textContent = program ? `${program.total_units} ${program.unit_type}${Number(program.total_units) === 1 ? '' : 's'}` : '';
+        const branch = state.lookups?.branches?.find(item => String(item.branch_id) === $('branch').value);
+        $('branchSummary').textContent = branch ? [branch.branch_location, branch.operating_days].filter(Boolean).join(' • ') : '';
+        state.availableSteps = new Set([1, ...(Array.isArray(draft.availableSteps) ? draft.availableSteps.filter(step => step === 2) : [])]);
+        const verificationValid = draft.verificationEmail === personalPayload().email && draft.verificationExpiresAt > Date.now();
+        if (verificationValid) {
+            state.verificationId = draft.verificationId;
+            state.verificationToken = draft.verificationToken;
+            state.verificationEmail = draft.verificationEmail;
+            state.verificationExpiresAt = draft.verificationExpiresAt;
+        }
+        $('verificationEmailLabel').textContent = personalPayload().email;
+        $('verificationSuccess').classList.toggle('d-none', !state.verificationToken);
+        $('continueToPreferences').disabled = !state.verificationToken;
+        $('otpEntry').classList.toggle('d-none', !state.verificationId || Boolean(state.verificationToken));
+        if (state.verificationToken && draft.availableSteps?.includes(3)) state.availableSteps.add(3);
+        let step = Number(draft.step) || 1;
+        if (step >= 3 && !state.verificationToken) step = state.availableSteps.has(2) ? 2 : 1;
+        if (state.verificationToken && draft.availableSteps?.includes(4) && $('program').value && $('branch').value) {
+            try {
+                const result = await api('getFinancialPreview', {
+                    program_id: $('program').value, branch_id: $('branch').value,
+                    include_service: Boolean(draft.includeService), service_id: draft.serviceId
+                });
+                if (result.status !== 'success') throw new Error(result.message);
+                renderApplicationBilling(result.data, false);
+                if (draft.payment && $('applicationPaymentMethod')) {
+                    $('applicationPaymentMethod').value = draft.payment.applicationPaymentMethod || '';
+                    renderPaymentMethodDetail(result.data);
+                    ['applicationPaymentAmount', 'applicationPaymentReference'].forEach(id => {
+                        if ($(id) && typeof draft.payment[id] === 'string') $(id).value = draft.payment[id];
+                    });
+                }
+                state.availableSteps.add(4);
+            } catch (_) { step = 3; }
+        }
+        showStep(state.availableSteps.has(step) ? step : 1, false);
+        if (draft.tracking) {
+            state.tracking = draft.tracking;
+            state.applicationSubmitted = true;
+            await showApplicationStatus(draft.tracking);
+        }
+    }
     const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
     })[char]);
@@ -189,11 +326,12 @@
             [['first name'], 'firstName'],
             [['last name'], 'lastName'],
             [['guardian name'], 'guardianName'],
-            [['relationship'], 'guardianRelationship'],
+            [['relationship'], $('guardianRelationship').value === 'others' ? 'otherGuardianRelationship' : 'guardianRelationship'],
             [['house/street', 'street'], 'street'],
             [['barangay'], 'barangay'],
             [['city/municipality', 'city'], 'city'],
             [['province'], 'province'],
+            [['requested subject'], 'otherSubjectName'],
             [['program'], 'program'],
             [['branch', 'center'], 'branch'],
             [['availability', 'preferred time'], 'availabilityList']
@@ -219,9 +357,10 @@
         }
     }
 
-    function showStep(step) {
+    function showStep(step, scrollToCard = true) {
         if (!state.availableSteps.has(step)) return;
         state.step = step;
+        saveDraft();
         document.querySelectorAll('[data-form-step]').forEach(section => section.classList.toggle('active', Number(section.dataset.formStep) === step));
         document.querySelectorAll('[data-step-indicator]').forEach(indicator => {
             const number = Number(indicator.dataset.stepIndicator);
@@ -230,12 +369,35 @@
             indicator.classList.toggle('available', state.availableSteps.has(number));
             indicator.setAttribute('aria-disabled', String(!state.availableSteps.has(number)));
         });
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        if (scrollToCard) {
+            const card = document.querySelector('.application-card');
+            const header = document.querySelector('.landing-header');
+            if (card) {
+                const headerHeight = header?.getBoundingClientRect().height || 0;
+                const top = card.getBoundingClientRect().top + window.scrollY - headerHeight - 12;
+                window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+            }
+        }
     }
 
     function unlockAndShowStep(step) {
         state.availableSteps.add(step);
         showStep(step);
+    }
+
+    function updateGuardianRelationshipField() {
+        const other = $('guardianRelationship').value === 'others';
+        $('otherGuardianRelationshipField').classList.toggle('d-none', !other);
+        $('otherGuardianRelationship').disabled = !other;
+        $('otherGuardianRelationship').required = other;
+        clearFieldError($('otherGuardianRelationship'));
+        if (other) $('otherGuardianRelationship').focus();
+    }
+
+    function guardianRelationshipValue() {
+        return ($('guardianRelationship').value === 'others'
+            ? $('otherGuardianRelationship').value
+            : $('guardianRelationship').value).trim().replace(/\s+/g, ' ');
     }
 
     function personalPayload() {
@@ -250,7 +412,7 @@
             health_note: $('healthNote').value.trim(),
             guardian_name: $('guardianName').value.trim(),
             guardian_contact: formatPhilippineMobile($('guardianContact').value),
-            guardian_relationship: $('guardianRelationship').value.trim(),
+            guardian_relationship: guardianRelationshipValue(),
             email: $('email').value.trim().toLowerCase(),
             adr_street: $('street').value.trim(),
             adr_barangay: $('barangay').value.trim(),
@@ -286,9 +448,19 @@
         const addOnce = (element, message) => {
             if (!errors.some(error => error.element === element)) errors.push({ element, message });
         };
+        clearFieldError($('otherGuardianRelationship'));
+        if ($('guardianRelationship').value === 'others') {
+            const relationship = guardianRelationshipValue();
+            if (!relationship || [...relationship].length > 50 || /^(other|others)$/i.test(relationship) || /\p{C}/u.test(relationship)) {
+                addOnce($('otherGuardianRelationship'), 'Specify the guardian relationship using 1 to 50 characters.');
+            }
+        }
         const birthday = $('birthday').value ? new Date(`${$('birthday').value}T00:00:00`) : null;
-        if (birthday && (Number.isNaN(birthday.getTime()) || birthday > new Date())) {
-            addOnce($('birthday'), 'Birthdate must be a valid date and cannot be in the future.');
+        const minimumBirthdate = new Date();
+        minimumBirthdate.setHours(0, 0, 0, 0);
+        minimumBirthdate.setFullYear(minimumBirthdate.getFullYear() - 2);
+        if (birthday && (Number.isNaN(birthday.getTime()) || birthday > minimumBirthdate)) {
+            addOnce($('birthday'), 'Student must be at least 2 years old.');
         }
         if ($('email').value && !$('email').checkValidity()) {
             addOnce($('email'), 'Enter a valid email address.');
@@ -330,15 +502,24 @@
 
     function updateSubjectSelection() {
         const checked = [...document.querySelectorAll('#subjectPicker input:checked')];
-        const names = checked.map(input => input.closest('.subject-dropdown-option')?.querySelector('.subject-name')?.textContent.trim()).filter(Boolean);
+        const otherSelected = checked.some(input => input.value === 'others');
+        $('otherSubjectField').classList.toggle('d-none', !otherSelected);
+        $('otherSubjectName').disabled = !otherSelected;
+        $('otherSubjectName').required = otherSelected;
+        if (!otherSelected) clearFieldError($('otherSubjectName'));
+        const names = checked.map(input => input.value === 'others'
+            ? ($('otherSubjectName').value.trim() || 'Others')
+            : input.closest('.subject-dropdown-option')?.querySelector('.subject-name')?.textContent.trim()).filter(Boolean);
         $('subjectSelectionText').textContent = names.length ? `${names.length} subject${names.length === 1 ? '' : 's'} selected` : 'Select one or more subjects';
         $('selectedSubjectsSummary').textContent = names.join(', ');
     }
 
     function clearTutorialPreferences() {
+        $('preferredSessionHours').value = '1';
         $('gradeLevel').value = '';
         $('goal').value = '';
         document.querySelectorAll('#subjectPicker input:checked').forEach(input => { input.checked = false; });
+        $('otherSubjectName').value = '';
         state.availability = [];
         updateSubjectSelection();
         renderAvailability();
@@ -348,6 +529,8 @@
 
     function updateProgramPreferenceFields(program = selectedProgram()) {
         const tutorial = isTutorialProgram(program);
+        const hours = Number(program?.total_units) || 12;
+        $('sessionDurationNote').textContent = `The program includes ${hours} consumable hours in total. Each session uses the selected duration from that balance. For 12 hours: 12 one-hour sessions, 8 sessions of 1 hour and 30 minutes, or 6 two-hour sessions. The center will confirm your final schedule.`;
         $('tutorialPreferences').classList.toggle('d-none', !tutorial);
         $('learningPreferenceHelp').classList.toggle('d-none', Boolean(program));
         $('learningPreferenceHelp').textContent = !program
@@ -360,6 +543,9 @@
         const result = await api('getLookups');
         if (result.status !== 'success') throw new Error(result.message || 'Unable to load enrollment choices.');
         state.lookups = result.data;
+        $('guardianRelationship').replaceChildren(new Option('Select relationship', ''));
+        result.data.relationships.forEach(item => $('guardianRelationship').add(new Option(item.relationship_name, item.relationship_name)));
+        $('guardianRelationship').add(new Option('Others', 'others'));
         $('gender').innerHTML = '<option value="">Select gender</option>' + result.data.genders.map(item => `<option value="${item.gender_id}">${escapeHtml(item.gender)}</option>`).join('');
         $('program').innerHTML = '<option value="">Select program</option>' + result.data.programs.map(item => `<option value="${item.program_id}">${escapeHtml(item.name)}${item.program_type ? ` (${escapeHtml(item.program_type)})` : ''}</option>`).join('');
         $('branch').innerHTML = '<option value="">Select branch</option>' + result.data.branches.map(item => `<option value="${item.branch_id}">${escapeHtml(item.branch_name)}</option>`).join('');
@@ -368,7 +554,8 @@
             ? '<option value="">Select grade level</option>' + activeGrades.map(item => `<option value="${item.grade_level_id}">${escapeHtml(item.grade_level)}</option>`).join('')
             : '<option value="">No active grade levels available</option>';
         $('gradeLevel').disabled = activeGrades.length === 0;
-        $('subjectPicker').innerHTML = result.data.subjects.map(item => `<label class="subject-dropdown-option"><input type="checkbox" value="${item.subject_id}"><span class="subject-name">${escapeHtml(item.subject_name)}</span><i class="bi bi-check2"></i></label>`).join('') || '<span class="d-block p-2 text-muted">No subjects configured.</span>';
+        $('subjectPicker').innerHTML = result.data.subjects.map(item => `<label class="subject-dropdown-option"><input type="checkbox" value="${item.subject_id}"><span class="subject-name">${escapeHtml(item.subject_name)}</span><i class="bi bi-check2"></i></label>`).join('')
+            + '<label class="subject-dropdown-option"><input type="checkbox" id="otherSubjectOption" value="others"><span class="subject-name">Others</span><i class="bi bi-check2"></i></label>';
         updateSubjectSelection();
         updateProgramPreferenceFields();
     }
@@ -392,6 +579,9 @@
             $('verificationEmailLabel').textContent = personalPayload().email;
             state.verificationId = null;
             state.verificationToken = null;
+            state.verificationEmail = '';
+            state.verificationExpiresAt = 0;
+            state.availableSteps = new Set([1]);
             $('otpEntry').classList.add('d-none');
             $('verificationSuccess').classList.add('d-none');
             $('continueToPreferences').disabled = true;
@@ -403,21 +593,59 @@
         }
     }
 
+    function updateOtpResendButton() {
+        if (otpCountdownInterval !== null) {
+            window.clearInterval(otpCountdownInterval);
+            otpCountdownInterval = null;
+        }
+        const update = () => {
+            const remaining = Math.max(0, Math.ceil((state.otpResendAvailableAt - Date.now()) / 1000));
+            const button = $('sendOtpButton');
+            if (!otpSending) {
+                button.disabled = remaining > 0;
+                button.textContent = remaining > 0
+                    ? `Resend Code in ${remaining}s`
+                    : (state.verificationId ? 'Resend Verification Code' : 'Send Verification Code');
+            }
+            if (!remaining && otpCountdownInterval !== null) {
+                window.clearInterval(otpCountdownInterval);
+                otpCountdownInterval = null;
+            }
+            return remaining;
+        };
+        if (update() > 0) otpCountdownInterval = window.setInterval(update, 1000);
+    }
+
     async function sendOtp() {
+        if (otpSending || state.otpResendAvailableAt > Date.now()) return;
+        otpSending = true;
         const button = $('sendOtpButton');
         setBusy(button, true, 'Sending code…');
         try {
             const result = await api('sendOtp', personalPayload());
             if (result.status !== 'success') throw new Error(result.message);
+            state.otpResendAvailableAt = Date.now() + 60 * 1000;
             state.verificationId = result.verification_id;
+            state.verificationToken = null;
+            state.verificationEmail = personalPayload().email;
+            state.verificationExpiresAt = Date.now() + 10 * 60 * 1000;
+            $('verificationSuccess').classList.add('d-none');
+            $('continueToPreferences').disabled = true;
+            saveDraft();
             $('otpEntry').classList.remove('d-none');
             $('otpCode').focus();
             Swal.fire('Code Sent', result.message, 'success');
         } catch (error) {
             const data = error.response?.data;
+            if (String(data?.message || error.message).includes('wait one minute')) {
+                state.otpResendAvailableAt = Date.now() + 60 * 1000;
+                saveDraft();
+            }
             Swal.fire(data?.existing_student ? 'Existing Student Found' : 'Email Not Sent', data?.message || error.message, data?.existing_student ? 'info' : 'error');
         } finally {
             setBusy(button, false);
+            otpSending = false;
+            updateOtpResendButton();
         }
     }
 
@@ -434,6 +662,9 @@
             const result = await api('verifyOtp', { verification_id: state.verificationId, email: personalPayload().email, otp: code });
             if (result.status !== 'success') throw new Error(result.message);
             state.verificationToken = result.verification_token;
+            state.verificationEmail = personalPayload().email;
+            state.verificationExpiresAt = Date.now() + 2 * 60 * 60 * 1000;
+            saveDraft();
             $('verificationSuccess').classList.remove('d-none');
             $('continueToPreferences').disabled = false;
             $('otpEntry').classList.add('d-none');
@@ -445,6 +676,7 @@
     }
 
     function renderAvailability() {
+        saveDraft();
         if (!state.availability.length) {
             $('availabilityList').innerHTML = '<p class="empty-availability">No preferred times added yet.</p>';
             return;
@@ -473,7 +705,8 @@
     }
 
     function selectedSubjects() {
-        return [...document.querySelectorAll('#subjectPicker input:checked')].map(input => Number(input.value));
+        return [...document.querySelectorAll('#subjectPicker input:checked')]
+            .filter(input => input.value !== 'others').map(input => Number(input.value));
     }
 
     function applicationPayload() {
@@ -486,8 +719,10 @@
             branch_id: $('branch').value,
             grade_level_id: tutorial ? ($('gradeLevel').value || null) : null,
             subject_ids: tutorial ? selectedSubjects() : [],
+            other_subject: tutorial && $('otherSubjectOption')?.checked ? $('otherSubjectName').value.trim() : null,
             goal: tutorial ? $('goal').value.trim() : '',
-            availability: tutorial ? state.availability : []
+            availability: tutorial ? state.availability : [],
+            preferred_session_hours: tutorial ? Number($('preferredSessionHours').value) : null
         };
     }
 
@@ -497,7 +732,12 @@
         if (!$('program').value) errors.push({ element: $('program'), message: 'Program is required.' });
         if (!$('branch').value) errors.push({ element: $('branch'), message: 'Preferred center is required.' });
         if (isTutorialProgram() && !$('gradeLevel').value) errors.push({ element: $('gradeLevel'), message: 'Select an active grade level for the Tutorial program.' });
+        clearFieldError($('otherSubjectName'));
+        if (isTutorialProgram() && $('otherSubjectOption')?.checked && !$('otherSubjectName').value.trim()) {
+            errors.push({ element: $('otherSubjectName'), message: 'Enter the subject you would like to study.' });
+        }
         if (isTutorialProgram() && !state.availability.length) errors.push({ element: $('availabilityList'), message: 'Add at least one preferred day and time for the Tutorial program.' });
+        if (isTutorialProgram() && ![1, 1.5, 2].includes(Number($('preferredSessionHours').value))) errors.push({ element: $('preferredSessionHours'), message: 'Select a session duration.' });
         if (errors.length) {
             showStep(3);
             showValidationErrors(errors, 'Learning Preferences Need Attention');
@@ -547,7 +787,10 @@
             ? otherFees.map(item => `<div class="billing-list-row"><span><i class="bi bi-journal-check"></i>${escapeHtml(item.product_name || 'Program item')}</span><strong>${money(item.price)}</strong></div>`).join('')
             : '<div class="billing-empty-row"><i class="bi bi-check2-circle"></i>No books or other fees for this program.</div>';
         const discountMarkup = discountAmount > 0
-            ? `<div class="billing-list-row billing-list-row--discount"><span><i class="bi bi-tags"></i>${escapeHtml(discountName || 'Program discount')}</span><strong>- ${money(discountAmount)}</strong></div>`
+            ? `<section class="billing-admin-section billing-discount-section">
+                <h3 class="billing-admin-section-title"><span><i class="bi bi-tags-fill"></i></span>Discount / Promo</h3>
+                <div class="billing-list"><div class="billing-list-row billing-list-row--discount"><span><i class="bi bi-tag"></i>${escapeHtml(discountName || 'Program discount')}</span><strong>- ${money(discountAmount)}</strong></div></div>
+            </section>`
             : '';
         const serviceMarkup = availableService ? `<section class="billing-admin-section">
             <h3 class="billing-admin-section-title"><span><i class="bi bi-bag-check-fill"></i></span>Services</h3>
@@ -566,10 +809,11 @@
                     <h3 class="billing-admin-section-title"><span><i class="bi bi-calculator-fill"></i></span>Fee Overview</h3>
                     <div class="billing-fee-grid">${primaryFees}</div>
                 </section>
-                ${preschool || otherFees.length || discountAmount > 0 ? `<section class="billing-admin-section">
+                ${preschool || otherFees.length ? `<section class="billing-admin-section">
                     <h3 class="billing-admin-section-title"><span><i class="bi bi-book-fill"></i></span>Books / Other Fees</h3>
-                    <div class="billing-list">${otherFeesMarkup}${discountMarkup}</div>
+                    <div class="billing-list">${otherFeesMarkup}</div>
                 </section>` : ''}
+                ${discountMarkup}
                 ${serviceMarkup}
             </div>
             <div class="billing-totals">
@@ -597,6 +841,7 @@
                 });
                 if (result.status !== 'success') throw new Error(result.message);
                 state.financialPreview = result.data;
+                saveDraft();
                 $('applicationBillingPanel').innerHTML = renderFinancialPreview(result.data, null, null);
                 bindBillingServiceToggle(false, null);
             } catch (error) {
@@ -609,7 +854,7 @@
     }
 
     function selectedApplicationPaymentMethod() {
-        const methodId = document.querySelector('input[name="applicationPaymentMethod"]:checked')?.value || '';
+        const methodId = $('applicationPaymentMethod')?.value || '';
         return state.lookups?.paymentMethods?.find(method => String(method.payment_method_id) === methodId) || null;
     }
 
@@ -618,12 +863,10 @@
     }
 
     function resolvePublicAsset(path) {
-        const value = String(path || '').trim();
-        if (!value || /^(?:https?:|data:|blob:|\/)/i.test(value)) return value;
-        return value.replace(/^\.\//, '');
-    }
+    return window.resolveUploadUrl(path);
+}
 
-    async function copyGcashAccountNumber(accountNumber, button) {
+    async function copyPaymentAccountNumber(accountNumber, button) {
         if (!accountNumber || !button) return;
         try {
             if (navigator.clipboard?.writeText) {
@@ -646,16 +889,16 @@
                 button.classList.remove('is-copied');
             }, 1800);
         } catch (error) {
-            Swal.fire('Unable to Copy', 'Please select and copy the GCash account number manually.', 'info');
+            Swal.fire('Unable to Copy', 'Please select and copy the account number manually.', 'info');
         }
     }
 
-    function viewGcashQrCode(method, qrUrl) {
+    function viewPaymentQrCode(method, qrUrl) {
         if (!qrUrl) return;
         Swal.fire({
-            title: `${method.payment_method || 'GCash'} QR Code`,
+            titleText: `${method.payment_method || 'Payment'} QR Code`,
             imageUrl: qrUrl,
-            imageAlt: `${method.payment_method || 'GCash'} QR code`,
+            imageAlt: `${method.payment_method || 'Payment'} QR code`,
             confirmButtonText: 'Close',
             buttonsStyling: false,
             customClass: {
@@ -722,7 +965,8 @@
         const method = selectedApplicationPaymentMethod();
         const expected = Number(financial?.initial_payment || 0);
         if (!method) {
-            target.innerHTML = '<div class="alert alert-warning mb-0">Choose Cash or GCash to continue.</div>';
+            target.className = '';
+            target.innerHTML = '';
             return;
         }
         if (paymentMethodIs(method, 'cash')) {
@@ -730,39 +974,38 @@
             target.innerHTML = '<div class="d-flex gap-2"><i class="bi bi-building"></i><div><strong>Please visit the center to pay in cash.</strong><div class="small mt-1">You may continue and submit the application now. Payment will be collected at your selected center after approval.</div></div></div>';
             return;
         }
-
+        const isGcash = paymentMethodIs(method, 'gcash');
         const qrUrl = resolvePublicAsset(method.qr_code);
         const accountName = String(method.account_name || '').trim();
         const accountNumber = String(method.account_number || '').trim();
         target.className = 'application-payment-detail application-payment-detail--gcash';
         target.innerHTML = `
-            <div class="application-gcash-title"><span><i class="bi bi-credit-card"></i></span><h3>Make Payment</h3></div>
             <div class="application-gcash-account">
                 <div class="application-gcash-account-copy">
                     <span class="application-gcash-eyebrow"><i class="bi bi-shield-check"></i> Send payment to</span>
-                    <h4>${escapeHtml(method.payment_method || 'GCash')}</h4>
+                    <h4>${escapeHtml(method.payment_method || 'Payment')}</h4>
                     <dl>
                         ${accountName ? `<div><dt>Account name</dt><dd>${escapeHtml(accountName)}</dd></div>` : ''}
                         ${accountNumber ? `<div><dt>Account number</dt><dd><strong>${escapeHtml(accountNumber)}</strong><button type="button" id="applicationCopyGcashAccount" class="application-gcash-copy"><i class="bi bi-copy"></i><span>Copy</span></button></dd></div>` : ''}
                     </dl>
                     <p><i class="bi bi-info-circle"></i> Verify the account details before sending your payment.</p>
                 </div>
-                ${qrUrl ? `<button type="button" id="applicationViewGcashQr" class="application-gcash-qr" title="View larger QR code"><img src="${escapeHtml(qrUrl)}" alt="${escapeHtml(method.payment_method || 'GCash')} QR code"><span><i class="bi bi-arrows-fullscreen"></i> View larger</span></button>` : '<div class="application-gcash-qr-empty"><i class="bi bi-qr-code"></i><span>QR code is not configured.</span></div>'}
+                ${qrUrl ? `<button type="button" id="applicationViewGcashQr" class="application-gcash-qr" title="View larger QR code"><img src="${escapeHtml(qrUrl)}" alt="${escapeHtml(method.payment_method || 'Payment')} QR code"><span><i class="bi bi-arrows-fullscreen"></i> View larger</span></button>` : '<div class="application-gcash-qr-empty"><i class="bi bi-qr-code"></i><span>QR code is not configured.</span></div>'}
             </div>
             <div class="alert alert-info"><strong>Amount due: ${money(expected)}</strong><br><small>Upload the receipt after sending this exact registration fee and downpayment total.</small></div>
             <label class="application-receipt-upload" for="applicationGcashScreenshot">
-                <strong><i class="bi bi-cloud-arrow-up me-2"></i>Upload GCash receipt</strong>
+                <strong><i class="bi bi-cloud-arrow-up me-2"></i>Upload ${escapeHtml(method.payment_method)} payment receipt</strong>
                 <input class="form-control mt-2" type="file" id="applicationGcashScreenshot" accept="image/jpeg,image/png,image/webp,image/bmp,.jpg,.jpeg,.png,.webp,.bmp">
             </label>
-            <div class="d-flex justify-content-end mt-2"><button type="button" class="btn btn-outline-primary btn-sm" id="applicationRunOcr"><i class="bi bi-bounding-box me-1"></i>Read Receipt</button></div>
-            <small id="applicationOcrStatus" class="small text-muted d-block mt-2">The receipt reader will fill in the amount and reference number. Please verify them before submitting.</small>
-            <div id="applicationReceiptPreviewWrapper" class="application-receipt-preview d-none"><img id="applicationReceiptPreviewImage" class="img-fluid rounded" alt="GCash receipt preview"></div>
+            <div class="d-flex justify-content-end mt-2"><button type="button" class="btn btn-outline-primary btn-sm ${isGcash ? '' : 'd-none'}" id="applicationRunOcr"><i class="bi bi-bounding-box me-1"></i>Read Receipt</button></div>
+            <small id="applicationOcrStatus" class="small text-muted d-block mt-2">${isGcash ? 'The GCash receipt reader can fill in the amount and reference number. Please verify them before submitting.' : 'Enter the amount and reference number shown on your receipt.'}</small>
+            <div id="applicationReceiptPreviewWrapper" class="application-receipt-preview d-none"><img id="applicationReceiptPreviewImage" class="img-fluid rounded" alt="Payment receipt preview"></div>
             <div class="application-gcash-fields mt-3">
                 <div><label class="form-label" for="applicationPaymentAmount">Receipt amount *</label><input type="number" class="form-control" id="applicationPaymentAmount" step="0.01" min="0.01" placeholder="${expected.toFixed(2)}"></div>
-                <div><label class="form-label" for="applicationPaymentReference">GCash reference number *</label><input class="form-control" id="applicationPaymentReference" inputmode="numeric" maxlength="13" pattern="\d{13}" placeholder="13-digit reference number"></div>
+                <div><label class="form-label" for="applicationPaymentReference">${isGcash ? 'GCash reference number' : 'Reference number'} *</label><input class="form-control" id="applicationPaymentReference" ${isGcash ? 'inputmode="numeric" maxlength="13" pattern="(?:\\d{10}|\\d{12}|\\d{13})" placeholder="10-, 12-, or 13-digit reference number"' : 'placeholder="Enter the transaction reference number"'}></div>
             </div>`;
-        $('applicationCopyGcashAccount')?.addEventListener('click', event => copyGcashAccountNumber(accountNumber, event.currentTarget));
-        $('applicationViewGcashQr')?.addEventListener('click', () => viewGcashQrCode(method, qrUrl));
+        $('applicationCopyGcashAccount')?.addEventListener('click', event => copyPaymentAccountNumber(accountNumber, event.currentTarget));
+        $('applicationViewGcashQr')?.addEventListener('click', () => viewPaymentQrCode(method, qrUrl));
         window.attachGcashOcrAutoFill?.({
             fileInputId: 'applicationGcashScreenshot',
             actionButtonId: 'applicationRunOcr',
@@ -770,7 +1013,8 @@
             refInputId: 'applicationPaymentReference',
             statusId: 'applicationOcrStatus',
             previewWrapperId: 'applicationReceiptPreviewWrapper',
-            previewImageId: 'applicationReceiptPreviewImage'
+            previewImageId: 'applicationReceiptPreviewImage',
+            isEnabled: () => isGcash
         });
     }
 
@@ -786,16 +1030,16 @@
             $('viewPublicPaymentReceipt')?.addEventListener('click', () => showPublicPaymentReceipt(application).catch(error => Swal.fire('Receipt Unavailable', error.message, 'error')));
             return;
         }
-        const methods = (state.lookups?.paymentMethods || []).filter(method => paymentMethodIs(method, 'cash') || paymentMethodIs(method, 'gcash'));
-        $('applicationPaymentPanel').innerHTML = `<section class="application-payment-panel"><h3>Payment Method</h3><p class="text-muted mb-0">Choose how to handle the registration fee and downpayment.</p><div class="application-payment-methods">${methods.map((method, index) => `<label class="application-payment-choice"><input type="radio" name="applicationPaymentMethod" value="${escapeHtml(method.payment_method_id)}" ${index === 0 ? 'checked' : ''}><span><strong>${escapeHtml(method.payment_method)}</strong><small>${paymentMethodIs(method, 'cash') ? 'Pay at the selected center after approval' : 'Pay now and upload the GCash receipt'}</small></span></label>`).join('')}</div><div id="applicationPaymentDetail"></div></section>`;
-        document.querySelectorAll('input[name="applicationPaymentMethod"]').forEach(input => input.addEventListener('change', () => renderPaymentMethodDetail(financial)));
+        const methods = (state.lookups?.paymentMethods || []).filter(method => method.payment_method);
+        $('applicationPaymentPanel').innerHTML = `<section class="application-payment-panel"><div class="application-payment-heading"><span class="application-payment-heading-icon"><i class="bi bi-credit-card"></i></span><h3>Make Payment</h3></div><label class="application-payment-select-label" for="applicationPaymentMethod">Payment Method</label><select class="form-select application-payment-select" id="applicationPaymentMethod"><option value="">Choose a payment method</option>${methods.map(method => `<option value="${escapeHtml(method.payment_method_id)}">${escapeHtml(method.payment_method)}</option>`).join('')}</select><div id="applicationPaymentDetail"></div></section>`;
+        $('applicationPaymentMethod').addEventListener('change', () => renderPaymentMethodDetail(financial));
         renderPaymentMethodDetail(financial);
     }
 
     function validateApplicationPayment(financial) {
         const method = selectedApplicationPaymentMethod();
         if (!method) {
-            Swal.fire('Payment Method Required', 'Choose Cash or GCash before submitting.', 'warning');
+            Swal.fire('Payment Method Required', 'Choose a payment method before submitting.', 'warning');
             return null;
         }
         const payment = { payment_method_id: method.payment_method_id, payment_amount: Number(financial?.initial_payment || 0), payment_reference_no: '', file: null };
@@ -804,11 +1048,12 @@
         payment.payment_amount = Number($('applicationPaymentAmount')?.value || 0);
         payment.payment_reference_no = $('applicationPaymentReference')?.value.trim() || '';
         const expected = Number(financial?.initial_payment || 0);
-        if (!payment.file) return void Swal.fire('GCash Receipt Required', 'Upload the GCash receipt screenshot.', 'warning');
+        if (!payment.file) return void Swal.fire('Payment Receipt Required', 'Upload the payment receipt screenshot.', 'warning');
         if (payment.file.size > 10 * 1024 * 1024) return void Swal.fire('Receipt Too Large', 'Choose an image no larger than 10MB.', 'warning');
-        if ($('applicationOcrStatus')?.dataset.ocrBusy === 'true') return void Swal.fire('Receipt Is Still Being Read', 'Please wait for OCR to finish.', 'info');
-        if (!payment.payment_amount || Math.abs(payment.payment_amount - expected) > 0.01) return void Swal.fire('Incorrect Receipt Amount', `The GCash receipt must show ${money(expected)}.`, 'warning');
-        if (!/^\d{13}$/.test(payment.payment_reference_no)) return void Swal.fire('Invalid Reference Number', 'The GCash reference number must contain exactly 13 digits.', 'warning');
+        if (paymentMethodIs(method, 'gcash') && $('applicationOcrStatus')?.dataset.ocrBusy === 'true') return void Swal.fire('Receipt Is Still Being Read', 'Please wait for OCR to finish.', 'info');
+        if (!payment.payment_amount || Math.abs(payment.payment_amount - expected) > 0.01) return void Swal.fire('Incorrect Receipt Amount', `The receipt amount must be ${money(expected)}.`, 'warning');
+        if (!payment.payment_reference_no) return void Swal.fire('Reference Number Required', 'Enter the transaction reference number.', 'warning');
+        if (paymentMethodIs(method, 'gcash') && !/^(?:\d{10}|\d{12}|\d{13})$/.test(payment.payment_reference_no)) return void Swal.fire('Invalid Reference Number', 'The GCash reference number must contain 10, 12, or 13 digits.', 'warning');
         return payment;
     }
 
@@ -831,6 +1076,8 @@
 
     async function reviewBilling() {
         if (!validatePersonalStep() || !validateLearningPreferences()) return;
+        try { agreementForm.payload(); }
+        catch (error) { return Swal.fire('Agreement Required', error.message, 'warning'); }
         const button = $('reviewBillingButton');
         setBusy(button, true, 'Loading billing…');
         try {
@@ -851,12 +1098,12 @@
         const payment = validateApplicationPayment(state.financialPreview);
         if (!payment) return;
         const method = selectedApplicationPaymentMethod();
-        const isGcash = paymentMethodIs(method, 'gcash');
+        const isCash = paymentMethodIs(method, 'cash');
         const confirmed = await Swal.fire({
             icon: 'question', title: 'Submit this application?',
-            text: isGcash
-                ? 'Your GCash receipt will be recorded with the application. After approval, the center can assign a teacher or class.'
-                : 'Please visit the selected center after approval to pay the registration fee and downpayment in cash.',
+            text: isCash
+                ? 'Please visit the selected center after approval to pay the registration fee and downpayment in cash.'
+                : `Your ${method.payment_method} receipt will be recorded with the application. After approval, the center can assign a teacher or class.`,
             showCancelButton: true, confirmButtonText: 'Submit Application'
         });
         if (!confirmed.isConfirmed) return;
@@ -865,6 +1112,7 @@
         try {
             const result = await multipartApi('submitApplication', {
                 ...applicationPayload(),
+                ...agreementForm.payload(),
                 include_service: Boolean(state.financialPreview?.service_id),
                 service_id: state.financialPreview?.service_id || null,
                 payment_method_id: payment.payment_method_id,
@@ -880,6 +1128,8 @@
                 birthday: personal.birthday
             };
             state.applicationSubmitted = true;
+            state.tracking = tracking;
+            saveDraft();
             await showApplicationStatus(tracking, true);
         } catch (error) {
             const data = error.response?.data;
@@ -896,9 +1146,9 @@
 
     function statusPresentation(status, item = null) {
         const preschool = isPreschoolProgram(item?.program_name || '');
-        const submittedGcash = String(item?.application_payment?.payment_method || '').toLowerCase() === 'gcash';
-        if (status === 'pending_review' && submittedGcash) {
-            return ['Pending Review', 'bi-hourglass-split', 'Your application and GCash receipt were submitted.', 'The center will review the application and payment proof. Once approved, teacher or class assignment can begin.'];
+        const submittedOnlinePayment = item?.application_payment?.payment_status === 'pending_review';
+        if (status === 'pending_review' && submittedOnlinePayment) {
+            return ['Pending Review', 'bi-hourglass-split', 'Your application and payment receipt were submitted.', 'The center will review the application and payment proof. Once approved, teacher or class assignment can begin.'];
         }
         if (status === 'ready_for_scheduling' && preschool) {
             return ['Ready for Class & Section', 'bi-diagram-3', 'Your payment was received and a receipt was issued.', 'The center will assign the student to an available class and section.'];
@@ -927,13 +1177,14 @@
             Swal.close();
             const item = result.data;
             state.applicationSubmitted = true;
+            state.tracking = tracking;
             state.availableSteps = preserveFormSteps ? new Set([1, 2, 3, 4, 5]) : new Set([4, 5]);
             renderApplicationBilling(item, true);
             const [label, icon, summary, next] = statusPresentation(item.status, item);
             $('applicationStatusPanel').innerHTML = `<div class="status-hero"><div class="status-icon"><i class="bi ${icon}"></i></div><span class="application-eyebrow">APPLICATION ${escapeHtml(item.application_number)}</span><h2>${escapeHtml(summary)}</h2><span class="status-badge ${item.status}"><i class="bi ${icon}"></i>${escapeHtml(label.toUpperCase())}</span><div class="status-details"><div class="status-detail"><small>Student</small><strong>${escapeHtml([item.first_name, item.middle_name, item.last_name, item.ext].filter(Boolean).join(' '))}</strong></div><div class="status-detail"><small>Student ID</small><strong>${escapeHtml(item.student_id_number)}</strong></div><div class="status-detail"><small>Program</small><strong>${escapeHtml(item.program_name)}</strong></div><div class="status-detail"><small>Center</small><strong>${escapeHtml(item.branch_name)}</strong></div></div><div class="next-step-card"><strong><i class="bi bi-arrow-right-circle me-2"></i>Next step</strong><p class="mb-0 mt-2">${escapeHtml(next)}</p>${item.review_notes ? `<p class="mb-0 mt-2"><strong>Center notes:</strong> ${escapeHtml(item.review_notes)}</p>` : ''}</div><div class="d-flex justify-content-center gap-2 mt-4"><button type="button" class="btn btn-outline-secondary" id="refreshApplicationStatus"><i class="bi bi-arrow-clockwise me-2"></i>Refresh Status</button>${item.status === 'enrolled' ? '<a class="btn btn-primary" href="login.html">Student Login</a>' : ''}<button type="button" class="btn btn-light" id="startAnotherApplication">Apply for Another Child</button></div></div>`;
             unlockAndShowStep(5);
             $('refreshApplicationStatus').onclick = () => showApplicationStatus(tracking, preserveFormSteps);
-            $('startAnotherApplication').onclick = () => window.location.reload();
+            $('startAnotherApplication').onclick = () => { draftReady = false; clearDraft(); window.location.reload(); };
             maybeShowNewPublicReceipt(item);
         } catch (error) {
             Swal.fire('Application Not Found', error.response?.data?.message || error.message, 'error');
@@ -975,6 +1226,22 @@
     }
 
     function bindEvents() {
+        $('newStudentApplicationForm').addEventListener('input', saveDraft);
+        $('newStudentApplicationForm').addEventListener('change', saveDraft);
+        $('email').addEventListener('input', () => {
+            if (!state.verificationEmail || personalPayload().email === state.verificationEmail) return;
+            state.verificationId = null;
+            state.verificationToken = null;
+            state.verificationEmail = '';
+            state.verificationExpiresAt = 0;
+            state.availableSteps = new Set([1]);
+            $('verificationSuccess').classList.add('d-none');
+            $('otpEntry').classList.add('d-none');
+            $('continueToPreferences').disabled = true;
+            showStep(1, false);
+        });
+        window.addEventListener('pagehide', saveDraft);
+        $('guardianRelationship').addEventListener('change', updateGuardianRelationshipField);
         $('continueToVerification').addEventListener('click', continueToVerification);
         $('sendOtpButton').addEventListener('click', sendOtp);
         $('verifyOtpButton').addEventListener('click', verifyOtp);
@@ -999,6 +1266,7 @@
             const item = state.lookups.programs.find(program => String(program.program_id) === event.target.value);
             $('programSummary').textContent = item ? `${item.total_units} ${item.unit_type}${Number(item.total_units) === 1 ? '' : 's'}` : '';
             updateProgramPreferenceFields(item);
+            agreementForm.setProgram(event.target.value, $('guardianName').value, item?.program_type_name || item?.program_type || '');
         });
         $('branch').addEventListener('change', event => {
             const item = state.lookups.branches.find(branch => String(branch.branch_id) === event.target.value);
@@ -1008,6 +1276,7 @@
             clearFieldError(event.target);
             try {
                 await loadCities(selectedAddressCode(event.target));
+                saveDraft();
             } catch (error) {
                 console.error('Unable to load Philippine cities/municipalities:', error);
                 resetAddressSelect($('city'), 'Unable to load cities');
@@ -1019,6 +1288,7 @@
             clearFieldError(event.target);
             try {
                 await loadBarangays(selectedAddressCode(event.target));
+                saveDraft();
             } catch (error) {
                 console.error('Unable to load Philippine barangays:', error);
                 resetAddressSelect($('barangay'), 'Unable to load barangays');
@@ -1039,6 +1309,7 @@
             if (!event.target.matches('input[type="checkbox"]')) return;
             updateSubjectSelection();
         });
+        $('otherSubjectName').addEventListener('input', updateSubjectSelection);
         document.addEventListener('click', event => {
             if (!$('subjectMultiSelect').contains(event.target)) closeSubjectDropdown();
         });
@@ -1052,13 +1323,17 @@
     }
 
     document.addEventListener('DOMContentLoaded', async () => {
+        const draft = readDraft();
         bindEvents();
-        showStep(1);
+        showStep(1, false);
         renderAvailability();
         const today = new Date();
-        $('birthday').max = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const minimumBirthdate = new Date(today.getFullYear() - 2, today.getMonth(), today.getDate());
+        $('birthday').max = `${minimumBirthdate.getFullYear()}-${String(minimumBirthdate.getMonth() + 1).padStart(2, '0')}-${String(minimumBirthdate.getDate()).padStart(2, '0')}`;
         try {
             await Promise.all([loadLookups(), initPhilippineAddresses()]);
+            await restoreDraft(draft);
+            draftReady = true;
         } catch (error) {
             Swal.fire('Enrollment Unavailable', error.response?.data?.message || error.message, 'error');
         }

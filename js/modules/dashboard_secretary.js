@@ -1,13 +1,14 @@
 const ENDPOINT = '../../api/secretary/dashboard.php';
 const ALL_CENTERS = 'all';
 const state = {
-    branches: [], centerWorkload: [], employeeSummary: [], enrollmentPipeline: [],
+    branches: [], centerWorkload: [], enrollmentCounts: [], enrollmentPipeline: [],
     pendingPayments: [], recentEnrollments: [], summaryAll: {}, todaySchedules: []
 };
 
 document.addEventListener('DOMContentLoaded', () => {
     if (!document.querySelector('.secretary-dashboard')) return;
     document.getElementById('secretary-center-filter')?.addEventListener('change', renderAll);
+    document.getElementById('secretary-enrollment-filter')?.addEventListener('change', renderSummary);
     setupDashboardModals();
     loadDashboard();
 });
@@ -19,9 +20,8 @@ async function loadDashboard() {
         if (!response.ok || payload.status !== 'success') throw new Error(payload.message || 'Request failed');
         state.branches = payload.branches || [];
         state.centerWorkload = payload.center_workload || [];
-        state.employeeSummary = payload.employee_summary || [];
+        state.enrollmentCounts = payload.enrollment_counts || [];
         state.enrollmentPipeline = payload.enrollment_pipeline || [];
-        state.pendingPayments = payload.pending_payments || [];
         state.pendingPayments = payload.pending_payments || [];
         state.recentEnrollments = payload.recent_enrollments || [];
         state.summaryAll = payload.summary_all || {};
@@ -31,7 +31,6 @@ async function loadDashboard() {
     } catch (error) {
         console.error('Error loading secretary dashboard:', error);
         document.getElementById('secretary-dashboard-error').textContent = 'Dashboard information could not be loaded. Please refresh the page.';
-        renderAll();
     }
 }
 
@@ -47,7 +46,6 @@ function renderAll() {
     renderCenterWorkload();
     renderRecentEnrollments();
     renderPendingPayments();
-    renderStaffSummary();
     configureDashboardTriggers();
 }
 
@@ -57,14 +55,20 @@ function renderSummary() {
     setText('secretary-pending-applications', formatNumber(summary.pending_applications));
     setText('secretary-today-sessions', formatNumber(summary.today_sessions));
     setText('secretary-pending-payments-total', formatNumber(summary.pending_payments));
-    setText('secretary-active-employees', formatNumber(summary.active_employees));
+    const enrollmentTotal = enrollmentRows().reduce((sum, row) => sum + number(row.total), 0);
+    setText('secretary-total-enrollments', formatNumber(enrollmentTotal));
+}
+
+function enrollmentRows() {
+    const category = document.getElementById('secretary-enrollment-filter')?.value || 'all';
+    return filterRows(state.enrollmentCounts).filter(row => row.category === category);
 }
 
 function renderPipeline() {
     const rows = filterRows(state.enrollmentPipeline);
-    const statuses = ['pending', 'approved', 'enrolled', 'incomplete', 'cancelled'];
+    const statuses = ['pending', 'approved', 'enrolled', 'incomplete', 'completed'];
     const values = Object.fromEntries(statuses.map(status => [status, rows.filter(row => normalize(row.status) === status).reduce((sum, row) => sum + number(row.total), 0)]));
-    const colors = { pending:'#ef6f91', approved:'#348bd4', enrolled:'#4d9d5e', incomplete:'#ffb22d', cancelled:'#d2d7de' };
+    const colors = { pending:'#ef6f91', approved:'#348bd4', enrolled:'#4d9d5e', incomplete:'#ffb22d', completed:'#ea9aa6' };
     const max = Math.max(1, ...Object.values(values));
     document.getElementById('secretary-enrollment-pipeline').innerHTML = statuses.map(status => `<div class="secretary-pipeline-row"><span>${label(status)}</span><div class="secretary-pipeline-bar"><i style="--bar-color:${colors[status]};width:${values[status] / max * 100}%"></i></div><strong>${formatNumber(values[status])}</strong></div>`).join('');
 }
@@ -91,14 +95,6 @@ function renderPendingPayments() {
     document.getElementById('secretary-pending-payments').innerHTML = rows.slice(0, 5).map(row => `<div class="secretary-list-item"><div class="secretary-list-icon"><i class="bi bi-credit-card"></i></div><div><strong>${escapeHtml(row.student_name)}</strong><small>${escapeHtml(row.branch_name)} | ${escapeHtml(row.billing_type || row.program_name)}</small></div><span class="secretary-list-value">${currency(row.amount_paid)}</span></div>`).join('') || '<div class="secretary-empty">No pending payments need follow-up.</div>';
 }
 
-function renderStaffSummary() {
-    const rows = filterRows(state.employeeSummary);
-    const totals = new Map();
-    rows.forEach(row => totals.set(row.role_name, (totals.get(row.role_name) || 0) + number(row.total)));
-    const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]);
-    document.getElementById('secretary-staff-summary').innerHTML = sorted.map(([role, total]) => `<div class="secretary-list-item"><div class="secretary-list-icon"><i class="bi bi-person-badge"></i></div><div><strong>${escapeHtml(role)}</strong><small>Active employees</small></div><span class="secretary-list-value">${formatNumber(total)}</span></div>`).join('') || '<div class="secretary-empty">No active employee records available.</div>';
-}
-
 function setupDashboardModals() {
     const dashboard = document.querySelector('.secretary-dashboard');
     if (!dashboard) return;
@@ -111,6 +107,7 @@ function setupDashboardModals() {
     });
 
     dashboard.addEventListener('keydown', event => {
+        if (event.target.closest('a,button,select,input')) return;
         if (!['Enter', ' '].includes(event.key)) return;
         const trigger = event.target.closest('[data-dashboard-modal]');
         if (!trigger || !dashboard.contains(trigger)) return;
@@ -170,18 +167,12 @@ function getDashboardModal() {
 
 function getDashboardModalContent(key) {
     const pipelineRows = () => {
-        const statuses = ['pending', 'approved', 'enrolled', 'incomplete', 'cancelled'];
+        const statuses = ['pending', 'approved', 'enrolled', 'incomplete', 'completed'];
         const rows = filterRows(state.enrollmentPipeline);
         return statuses.map(status => ({
             status,
             total: rows.filter(row => normalize(row.status) === status).reduce((sum, row) => sum + number(row.total), 0)
         }));
-    };
-
-    const staffRows = () => {
-        const totals = new Map();
-        filterRows(state.employeeSummary).forEach(row => totals.set(row.role_name, (totals.get(row.role_name) || 0) + number(row.total)));
-        return [...totals.entries()].map(([role, total]) => ({ role, total })).sort((a, b) => b.total - a.total);
     };
 
     const modalMap = {
@@ -203,11 +194,11 @@ function getDashboardModalContent(key) {
             linkText: 'Open payments',
             body: table(['Student', 'Center', 'Billing', 'Program', 'Date', 'Amount'], filterRows(state.pendingPayments), row => [row.student_name, row.branch_name, row.billing_type, row.program_name, row.payment_date, currency(row.amount_paid)], 'No pending payments need follow-up.')
         }),
-        'active-employees': () => ({
-            title: '<i class="bi bi-person-badge me-2"></i>Active Employees',
-            href: 'employee.html',
-            linkText: 'Open employees',
-            body: table(['Role', 'Active Employees'], staffRows(), row => [row.role, formatNumber(row.total)], 'No active employee records are available.')
+        'total-enrollments': () => ({
+            title: '<i class="bi bi-people-fill me-2"></i>Total Enrollment',
+            href: ['preschool', 'playschool'].includes(document.getElementById('secretary-enrollment-filter')?.value) ? 'enrollement_pre_play.html' : 'enrollement.html',
+            linkText: 'Manage enrollments',
+            body: table(['Center', 'Program Category', 'Enrollments'], enrollmentRows(), row => [row.branch_name, { all:'All Programs', tutorial:'Tutorial', preschool:'Pre School', playschool:'Play School' }[row.category], formatNumber(row.total)], 'No enrollment records are available.')
         }),
         'enrollment-pipeline': () => ({
             title: '<i class="bi bi-funnel me-2"></i>Enrollment Pipeline',

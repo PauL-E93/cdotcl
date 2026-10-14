@@ -2,15 +2,7 @@
  * PRESCHOOL & PLAYSCHOOL BILLING CONTROLLER 
  * Updated with FIFO logic + Payment History while maintaining original UI Layout
  */
-
-function getStudentReceiptHandler() {
-    return typeof window.showPaymentReceipt === 'function'
-        ? (receipt) => window.showPaymentReceipt({
-            ...receipt,
-            copyLabels: ['CUSTOMER COPY']
-        })
-        : null;
-}
+import { penaltyAdjustmentCard } from '../modules/penalty_adjustment.js';
 
 function escapePrePlayPaymentDetail(value) {
     return String(value ?? '')
@@ -22,10 +14,7 @@ function escapePrePlayPaymentDetail(value) {
 }
 
 function resolvePrePlayPaymentQrUrl(qrPath) {
-    const value = String(qrPath || '').trim();
-    if (!value) return '';
-    if (/^(?:https?:|data:|blob:|\/)/i.test(value) || value.startsWith('../')) return value;
-    return `../../${value.replace(/^\.\//, '')}`;
+    return window.resolveUploadUrl(qrPath);
 }
 
 function buildPrePlayPaymentMethodDetails(method) {
@@ -122,7 +111,7 @@ async function ensureStudentPrePlayEnrollmentHelpers() {
         return;
     }
 
-    await import(getStudentModuleImportUrl('../../js/studentmodule/pre_play_enrollment.js'));
+    await import(getStudentModuleImportUrl('../../js/studentmodule/pre_play_enrollment.js?v=20261006-upload-images-r2'));
 }
 
 window.openStudentPrePlayIncompleteEnrollment = async function(enrollmentId) {
@@ -207,6 +196,14 @@ function ensureStudentPrePlayBillingResponsiveStyles() {
         .preplay-billing-modal-container{padding:6px}
         .preplay-billing-popup{--pp-pink:#e85d88;--pp-pink-dark:#d94b78;--pp-pink-soft:#fff4f7;--pp-pink-border:#f4c4d3;--pp-ink:#1d2a3b;--pp-muted:#667085;width:min(1000px,calc(100vw - 20px))!important;max-width:1000px!important}
         .preplay-billing-popup .swal2-html-container{margin-inline:1em}
+        .preplay-billing-summary-card{border:1px solid var(--pp-pink-border)!important;border-radius:18px!important;background:#fff!important;box-shadow:0 3px 10px rgba(90,44,59,.05)}
+        .preplay-billing-summary-heading{display:flex;align-items:center;gap:14px;margin:0 0 26px;color:var(--pp-pink);font-size:1.35rem;font-weight:750}
+        .preplay-billing-summary-icon{display:grid;flex:0 0 46px;width:46px;height:46px;place-items:center;border-radius:12px;color:var(--pp-pink);background:#fdeaf0;font-size:1.25rem}
+        .preplay-billing-summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 48px;align-items:start}
+        .preplay-billing-summary-item{min-width:0}
+        .preplay-billing-summary-item .small{margin-bottom:3px}
+        .preplay-billing-summary-item .fw-bold{overflow-wrap:anywhere;line-height:1.35}
+        .preplay-billing-summary-item--wide{grid-column:1/-1}
         .preplay-timeline-content{display:grid;grid-template-columns:minmax(150px,1fr) minmax(270px,1.25fr) auto;align-items:center;gap:16px;min-width:0;flex:1}
         .preplay-timeline-main{min-width:0}
         .preplay-timeline-title{font-weight:700;overflow-wrap:anywhere}
@@ -295,6 +292,8 @@ function ensureStudentPrePlayBillingResponsiveStyles() {
             .preplay-payment-read-receipt{width:100%;margin-top:14px}
             .preplay-payment-upload-zone{min-height:160px;padding:20px 12px}
             .preplay-payment-upload-subtitle{font-size:.84rem}
+            .preplay-billing-summary-heading{margin-bottom:20px;font-size:1.2rem}
+            .preplay-billing-summary-grid{gap:16px 24px}
             .preplay-billing-popup .billing-container .row.g-3{--bs-gutter-y:12px}
             .preplay-billing-popup .billing-container .d-flex.justify-content-between{gap:12px}
             .preplay-billing-popup .billing-container .d-flex.justify-content-between>*{min-width:0;overflow-wrap:anywhere}
@@ -302,6 +301,7 @@ function ensureStudentPrePlayBillingResponsiveStyles() {
             .preplay-billing-popup .swal2-confirm,.preplay-billing-popup .swal2-cancel{width:100%;margin:0;min-height:48px}
         }
         @media(max-width:380px){
+            .preplay-billing-summary-grid{grid-template-columns:1fr}
             .preplay-timeline-metrics{grid-template-columns:1fr}
             .preplay-billing-popup .payment-timeline-indicator{width:2rem}
             .preplay-billing-popup .payment-timeline-marker{width:2rem;height:2rem}
@@ -314,6 +314,9 @@ function ensureStudentPrePlayBillingResponsiveStyles() {
 function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProducts = [], totalPaymentsMade = 0, showPayment = true, enrollmentStatus = 'unknown', paymentsHistory = [], enrollmentDetails = {}) {
     ensureStudentPrePlayBillingResponsiveStyles();
     const isIncompleteEnrollment = String(enrollmentStatus || '').toLowerCase() === 'incomplete';
+    const applicationStatus = String(enrollmentDetails.application_status || '').toLowerCase();
+    const isReadyForPlacement = applicationStatus === 'ready_for_scheduling';
+    const isAwaitingCenterReview = ['pending_review', 'approved_for_payment'].includes(applicationStatus);
     // 1. DATA CALCULATIONS
     // The API's schedule amount is billing_schedule.total_amount, which includes
     // the calculated penalty. Do not replace it with original_amount.
@@ -431,9 +434,12 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
     const pendingPaymentTotal = pendingPayments.reduce((sum, p) => sum + parseFloat(p.amount_paid || 0), 0);
 
     // 2. UI COMPONENTS
-    const gcashMethod = paymentMethods.find(pm => (pm.payment_method || '').toLowerCase().includes('gcash'));
-    const gcashMethodId = gcashMethod ? gcashMethod.payment_method_id : '';
-    const gcashPaymentDetails = buildPrePlayPaymentMethodDetails(gcashMethod);
+    const onlineMethods = paymentMethods.filter(pm =>
+        pm.payment_method && pm.payment_method.trim().toLowerCase() !== 'cash'
+    );
+    const methodOptions = onlineMethods.map(pm =>
+        `<option value="${escapePrePlayPaymentDetail(pm.payment_method_id)}">${escapePrePlayPaymentDetail(pm.payment_method)}</option>`
+    ).join('');
 
     const getStatusMeta = status => {
         const normalized = (status || '').toString().trim().toLowerCase();
@@ -503,13 +509,21 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
         </div>
     `).join('');
 
-    const paymentSection = isIncompleteEnrollment ? `
+    const paymentSection = isReadyForPlacement || isAwaitingCenterReview ? `
+        <div class="alert alert-info text-center mx-3">
+            <i class="bi bi-diagram-3"></i> ${isReadyForPlacement
+                ? 'Your payment has been received. The center is assigning your class and section.'
+                : applicationStatus === 'approved_for_payment'
+                    ? 'Your application is awaiting payment at the center. Please contact your branch for payment.'
+                    : 'Your application is awaiting review by the center.'}
+        </div>
+    ` : isIncompleteEnrollment ? `
         <div class="alert alert-warning text-center mx-3">
             <i class="bi bi-exclamation-triangle"></i> This enrollment is incomplete. Please complete the enrollment first.
         </div>
     ` : hasPendingPayment ? `
         <div class="alert alert-warning text-center mx-3">
-            Your GCash payment of ${formatCurrency(pendingPaymentTotal)} is pending admin review.
+            Your payment of ${formatCurrency(pendingPaymentTotal)} is pending admin review.
         </div>
     ` : (showPayment && !isFullyPaid) ? `
         <section class="preplay-payment-card" aria-labelledby="preplayMakePaymentTitle">
@@ -518,14 +532,19 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                 Make Payment
             </h3>
 
-            ${gcashPaymentDetails}
+            <label class="form-label fw-semibold" for="preplayPaymentMethod">Payment Method</label>
+            <select class="form-select mb-3" id="preplayPaymentMethod" required>
+                <option value="">Choose a payment method</option>${methodOptions}
+            </select>
+            <div id="preplayPaymentMethodDetails"></div>
+            <div id="preplayPaymentProofFields" class="d-none">
 
             <div class="preplay-payment-receipt-heading">
                 <div class="preplay-payment-receipt-copy">
-                    <strong>Payment Receipt <span class="preplay-gcash-badge">GCash</span></strong>
-                    Upload your GCash payment screenshot so we can read the amount<br class="d-none d-md-block"> and reference number automatically.
+                    <strong>Payment Receipt <span class="preplay-gcash-badge" id="preplayPaymentMethodBadge"></span></strong>
+                    Upload your payment screenshot as proof of transfer.
                 </div>
-                <button type="button" class="preplay-payment-read-receipt" id="modalPaymentRunOcr">
+                <button type="button" class="preplay-payment-read-receipt d-none" id="modalPaymentRunOcr">
                     <i class="bi bi-bounding-box" aria-hidden="true"></i> Read Receipt
                 </button>
             </div>
@@ -534,16 +553,16 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                 <input type="file" id="modalPaymentScreenshot" accept="image/jpeg,image/png,.jpg,.jpeg,.png" required>
                 <span class="preplay-payment-upload-copy">
                     <i class="bi bi-cloud-arrow-up" aria-hidden="true"></i>
-                    <span class="preplay-payment-upload-title">Upload GCash screenshot</span>
+                    <span class="preplay-payment-upload-title">Upload payment screenshot</span>
                     <span class="preplay-payment-upload-subtitle" id="preplayPaymentFilename">Drag and drop your file here, or click to browse</span>
                 </span>
             </label>
             <small class="preplay-payment-file-help">Supports JPG, PNG files up to 10MB.</small>
             <small id="modalPaymentOcrStatus" class="small text-muted d-block mt-1">
-                Upload the GCash screenshot and we will read the paid amount and reference number for you.
+                Enter the payment amount and reference number shown on your receipt.
             </small>
             <div id="modalPaymentPreviewWrapper" class="preplay-payment-preview d-none">
-                <img id="modalPaymentPreviewImage" alt="GCash receipt preview" class="img-fluid rounded-2">
+                <img id="modalPaymentPreviewImage" alt="Payment receipt preview" class="img-fluid rounded-2">
             </div>
 
             <div class="preplay-payment-fields">
@@ -556,10 +575,11 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                     <small class="preplay-payment-field-help"><em>Maximum: &#8369;${formatCurrency(maxPayableAmount)}</em></small>
                 </div>
                 <div class="preplay-payment-field" id="referenceContainer">
-                    <label class="form-label" for="modalReferenceNo">GCash Reference Number <span class="text-danger" aria-hidden="true">*</span></label>
-                    <input type="text" class="form-control" id="modalReferenceNo" placeholder="Enter GCash reference number">
+                    <label class="form-label" for="modalReferenceNo"><span id="preplayPaymentReferenceLabel">Reference Number</span> <span class="text-danger" aria-hidden="true">*</span></label>
+                    <input type="text" class="form-control" id="modalReferenceNo">
                     <small class="preplay-payment-field-help"><em>Required for payment verification. You can still correct the number manually if needed.</em></small>
                 </div>
+            </div>
             </div>
         </section>
     ` : (isFullyPaid ? `<div class="alert alert-success text-center mx-3">Account Fully Paid</div>` : 
@@ -567,26 +587,31 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
 
     const html = `
         <div class="billing-container text-start" style="font-family: 'Segoe UI', sans-serif; color: #334155;">
-            <div class="card border-0 shadow-sm mb-4" style="border-radius: 18px; background: rgba(255, 236, 240, 0.8);">
+            ${penaltyAdjustmentCard(allBillingItems, true)}
+            <div class="card preplay-billing-summary-card mb-4">
                 <div class="card-body p-4">
-                    <div class="row gx-3 gy-3">
-                        <div class="col-md-6">
+                    <h3 class="preplay-billing-summary-heading">
+                        <span class="preplay-billing-summary-icon"><i class="bi bi-person-circle" aria-hidden="true"></i></span>
+                        Enrollment Details
+                    </h3>
+                    <div class="preplay-billing-summary-grid">
+                        <div class="preplay-billing-summary-item">
                             <div class="small text-muted">Name</div>
                             <div class="fw-bold">${data.student_name}</div>
                         </div>
-                        <div class="col-md-6">
+                        <div class="preplay-billing-summary-item">
                             <div class="small text-muted">Program</div>
                             <div class="fw-bold">${data.program_name}</div>
                         </div>
-                        <div class="col-md-4">
+                        <div class="preplay-billing-summary-item">
                             <div class="small text-muted">Class</div>
                             <div class="fw-bold">${(enrollmentDetails.class_id_from_section || enrollmentDetails.class_id) ? 'Class ' + (enrollmentDetails.class_id_from_section || enrollmentDetails.class_id) : 'N/A'}</div>
                         </div>
-                        <div class="col-md-4">
+                        <div class="preplay-billing-summary-item">
                             <div class="small text-muted">Section</div>
                             <div class="fw-bold">${enrollmentDetails.section_name && enrollmentDetails.section_name !== 'N/A' ? enrollmentDetails.section_name : 'N/A'}</div>
                         </div>
-                        <div class="col-md-4">
+                        <div class="preplay-billing-summary-item preplay-billing-summary-item--wide">
                             <div class="small text-muted">Section Teacher</div>
                             <div class="fw-bold">${(enrollmentDetails.section_teacher_name || enrollmentDetails.teacher_name) ? (enrollmentDetails.section_teacher_name || enrollmentDetails.teacher_name) : 'Not assigned'}</div>
                         </div>
@@ -691,9 +716,11 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
         html: html,
         width: '1000px',
         showCloseButton: true,
-        showCancelButton: showPayment && !isFullyPaid && !hasPendingPayment && !isIncompleteEnrollment,
-        confirmButtonText: isIncompleteEnrollment
-            ? 'pls complete the enrollment'
+        showCancelButton: showPayment && !isFullyPaid && !hasPendingPayment && !isIncompleteEnrollment && !isReadyForPlacement && !isAwaitingCenterReview,
+        confirmButtonText: (isReadyForPlacement || isAwaitingCenterReview)
+            ? 'Close'
+            : isIncompleteEnrollment
+            ? 'Complete Enrollment'
             : ((showPayment && !isFullyPaid && !hasPendingPayment) ? 'Confirm Payment' : 'Close'),
         confirmButtonColor: '#e85d88',
         cancelButtonText: '<i class="bi bi-x-circle" aria-hidden="true"></i> Cancel',
@@ -714,9 +741,29 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                 }
             });
 
-            if (!isIncompleteEnrollment && showPayment && !isFullyPaid && !hasPendingPayment) {
-                bindPrePlayPaymentAccountCopy('preplayPaymentCopyAccount', gcashMethod?.account_number);
-                bindPrePlayPaymentQrModal(gcashMethod);
+            if (!isReadyForPlacement && !isAwaitingCenterReview && !isIncompleteEnrollment && showPayment && !isFullyPaid && !hasPendingPayment) {
+                const methodSelect = document.getElementById('preplayPaymentMethod');
+                methodSelect?.addEventListener('change', () => {
+                    const method = onlineMethods.find(pm => String(pm.payment_method_id) === methodSelect.value);
+                    const isGcash = method?.payment_method.trim().toLowerCase() === 'gcash';
+                    document.getElementById('preplayPaymentProofFields').classList.toggle('d-none', !method);
+                    document.getElementById('preplayPaymentMethodDetails').innerHTML = buildPrePlayPaymentMethodDetails(method);
+                    document.getElementById('preplayPaymentMethodBadge').textContent = method?.payment_method || '';
+                    document.getElementById('preplayPaymentReferenceLabel').textContent = isGcash ? 'GCash Reference Number' : 'Reference Number';
+                    document.getElementById('modalPaymentRunOcr').classList.toggle('d-none', !isGcash);
+                    document.getElementById('modalPaymentOcrStatus').textContent = isGcash
+                        ? 'Upload a GCash screenshot to read the amount and reference number automatically, or enter them manually.'
+                        : 'Enter the payment amount and reference number shown on your receipt.';
+                    document.getElementById('modalReferenceNo').value = '';
+                    document.getElementById('modalPaymentAmount').value = initialPaymentAmount.toFixed(2);
+                    document.getElementById('modalPaymentScreenshot').value = '';
+                    document.getElementById('preplayPaymentFilename').textContent = 'Drag and drop your file here, or click to browse';
+                    document.getElementById('modalPaymentPreviewWrapper').classList.add('d-none');
+                    if (method) {
+                        bindPrePlayPaymentAccountCopy('preplayPaymentCopyAccount', method.account_number);
+                        bindPrePlayPaymentQrModal(method);
+                    }
+                });
                 const screenshotInput = document.getElementById('modalPaymentScreenshot');
                 const filename = document.getElementById('preplayPaymentFilename');
                 if (screenshotInput && filename) {
@@ -732,26 +779,35 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                     refInputId: 'modalReferenceNo',
                     statusId: 'modalPaymentOcrStatus',
                     previewWrapperId: 'modalPaymentPreviewWrapper',
-                    previewImageId: 'modalPaymentPreviewImage'
+                    previewImageId: 'modalPaymentPreviewImage',
+                    isEnabled: () => onlineMethods.find(pm => String(pm.payment_method_id) === document.getElementById('preplayPaymentMethod')?.value)
+                        ?.payment_method.trim().toLowerCase() === 'gcash'
                 });
             }
         },
         preConfirm: () => {
-            if (isIncompleteEnrollment || !showPayment || isFullyPaid || hasPendingPayment) return true;
+            if (isReadyForPlacement || isAwaitingCenterReview || isIncompleteEnrollment || !showPayment || isFullyPaid || hasPendingPayment) return true;
+            const method = onlineMethods.find(pm => String(pm.payment_method_id) === document.getElementById('preplayPaymentMethod')?.value);
+            if (!method) { Swal.showValidationMessage('Choose a payment method'); return false; }
             const amount = parseFloat(document.getElementById('modalPaymentAmount').value);
             const screenshotFile = document.getElementById('modalPaymentScreenshot')?.files?.[0] || null;
             const ref = document.getElementById('modalReferenceNo')?.value.trim() || '';
             const ocrBusy = document.getElementById('modalPaymentOcrStatus')?.dataset.ocrBusy === 'true';
             if (!amount || amount <= 0) { Swal.showValidationMessage('Enter valid amount'); return false; }
-            if (!gcashMethodId) { Swal.showValidationMessage('GCash payment method is not available'); return false; }
-            if (!screenshotFile) { Swal.showValidationMessage('Upload the GCash payment screenshot first'); return false; }
+            if (amount > maxPayableAmount) { Swal.showValidationMessage('Payment amount cannot exceed outstanding balance'); return false; }
+            if (!screenshotFile) { Swal.showValidationMessage('Upload the payment screenshot first'); return false; }
             if (screenshotFile.size > 10 * 1024 * 1024) { Swal.showValidationMessage('Please upload a JPG or PNG receipt no larger than 10MB'); return false; }
-            if (ocrBusy) { Swal.showValidationMessage('OCR is still reading the screenshot. Please wait a moment.'); return false; }
-            if (!/^\d{13}$/.test(ref)) { Swal.showValidationMessage('GCash reference number must contain exactly 13 digits'); return false; }
-            return { amount, method: gcashMethodId, ref, screenshotFile };
+            if (method.payment_method.trim().toLowerCase() === 'gcash' && ocrBusy) { Swal.showValidationMessage('OCR is still reading the screenshot. Please wait a moment.'); return false; }
+            if (!ref) { Swal.showValidationMessage('Payment reference number is required'); return false; }
+            if (method.payment_method.trim().toLowerCase() === 'gcash' && !/^(?:\d{10}|\d{12}|\d{13})$/.test(ref)) { Swal.showValidationMessage('GCash reference number must contain 10, 12, or 13 digits'); return false; }
+            return { amount, method: method.payment_method_id, methodName: method.payment_method, ref, screenshotFile };
         }
     }).then((result) => {
         if (!result.isConfirmed) {
+            return;
+        }
+
+        if (isReadyForPlacement || isAwaitingCenterReview) {
             return;
         }
 
@@ -775,33 +831,11 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
 
             axios.post('../../api/student/payment.php', formData).then((res) => {
                 if (res.data.status === 'success') {
-                    const paidAmount = parseFloat(result.value.amount || 0);
-                    const newBalance = Math.max(balance - paidAmount, 0);
-                    const receiptData = {
-                        enrollmentId,
-                        studentName: data.student_name,
-                        programName: data.program_name,
-                        programType: data.program_type,
-                        paymentKind: firstDueItem && paidAmount >= firstDueItem.remaining ? 'Full Payment' : 'Partial Payment',
-                        paymentType: firstDueItem && paidAmount >= firstDueItem.remaining ? 'Full Payment' : 'Partial Payment',
-                        paymentFor: firstDueItem ? firstDueItem.type : 'Enrollment Payment',
-                        paymentMethod: 'GCash',
-                        referenceNo: result.value.ref || null,
-                        paymentScreenshotPath: res.data.payment_screenshot_path || null,
-                        receiptNo: res.data.receipt_id || null,
-                        amountPaid: paidAmount,
-                        balance: newBalance,
-                        totalAmount: paidAmount,
-                        lineItems: Array.isArray(res.data.line_items) ? res.data.line_items : [],
-                        paymentDate: new Date()
-                    };
-
-                    Swal.fire('Success', res.data.message || 'Payment submitted for admin review.', 'success')
-                        .then(() => {
-                            const receiptHandler = getStudentReceiptHandler();
-                            if (typeof receiptHandler === 'function') {
-                                return receiptHandler(receiptData);
-                            }
+                    Swal.fire({
+                        title: 'Payment submitted for review',
+                        text: 'Your payment is awaiting approval. Your receipt will be generated after your payment is approved. You can view it in Payment History once approved.',
+                        icon: 'info',
+                        confirmButtonColor: '#e85d88'
                         })
                         .then(() => {
                             window.dispatchEvent(new CustomEvent('payment-status-updated', {

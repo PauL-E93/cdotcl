@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 date_default_timezone_set('Asia/Manila');
@@ -559,7 +562,7 @@ class BillingAssessmentAPI
             $bill = $this->conn->prepare("INSERT INTO billing_schedule
                 (enrollment_details_id, due_date, original_amount, penalty_amount, total_amount, status, billing_type)
                 VALUES (?, CURDATE(), ?, 0, ?, 'unpaid', ?)");
-            $label = substr('Additional ' . $product['name'] . ' #' . $orderId, 0, 50);
+            $label = substr('Additional ' . $product['name'], 0, 50);
             $bill->execute([$detailsId, $total, $total, $label]);
             $billId = (int)$this->conn->lastInsertId();
             $this->conn->prepare('UPDATE product_orders SET billing_schedule_id = ? WHERE product_order_id = ?')

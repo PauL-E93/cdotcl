@@ -1,13 +1,11 @@
 const SCHEDULE_ENDPOINT = '../../api/admin/schedule.php?operation=getSchedules';
 const CLASSES_ENDPOINT = '../../api/teacher/class.php?operation=getAllClasses';
-const ENROLLMENT_STATS_ENDPOINT = '../../api/admin/enrollment.php?operation=getEnrollmentStats&type=tutorial';
 const SCHEDULE_PAGE = '../teacher/schedule.html';
 
 const state = {
     calendarDate: new Date(),
     classes: [],
     schedules: [],
-    enrollmentStats: { total: 0, new: 0, pending: 0, incomplete: 0, cancelled: 0 },
     searchTerm: ''
 };
 
@@ -56,10 +54,9 @@ function shiftCalendarMonth(amount) {
 }
 
 async function loadDashboard() {
-    const [scheduleResult, classesResult, enrollmentStatsResult] = await Promise.allSettled([
+    const [scheduleResult, classesResult] = await Promise.allSettled([
         fetchJson(SCHEDULE_ENDPOINT),
-        fetchJson(CLASSES_ENDPOINT),
-        fetchJson(ENROLLMENT_STATS_ENDPOINT)
+        fetchJson(CLASSES_ENDPOINT)
     ]);
 
     if (scheduleResult.status === 'fulfilled') {
@@ -75,12 +72,6 @@ async function loadDashboard() {
         state.classes = Array.isArray(classesResult.value) ? classesResult.value : [];
     } else {
         showDashboardError('Class totals could not be loaded.');
-    }
-
-    if (enrollmentStatsResult.status === 'fulfilled') {
-        state.enrollmentStats = enrollmentStatsResult.value?.data || state.enrollmentStats;
-    } else {
-        showDashboardError('Tutorial enrollment totals could not be loaded.');
     }
 
     renderSummary();
@@ -119,11 +110,9 @@ function normalizeSchedule(schedule) {
 
 function renderSummary() {
     const todaySchedules = getTodaySchedules();
-    const totalStudents = Number(state.enrollmentStats.total || 0);
     const totalClasses = state.classes.length;
 
     setText('today-classes-count', todaySchedules.length);
-    setText('total-students-count', totalStudents);
     setText('total-classes-count', totalClasses);
 }
 
@@ -255,40 +244,6 @@ function openDashboardDetailModal(detailType) {
             ],
             'No classes are scheduled for today.'
         );
-    }
-
-    if (detailType === 'students') {
-        title = 'Tutorial Student Overview';
-        const totalStudents = Number(state.enrollmentStats.total || 0);
-        const studentRows = state.schedules
-            .filter((schedule) => schedule.student && schedule.student !== 'To be assigned')
-            .map((schedule) => ({
-                id: schedule.studentId || schedule.student_id || schedule.enrollment_details_id || '-',
-                studentName: schedule.student || schedule.student_name || 'Unknown student',
-                date: schedule.date || '-',
-                status: schedule.status || 'pending'
-            }));
-
-        const summary = `
-            <div class="teacher-modal-summary">
-                <div><strong>Total students:</strong> ${escapeHtml(totalStudents)}</div>
-                <div><strong>New this month:</strong> ${escapeHtml(state.enrollmentStats.new || 0)}</div>
-                <div><strong>Pending:</strong> ${escapeHtml(state.enrollmentStats.pending || 0)}</div>
-                <div><strong>Incomplete:</strong> ${escapeHtml(state.enrollmentStats.incomplete || 0)}</div>
-            </div>
-        `;
-
-        content = `${summary}${buildTeacherModalTable(
-            ['ID', 'Student name', 'Date', 'Status'],
-            studentRows,
-            (student) => [
-                escapeHtml(student.id),
-                escapeHtml(student.studentName),
-                escapeHtml(student.date),
-                `<span class="teacher-schedule-status">${escapeHtml(student.status)}</span>`
-            ],
-            'No enrolled students were found.'
-        )}`;
     }
 
     if (detailType === 'classes-handled') {

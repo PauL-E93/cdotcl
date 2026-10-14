@@ -1,4 +1,5 @@
-import { openPrePlayReportCard } from './preplay_report_card.js?v=20260814-school-year-curriculum';
+import { appendAgreementLink } from '../modules/agreements.js';
+import { openPrePlayReportCard } from './preplay_report_card.js?v=20260907-quarter-visibility';
 import { downloadORF } from '../modules/orf.js';
 import { showPaymentReceipt } from '../modules/receipt.js';
 
@@ -7,7 +8,7 @@ import { showPaymentReceipt } from '../modules/receipt.js';
 let editSchedules = [];
 let paginationManager;
 const STUDENT_PREPLAY_PAYMENT_HISTORY_REFRESH_MS = 10000;
-const enrollmentFilters = { search: '', status: '', subject: '', teacher: '' };
+const enrollmentFilters = { search: '', status: '', subject: '', program: '', teacher: '' };
 
 function getPrePlayEnrollmentUrl() {
     const params = new URLSearchParams({ operation: 'getPrePlayEnrollments' });
@@ -18,13 +19,7 @@ function getPrePlayEnrollmentUrl() {
 }
 
 function resolvePaymentProofUrl(proofPath) {
-    if (!proofPath) return '';
-    if (/^(?:https?:)?\/\//.test(proofPath)) {
-        return proofPath;
-    }
-
-    const cleaned = String(proofPath).replace(/^\/+/, '');
-    return `../../${cleaned}`;
+    return window.resolveUploadUrl(proofPath);
 }
 
 function getStudentReceiptKey(payment) {
@@ -184,7 +179,7 @@ window.completeStudentPrePlayEnrollmentFromPayment = async function(enrollmentId
     }
 
     if (typeof window.openPendingPrePlayEnrollmentCompletion !== 'function') {
-        await import(getStudentModuleImportUrl('../../js/studentmodule/pre_play_enrollment.js'));
+        await import(getStudentModuleImportUrl('../../js/studentmodule/pre_play_enrollment.js?v=20261006-upload-images-r2'));
     }
 
     if (typeof window.openPendingPrePlayEnrollmentCompletion === 'function') {
@@ -232,7 +227,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function initializePagination() {
     const tableBody = document.getElementById('paymentTableBody');
-    const paginationContainer = document.querySelector('.d-flex.justify-content-between.align-items-center.mt-4 nav');
+    const paginationContainer = document.getElementById('paginationNav')
+        || document.querySelector('.d-flex.justify-content-between.align-items-center.mt-4 nav');
+    const showingElement = document.getElementById('pagingInfo')
+        || paginationContainer?.previousElementSibling;
 
     if (!tableBody || !paginationContainer) return;
 
@@ -241,6 +239,7 @@ function initializePagination() {
         apiUrl: getPrePlayEnrollmentUrl(),
         tableBody: tableBody,
         perPage: 10,
+        showingElement: showingElement,
         onDataLoad: renderEnrollments
     });
 
@@ -256,37 +255,52 @@ function setupEnrollmentFilters() {
     const searchInput = document.getElementById('search-input');
     const statusSelect = document.getElementById('enrollment-status-filter');
     const subjectSelect = document.getElementById('enrollment-subject-filter');
+    const programSelect = document.getElementById('enrollment-program-filter');
     const teacherSelect = document.getElementById('enrollment-teacher-filter');
-    const applyButton = document.getElementById('enrollment-apply-filters');
+    const filterContainer = document.querySelector('.filter-container');
+    const filterToggle = filterContainer?.querySelector('.filter-toggle-btn');
     const refresh = () => {
         paginationManager.apiUrl = getPrePlayEnrollmentUrl();
         paginationManager.loadPage(1);
+    };
+    const syncFilters = () => {
+        enrollmentFilters.search = searchInput?.value.trim() || '';
+        enrollmentFilters.status = statusSelect?.value || '';
+        enrollmentFilters.subject = subjectSelect?.value || '';
+        enrollmentFilters.program = programSelect?.value || '';
+        enrollmentFilters.teacher = teacherSelect?.value || '';
     };
     let searchTimer;
 
     searchInput?.addEventListener('input', () => {
         clearTimeout(searchTimer);
         searchTimer = setTimeout(() => {
-            enrollmentFilters.search = searchInput.value.trim();
+            syncFilters();
             refresh();
         }, 250);
+    });
+    searchInput?.addEventListener('keydown', event => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        clearTimeout(searchTimer);
+        syncFilters();
+        refresh();
     });
 
     [
         [statusSelect, 'status'],
         [subjectSelect, 'subject'],
+        [programSelect, 'program'],
         [teacherSelect, 'teacher']
     ].forEach(([select, key]) => select?.addEventListener('change', () => {
         enrollmentFilters[key] = select.value;
         refresh();
     }));
 
-    applyButton?.addEventListener('click', () => {
-        enrollmentFilters.search = searchInput?.value.trim() || '';
-        enrollmentFilters.status = statusSelect?.value || '';
-        enrollmentFilters.subject = subjectSelect?.value || '';
-        enrollmentFilters.teacher = teacherSelect?.value || '';
-        refresh();
+    filterToggle?.setAttribute('aria-expanded', 'false');
+    filterToggle?.addEventListener('click', () => {
+        const isOpen = filterContainer.classList.toggle('filter-open');
+        filterToggle.setAttribute('aria-expanded', String(isOpen));
     });
 }
 
@@ -303,7 +317,11 @@ function loadEnrollmentFilterLookups() {
             if (response.data.status !== 'success') return;
             const data = response.data.data || {};
             setEnrollmentFilterOptions('enrollment-status-filter', data.statuses || [], 'All Status');
-            setEnrollmentFilterOptions('enrollment-subject-filter', data.subjects || [], 'All Subjects');
+            if (document.getElementById('enrollment-program-filter')) {
+                setEnrollmentFilterOptions('enrollment-program-filter', data.programs || [], 'All Programs');
+            } else {
+                setEnrollmentFilterOptions('enrollment-subject-filter', data.subjects || [], 'All Subjects');
+            }
             setEnrollmentFilterOptions('enrollment-teacher-filter', data.teachers || [], 'All Teachers');
         })
         .catch(error => console.error('Error loading enrollment filters:', error));
@@ -314,7 +332,7 @@ function renderEnrollments(enrollments) {
     tableBody.innerHTML = '';
 
     if (enrollments.length === 0) {
-        tableBody.innerHTML = '<tr><td colspan="6" class="text-center">No enrollments found.</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No matching enrollments found.</td></tr>';
         return;
     }
 
@@ -322,38 +340,49 @@ function renderEnrollments(enrollments) {
         const pagePath = window.location.pathname;
         const isPreschoolPage = pagePath.includes('payment_pre_play.html') || pagePath.includes('enrollement_pre_play.html');
         const status = (item.status || '').toLowerCase().trim();
+        const applicationStatus = String(item.application_status || '').toLowerCase();
+        const isReadyForPlacement = applicationStatus === 'ready_for_scheduling';
+        const isAwaitingCenterReview = ['pending_review', 'approved_for_payment'].includes(applicationStatus);
+        const isWaitingForCenter = isReadyForPlacement || isAwaitingCenterReview;
         let statusBadge;
         switch (status) {
-            case 'active':
             case 'enrolled':
                 statusBadge = 'success';
+                break;
+            case 'completed':
+                statusBadge = 'theme-pink';
+                break;
+            case 'approved':
+                statusBadge = 'primary';
                 break;
             case 'pending':
             case 'incomplete':
                 statusBadge = 'warning text-dark';
                 break;
-            case 'cancelled':
-                statusBadge = 'danger';
-                break;
-            case 'session done':
-                statusBadge = 'info';
-                break;
             default:
                 statusBadge = 'secondary';
         }
+        if (isReadyForPlacement) statusBadge = 'primary';
+        else if (applicationStatus === 'approved_for_payment') statusBadge = 'info text-dark';
 
         let menuItems = '';
         if (pagePath.includes('payment.html') || pagePath.includes('payment_pre_play.html')) {
             const payCall = isPreschoolPage ? `openBillingPlayPreModal(${item.enrollment_details_id})` : `openBillingModalByProgram(${item.enrollment_details_id}, '${item.program_name || ''}')`;
+            const primaryPaymentAction = status === 'incomplete' && !isWaitingForCenter
+                ? `window.completeStudentPrePlayEnrollmentFromPayment(${item.enrollment_details_id})`
+                : payCall;
+            const primaryPaymentLabel = status === 'incomplete' && !isWaitingForCenter
+                ? 'Complete Enrollment'
+                : (isWaitingForCenter ? 'View Billing' : 'Pay');
             menuItems += `
-                <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); ${payCall}">
-                    <i class="bi bi-credit-card me-2"></i>Pay
+                <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); ${primaryPaymentAction}">
+                    <i class="bi bi-credit-card me-2"></i>${primaryPaymentLabel}
                 </a></li>
                 <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); openPaymentHistoryModal(${item.enrollment_details_id})">
                     <i class="bi bi-receipt me-2"></i>Payment History
                 </a></li>
             `;
-        } else if (status === 'incomplete') {
+        } else if (status === 'incomplete' && !isWaitingForCenter) {
             menuItems = `
                 <li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); window.completeStudentPrePlayEnrollmentFromPayment(${item.enrollment_details_id})">
                     <i class="bi bi-check2-circle me-2"></i>pls complete the enrollment
@@ -361,7 +390,9 @@ function renderEnrollments(enrollments) {
             `;
         }
 
-        if (status !== 'incomplete' && !window.location.pathname.includes('payment.html') && !window.location.pathname.includes('payment_pre_play.html')) {
+        if (isWaitingForCenter && !window.location.pathname.includes('payment.html') && !window.location.pathname.includes('payment_pre_play.html')) {
+            menuItems += `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); viewDetails(${item.enrollment_details_id})"><i class="bi bi-eye me-2"></i>View Details</a></li>`;
+        } else if (status !== 'incomplete' && !window.location.pathname.includes('payment.html') && !window.location.pathname.includes('payment_pre_play.html')) {
             menuItems += `
                 <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); viewDetails(${item.enrollment_details_id})">
                     <i class="bi bi-eye me-2"></i>View Details
@@ -395,7 +426,7 @@ function renderEnrollments(enrollments) {
                 <td>${item.program_name || item.subject_name || 'N/A'}</td>
                 <td>${item.teacher_name || 'Not assigned'}</td>
                 <td>${item.enrollment_date}</td>
-                <td><span class="badge bg-${statusBadge}">${item.status.toUpperCase()}</span></td>
+                <td><span class="badge bg-${statusBadge}">${isReadyForPlacement ? 'READY FOR CLASS & SECTION' : applicationStatus === 'approved_for_payment' ? 'AWAITING CENTER PAYMENT' : applicationStatus === 'pending_review' ? 'PENDING APPLICATION REVIEW' : item.status.toUpperCase()}</span></td>
                 <td>
                     ${actionMenu}
                 </td>
@@ -426,7 +457,7 @@ function loadEnrollmentStats() {
                 document.getElementById('total_enrollments').innerText = stats.total;
                 document.getElementById('new_enrollments').innerText = stats.new;
                 document.getElementById('pending_applications').innerText = stats.pending;
-                document.getElementById('cancellations').innerText = stats.cancelled;
+                document.getElementById('completed_enrollments').innerText = stats.completed;
             }
         }
     })
@@ -521,6 +552,7 @@ window.viewDetails = function(id) {
 
             // Show Modal
             console.log('Showing modal');
+            appendAgreementLink(document.querySelector('#viewEnrollmentModal .modal-body'), d.enrollment_details_id);
             const modalElement = document.getElementById('viewEnrollmentModal');
             if (modalElement) {
                 const modal = new bootstrap.Modal(modalElement);
@@ -776,7 +808,10 @@ async function fetchStudentPrePlayPaymentHistoryModalData(enrollmentDetailsId) {
 function openStudentPrePlayPaymentHistoryModal(enrollment_details_id) {
     const getPaymentStatusPresentation = status => {
         const normalized = String(status || '').toLowerCase();
-        if (['received', 'enrolled', 'complete', 'completed', 'active'].includes(normalized)) {
+        if (['complete', 'completed'].includes(normalized)) {
+            return { tone: 'completed', icon: 'bi-check-circle-fill', label: String(status).toUpperCase() };
+        }
+        if (['received', 'enrolled', 'active'].includes(normalized)) {
             return { tone: 'success', icon: 'bi-check-circle-fill', label: String(status).toUpperCase() };
         }
         if (['pending', 'incomplete'].includes(normalized)) {
@@ -802,7 +837,7 @@ function openStudentPrePlayPaymentHistoryModal(enrollment_details_id) {
                 const receiptRows = currentHistory.filter(item => getStudentReceiptKey(item) === receiptKey);
                 const detailRows = receiptRows.length > 0 ? receiptRows : [payment];
                 const screenshotHtml = payment.payment_screenshot_path
-                    ? `<img src="${resolvePaymentProofUrl(payment.payment_screenshot_path)}" alt="GCash payment screenshot" class="img-fluid rounded-3" style="max-height: 420px; object-fit: contain;">`
+                    ? `<img src="${resolvePaymentProofUrl(payment.payment_screenshot_path)}" alt="Payment screenshot" class="img-fluid rounded-3" style="max-height: 420px; object-fit: contain;">`
                     : '<div class="text-muted py-5">No payment screenshot was uploaded for this record.</div>';
                 const totalAmountPaid = detailRows.reduce((sum, item) => sum + parseFloat(item.amount_paid || 0), 0);
                 const amountValue = totalAmountPaid.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -819,7 +854,7 @@ function openStudentPrePlayPaymentHistoryModal(enrollment_details_id) {
                     reverseButtons: true,
                     html: `
                         <div class="text-start">
-                            <label class="form-label fw-bold text-secondary small mb-1">GCash Payment Screenshot</label>
+                            <label class="form-label fw-bold text-secondary small mb-1">Payment Screenshot</label>
                             <div class="border rounded-3 p-2 bg-light text-center mb-3">
                                 ${screenshotHtml}
                             </div>
@@ -831,7 +866,7 @@ function openStudentPrePlayPaymentHistoryModal(enrollment_details_id) {
                                 </div>
                             </div>
                             <div>
-                                <label class="form-label fw-bold text-secondary small mb-1">GCash Reference Number</label>
+                                <label class="form-label fw-bold text-secondary small mb-1">Reference Number</label>
                                 <input type="text" class="form-control" value="${payment.reference_no || ''}" readonly>
                             </div>
                         </div>

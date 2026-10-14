@@ -22,7 +22,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // Preload billing.js
     if (!document.querySelector('script[src*=\"billing.js\"]')) {
         const billingScript = document.createElement('script');
-        billingScript.src = '../../js/studentmodule/billing.js?v=20260825-shared-ocr';
+        billingScript.type = 'module';
+        billingScript.src = '../../js/studentmodule/billing.js?v=20261014-penalty-adjustments';
         document.head.appendChild(billingScript);
     }
     
@@ -69,15 +70,6 @@ function loadLookups() {
     return axios.get("../../api/admin/enrollment.php?operation=getLookups")
         .then(res => { globalLookups = res.data; })
         .catch(err => console.error("Error loading lookups:", err));
-}
-
-function getStudentReceiptHandler() {
-    return typeof window.showPaymentReceipt === 'function'
-        ? (receipt) => window.showPaymentReceipt({
-            ...receipt,
-            copyLabels: ['CUSTOMER COPY']
-        })
-        : null;
 }
 
 function ensureStudentPaymentOcrHelpers() {
@@ -407,6 +399,112 @@ function resumePendingEnrollmentCompletionRequest() {
     }
 }
 
+function escapeStudentEnrollmentHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+    }[character]));
+}
+
+function prepareStudentTutorialEnrollmentModal() {
+    const modal = document.getElementById('enrollmentDetailsModal');
+    if (!modal) return;
+
+    modal.classList.add('tutorial-enrollment-modal');
+    modal.querySelector('.modal-dialog')?.classList.add('modal-xl', 'modal-dialog-scrollable');
+
+    const header = modal.querySelector('.modal-header');
+    if (header) {
+        header.innerHTML = `
+            <div class="tutorial-modal-heading">
+                <span class="tutorial-modal-heading-icon"><i class="bi bi-file-earmark-text"></i></span>
+                <h2 class="modal-title">Enrollment Details</h2>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>`;
+    }
+
+    const footer = modal.querySelector('.modal-footer');
+    const closeButton = footer?.querySelector('[data-bs-dismiss="modal"]');
+    const finalizeButton = document.getElementById('finalizeEnrollment');
+    if (closeButton) {
+        closeButton.className = 'btn tutorial-close-btn';
+        closeButton.textContent = 'Close';
+    }
+    if (finalizeButton) {
+        finalizeButton.className = 'btn tutorial-finalize-btn';
+        finalizeButton.innerHTML = '<i class="bi bi-lock"></i><span>Finalize Enrollment</span>';
+    }
+
+    if (!modal.dataset.subjectPickerDismissBound) {
+        modal.addEventListener('click', event => {
+            if (event.target.closest('.tutorial-subject-control')) return;
+            const picker = document.getElementById('studentSubjectPicker');
+            const toggle = document.getElementById('subjectId');
+            picker?.classList.add('d-none');
+            toggle?.classList.remove('open');
+            toggle?.setAttribute('aria-expanded', 'false');
+        });
+        modal.dataset.subjectPickerDismissBound = 'true';
+    }
+
+    if (document.getElementById('studentTutorialEnrollmentModalStyles')) return;
+    const style = document.createElement('style');
+    style.id = 'studentTutorialEnrollmentModalStyles';
+    style.textContent = `
+        #enrollmentDetailsModal.tutorial-enrollment-modal{--tutorial-accent:#e85d88;--tutorial-accent-dark:#d94f7a;--tutorial-soft:#fff0f5;--tutorial-border:#f5c6d5;--tutorial-neutral-border:#dfe3ea;--tutorial-text:#172033;--tutorial-muted:#697386}
+        #enrollmentDetailsModal.tutorial-enrollment-modal .modal-dialog{max-width:min(1180px,calc(100vw - 32px))}
+        #enrollmentDetailsModal.tutorial-enrollment-modal .modal-content{max-height:calc(100vh - 32px);overflow:hidden;border:0;border-radius:20px;box-shadow:0 22px 65px rgba(94,29,52,.18)}
+        #enrollmentDetailsModal.tutorial-enrollment-modal .modal-header{align-items:center;padding:18px 28px;border-bottom:1px solid #edf0f4;background:#fff}
+        #enrollmentDetailsModal .tutorial-modal-heading{display:flex;align-items:center;gap:16px}
+        #enrollmentDetailsModal .tutorial-modal-heading-icon,#enrollmentDetailsModal .tutorial-section-icon{display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;color:var(--tutorial-accent);background:var(--tutorial-soft);border:1px solid var(--tutorial-border);border-radius:10px}
+        #enrollmentDetailsModal .tutorial-modal-heading-icon{width:44px;height:44px;font-size:21px}
+        #enrollmentDetailsModal .tutorial-modal-heading h2{margin:0;color:var(--tutorial-text);font-size:25px;font-weight:750}
+        #enrollmentDetailsModal.tutorial-enrollment-modal .modal-body{padding:15px 28px 8px;background:#fff}
+        #enrollmentDetailsModal .tutorial-enrollment-alert{display:flex;align-items:center;gap:14px;min-height:52px;margin-bottom:14px;padding:13px 18px;color:var(--tutorial-text);border:1px solid var(--tutorial-border);border-radius:9px;background:#fff9fb}
+        #enrollmentDetailsModal .tutorial-enrollment-alert i,#enrollmentDetailsModal .tutorial-enrollment-alert strong{color:var(--tutorial-accent-dark)}
+        #enrollmentDetailsModal .tutorial-enrollment-alert i{font-size:20px}
+        #enrollmentDetailsModal .tutorial-section{margin-bottom:14px;padding:18px;border:1px solid var(--tutorial-border);border-radius:12px;background:#fff}
+        #enrollmentDetailsModal .tutorial-section-title{display:flex;align-items:center;gap:12px;margin:0 0 15px;color:var(--tutorial-text);font-size:18px;font-weight:700}
+        #enrollmentDetailsModal .tutorial-section-icon{width:34px;height:34px;font-size:16px}
+        #enrollmentDetailsModal .form-label{margin-bottom:7px;color:var(--tutorial-text);font-size:13px;font-weight:500}
+        #enrollmentDetailsModal .form-control,#enrollmentDetailsModal .form-select,#enrollmentDetailsModal .input-group-text{min-height:44px;color:var(--tutorial-text);border-color:var(--tutorial-neutral-border);border-radius:7px;font-size:14px}
+        #enrollmentDetailsModal .form-control:focus,#enrollmentDetailsModal .form-select:focus{border-color:var(--tutorial-accent);box-shadow:0 0 0 .2rem rgba(232,93,136,.12)}
+        #enrollmentDetailsModal .form-control:disabled,#enrollmentDetailsModal .form-select:disabled{color:#5f6673;background:#f8f8f9;opacity:1}
+        #enrollmentDetailsModal .tutorial-help-text{display:block;margin-top:5px;color:var(--tutorial-muted);font-size:11px}
+        #enrollmentDetailsModal .tutorial-subject-control{position:relative}
+        #enrollmentDetailsModal .tutorial-subject-toggle{display:flex;width:100%;min-height:44px;align-items:center;justify-content:space-between;gap:12px;padding:9px 13px;color:var(--tutorial-text);border:1px solid var(--tutorial-neutral-border);border-radius:7px;background:#fff;text-align:left}
+        #enrollmentDetailsModal .tutorial-subject-toggle:hover,#enrollmentDetailsModal .tutorial-subject-toggle:focus,#enrollmentDetailsModal .tutorial-subject-toggle.open{border-color:var(--tutorial-accent);box-shadow:0 0 0 .2rem rgba(232,93,136,.12);outline:0}
+        #enrollmentDetailsModal .tutorial-subject-toggle>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        #enrollmentDetailsModal .tutorial-subject-toggle>i{flex:0 0 auto;transition:transform .2s ease}
+        #enrollmentDetailsModal .tutorial-subject-toggle.open>i{transform:rotate(180deg)}
+        #enrollmentDetailsModal .tutorial-subject-menu{position:absolute;z-index:1060;top:calc(100% + 7px);right:0;left:0;max-height:230px;overflow-y:auto;padding:7px;border:1px solid var(--tutorial-neutral-border);border-radius:9px;background:#fff;box-shadow:0 16px 36px rgba(55,38,45,.15)}
+        #enrollmentDetailsModal .tutorial-subject-option{display:flex;align-items:center;gap:10px;margin:0;padding:10px 11px;border-radius:7px;cursor:pointer}
+        #enrollmentDetailsModal .tutorial-subject-option:hover,#enrollmentDetailsModal .tutorial-subject-option:has(input:checked){color:var(--tutorial-accent-dark);background:var(--tutorial-soft)}
+        #enrollmentDetailsModal .tutorial-subject-option input{width:17px;height:17px;flex:0 0 auto;accent-color:var(--tutorial-accent)}
+        #enrollmentDetailsModal .tutorial-subject-option .subject-name{flex:1;font-size:.9rem}
+        #enrollmentDetailsModal .tutorial-subject-option .bi-check2{color:var(--tutorial-accent-dark);opacity:0}
+        #enrollmentDetailsModal .tutorial-subject-option:has(input:checked) .bi-check2{opacity:1}
+        #enrollmentDetailsModal .tutorial-subject-summary{min-height:17px;margin-top:6px;color:var(--tutorial-muted);font-size:12px}
+        #enrollmentDetailsModal .tutorial-learning-section textarea{min-height:54px;resize:vertical}
+        #enrollmentDetailsModal #studentUnitPreview{margin-bottom:14px;padding:10px 18px;border:1px solid var(--tutorial-border);border-radius:9px;background:#fff8fb}
+        #enrollmentDetailsModal #studentUnitPreview .alert{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:0;padding:0;color:var(--tutorial-text);border:0;background:transparent}
+        #enrollmentDetailsModal #studentUnitPreview .unit-divider{width:1px;height:20px;margin:0 5px;background:#d8dce3}
+        #enrollmentDetailsModal #unitStatus{padding:7px 13px;border:0;background:linear-gradient(100deg,#e85d88,#f07ba0)!important;font-weight:600}
+        #enrollmentDetailsModal .tutorial-schedule-grid{display:grid;grid-template-columns:1.15fr 1fr 1fr auto;gap:14px;align-items:end}
+        #enrollmentDetailsModal .tutorial-date-field{position:relative}
+        #enrollmentDetailsModal #datePickerBtn{color:#667085;border-color:var(--tutorial-neutral-border);border-radius:0 7px 7px 0}
+        #enrollmentDetailsModal .tutorial-add-btn{display:inline-flex;min-height:44px;align-items:center;justify-content:center;gap:6px;padding:8px 15px;color:#fff;border:0;border-radius:7px;background:var(--tutorial-accent)}
+        #enrollmentDetailsModal .tutorial-schedule-table{margin-top:13px;margin-bottom:0;overflow:hidden;border-color:#e1e4e9;border-radius:7px}
+        #enrollmentDetailsModal .tutorial-schedule-table thead th{padding:10px;color:var(--tutorial-text);background:var(--tutorial-soft);border-color:#ead9df;font-size:12px}
+        #enrollmentDetailsModal .tutorial-schedule-table tbody td{padding:10px;vertical-align:middle;font-size:13px}
+        #enrollmentDetailsModal.tutorial-enrollment-modal .modal-footer{justify-content:flex-end;gap:12px;padding:14px 28px 18px;border-top:1px solid #edf0f4;background:#fff}
+        #enrollmentDetailsModal .tutorial-close-btn,#enrollmentDetailsModal .tutorial-finalize-btn{display:inline-flex;min-height:45px;align-items:center;justify-content:center;gap:9px;padding:10px 24px;border-radius:8px;font-weight:600}
+        #enrollmentDetailsModal .tutorial-close-btn{min-width:105px;color:var(--tutorial-text);border:1px solid var(--tutorial-neutral-border);background:#fff}
+        #enrollmentDetailsModal .tutorial-finalize-btn{min-width:230px;color:#fff;border:0;background:linear-gradient(100deg,#e85d88,#f07ba0);box-shadow:0 9px 20px rgba(232,93,136,.22)}
+        @media(max-width:767.98px){#enrollmentDetailsModal.tutorial-enrollment-modal .modal-dialog{max-width:calc(100vw - 16px);margin:8px auto}#enrollmentDetailsModal.tutorial-enrollment-modal .modal-header,#enrollmentDetailsModal.tutorial-enrollment-modal .modal-body,#enrollmentDetailsModal.tutorial-enrollment-modal .modal-footer{padding-left:18px;padding-right:18px}#enrollmentDetailsModal .tutorial-modal-heading h2{font-size:21px}#enrollmentDetailsModal .tutorial-schedule-grid{grid-template-columns:1fr}#enrollmentDetailsModal .tutorial-add-btn{width:100%}#enrollmentDetailsModal .tutorial-close-btn,#enrollmentDetailsModal .tutorial-finalize-btn{flex:1 1 auto;min-width:0;padding-inline:12px}}
+    `;
+    document.head.appendChild(style);
+}
+
 function renderEnrollmentForm() {
     preferredSchedules = [];
     if (!pendingEnrollmentDetails) {
@@ -417,6 +515,8 @@ function renderEnrollmentForm() {
     const container = document.getElementById("enrollmentForm"); 
     
     if (!container) return; 
+
+    prepareStudentTutorialEnrollmentModal();
 
     const today = new Date().toISOString().split('T')[0];
     
@@ -443,9 +543,15 @@ function renderEnrollmentForm() {
         : Promise.resolve();
 
     Promise.all([branchesPromise, studentBranchPromise, studentProfilePromise]).then(() => {
-        const enrollmentHeaderHtml = pendingDownpaymentEnrollment
-            ? '<div class="alert alert-info"><i class="bi bi-check-circle"></i> Downpayment already paid. Complete your enrollment details below.</div>'
-            : '<div class="alert alert-success"><i class="bi bi-mortarboard"></i> <strong>Tutorial Enrollment</strong></div>';
+        const studentName = [studentProfile?.first_name, studentProfile?.last_name, studentProfile?.ext]
+            .filter(part => part && String(part).trim())
+            .map(part => String(part).trim())
+            .join(' ') || studentProfile?.name || 'Student';
+        const enrollmentHeaderHtml = `
+            <div class="tutorial-enrollment-alert">
+                <i class="bi bi-info-circle"></i>
+                <span><strong>Tutorial Enrollment</strong> for ${escapeStudentEnrollmentHtml(studentName)}</span>
+            </div>`;
 
         const selectedPendingProgram = pendingDownpaymentEnrollment && pendingDownpaymentEnrollment.program_id
             ? globalLookups.programs.find(p => p.program_id == pendingDownpaymentEnrollment.program_id)
@@ -470,117 +576,108 @@ function renderEnrollmentForm() {
               `;
 
         let html = `
-        ${enrollmentHeaderHtml}
-        <div class="row">
-            <div class="col-md-6 mb-3">
-                <label class="form-label">Tutorial Program</label>
-                ${programFieldHtml}
-            </div>
-            <div class="col-md-6 mb-3">
-                <label class="form-label">Grade Level</label>
-                <select class="form-select" id="gradeLevelId" required>
-                     <option value="">Select Grade</option>
-                     ${generateOptions(gradeLevels, 'grade_level_id', 'grade_level')}
-                </select>
-            </div>
-            <div class="col-md-6 mb-3">
-                <label class="form-label">Subjects <span class="text-danger" aria-hidden="true">*</span></label>
-                <div class="input-group">
-                    <select class="form-select" id="subjectId">
-                         <option value="">Select Subject</option>
-                         ${generateOptions(subjects, 'subject_id', 'subject_name')}
-                    </select>
-                    <button type="button" class="btn btn-outline-primary" onclick="addSelectedSubject()">
-                        <i class="bi bi-plus-lg"></i> Add
-                    </button>
-                </div>
-                <div id="selectedSubjectsList" class="mt-2 d-flex flex-wrap gap-2">
-                    <span class="text-muted small">No subjects added yet.</span>
-                </div>
-            </div>
-            
-            <div class="col-md-6 mb-3">
-                <label class="form-label">Select your preferred branch</label>
-                <select class="form-select" id="preferredBranch" required onchange="filterTeachers()">
-                    <option value="">Select Branch</option>
-                    ${generateBranchOptions(branches, studentBranchName)}
-                </select>
-            </div>
-
-            <div class="col-md-6 mb-3">
-                <label class="form-label">School Year</label>
-                <input type="text" class="form-control" disabled value="${globalLookups.active_school_year ? globalLookups.active_school_year.school_year : 'No active school year'}">
-            </div>
-
-            <div class="col-md-6 mb-3">
-                <label class="form-label">Teacher <small class="text-muted">(Filtered)</small></label>
-                <select class="form-select" id="preferredTeacher" required onchange="onTeacherChange()" disabled>
-                     <option value="">Select branch, program, and subject first</option>
-                     ${generateOptions(teachers, 'employee_id', 'name')}
-                </select>
-            </div>
-        </div>
-
-        <div class="col-md-12 mb-3">
-            <label class="form-label">Your Learning Goal</label>
-            <textarea class="form-control" id="goal" rows="2" placeholder="Describe what you want to achieve..."></textarea>
-        </div>
-
-        <div class="col-md-12 mb-3" id="studentUnitPreview" style="display:none;">
-            <div class="alert alert-info">
-                <strong>Required Units:</strong> <span id="requiredUnits">-</span> | 
-                <strong>Current Schedule Units:</strong> <span id="currentUnits">0</span> 
-                <span id="unitStatus" class="badge bg-warning ms-2">Needs more</span>
-            </div>
-        </div>
-
-        <hr>
-        <h6 class="text-primary mb-3">Schedule Preferences</h6>
-        <div class="card p-3 bg-light mb-3">
-            <div class="row align-items-end">
-                <div class="col-md-4 mb-2 position-relative">
-                    <label class="form-label small fw-bold">Select Date</label>
-                    <div class="input-group">
-                        <input type="text" class="form-control" id="schedDateInput" placeholder="Click to pick date" readonly>
-                        <input type="hidden" id="schedDate">
-                        <button class="btn btn-outline-secondary" type="button" id="datePickerBtn" title="Open Calendar">
-                            <i class="bi bi-calendar3"></i>
-                        </button>
+            ${enrollmentHeaderHtml}
+            <section class="tutorial-section">
+                <h3 class="tutorial-section-title">
+                    <span class="tutorial-section-icon"><i class="bi bi-mortarboard-fill"></i></span>
+                    <span>Program &amp; Assignment</span>
+                </h3>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Program <span class="text-danger required-field-indicator" aria-hidden="true">*</span></label>
+                        ${programFieldHtml}
+                        ${pendingDownpaymentEnrollment?.program_id ? '<small class="tutorial-help-text"><i class="bi bi-lock me-1"></i>Program locked from the saved downpayment.</small>' : ''}
                     </div>
-                    <div id="dateCalendarContainer" style="display:none; position:absolute; top:100%; left:0; width:100%; z-index:1050;"></div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="gradeLevelId">Grade Level</label>
+                        <select class="form-select" id="gradeLevelId" required>
+                            <option value="">Select Grade</option>
+                            ${generateOptions(gradeLevels, 'grade_level_id', 'grade_level')}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Subjects <span class="text-danger required-field-indicator" aria-hidden="true">*</span></label>
+                        <div class="tutorial-subject-control">
+                            <button type="button" class="tutorial-subject-toggle" id="subjectId" aria-expanded="false" aria-controls="studentSubjectPicker" onclick="toggleStudentSubjectPicker()">
+                                <span id="subjectSelectionText">Select one or more subjects</span>
+                                <i class="bi bi-chevron-down"></i>
+                            </button>
+                            <div class="tutorial-subject-menu d-none" id="studentSubjectPicker" role="group" aria-label="Select subjects">
+                                ${subjects.map(subject => `
+                                    <label class="tutorial-subject-option">
+                                        <input type="checkbox" value="${subject.subject_id}" onchange="setStudentSelectedSubject(this)">
+                                        <span class="subject-name">${escapeStudentEnrollmentHtml(subject.subject_name)}</span>
+                                        <i class="bi bi-check2"></i>
+                                    </label>
+                                `).join('') || '<span class="d-block p-2 text-muted">No subjects configured.</span>'}
+                            </div>
+                        </div>
+                        <div id="selectedSubjectsList" class="tutorial-subject-summary"></div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="preferredBranch">Branch</label>
+                        <select class="form-select" id="preferredBranch" required onchange="filterTeachers()">
+                            <option value="">Select Branch</option>
+                            ${generateBranchOptions(branches, studentBranchName)}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">School Year</label>
+                        <input type="text" class="form-control" disabled value="${globalLookups.active_school_year ? globalLookups.active_school_year.school_year : 'No active school year'}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="preferredTeacher">Teacher <small class="text-muted">(Filtered)</small></label>
+                        <select class="form-select" id="preferredTeacher" required onchange="onTeacherChange()" disabled>
+                            <option value="">Select branch, program, and subject first</option>
+                            ${generateOptions(teachers, 'employee_id', 'name')}
+                        </select>
+                    </div>
                 </div>
-                <div class="col-md-4 mb-2">
-                    <label class="form-label small fw-bold">Start Time</label>
-                    <input type="time" class="form-control" id="schedTime">
-                </div>
-                <div class="col-md-3 mb-2">
-                    <label class="form-label small fw-bold">End Time</label>
-                    <input type="time" class="form-control" id="schedEndTime">
-                </div>
-                <div class="col-md-1 mb-2">
-                    <button type="button" class="btn btn-success w-100" onclick="addSchedule()">
-                        <i class="bi bi-plus-lg"></i> Add
-                    </button>
+            </section>
+
+            <section class="tutorial-section tutorial-learning-section">
+                <h3 class="tutorial-section-title">
+                    <span class="tutorial-section-icon"><i class="bi bi-bullseye"></i></span>
+                    <span>Learning Goal</span>
+                </h3>
+                <textarea class="form-control" id="goal" rows="2" placeholder="Describe what you want to achieve..."></textarea>
+            </section>
+
+            <div id="studentUnitPreview" style="display:none;">
+                <div class="alert alert-info">
+                    <strong>Required Units:</strong> <span id="requiredUnits">-</span>
+                    <span class="unit-divider" aria-hidden="true"></span>
+                    <strong>Current Schedule Units:</strong> <span id="currentUnits">0</span>
+                    <span id="unitStatus" class="badge bg-warning ms-2">Needs more</span>
                 </div>
             </div>
-            
-            <div class="mt-3">
-                <table class="table table-sm table-bordered bg-white">
-                    <thead class="table-light">
-                        <tr>
-                            <th>Date</th>
-                            <th>Day</th>
-                            <th>Start - End</th>
-                            <th style="width: 50px;">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="scheduleListBody">
-                        <tr><td colspan="4" class="text-center text-muted">No schedule preferences added yet.</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    `;
+
+            <section class="tutorial-section">
+                <h3 class="tutorial-section-title">
+                    <span class="tutorial-section-icon"><i class="bi bi-calendar-week"></i></span>
+                    <span>Schedule Preferences</span>
+                </h3>
+                <div class="tutorial-schedule-grid">
+                    <div class="tutorial-date-field">
+                        <label class="form-label" for="schedDateInput">Select Date</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="schedDateInput" placeholder="Click to pick date" readonly>
+                            <input type="hidden" id="schedDate">
+                            <button class="btn btn-outline-secondary" type="button" id="datePickerBtn" title="Open Calendar"><i class="bi bi-calendar3"></i></button>
+                        </div>
+                        <div id="dateCalendarContainer" style="display:none; position:absolute; top:100%; left:0; width:100%; z-index:1050;"></div>
+                    </div>
+                    <div><label class="form-label" for="schedTime">Start Time</label><input type="time" class="form-control" id="schedTime"></div>
+                    <div><label class="form-label" for="schedEndTime">End Time</label><input type="time" class="form-control" id="schedEndTime"></div>
+                    <div><button type="button" class="btn tutorial-add-btn" onclick="addSchedule()"><i class="bi bi-plus-lg"></i><span>Add</span></button></div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered bg-white tutorial-schedule-table">
+                        <thead class="table-light"><tr><th>Date</th><th>Day</th><th>Start - End</th><th style="width:50px;">Action</th></tr></thead>
+                        <tbody id="scheduleListBody"><tr><td colspan="4" class="text-center text-muted"><i class="bi bi-calendar3 me-2"></i>No schedule preferences added yet.</td></tr></tbody>
+                    </table>
+                </div>
+            </section>`;
     
         // APPEND THE HTML
         container.innerHTML = html;
@@ -843,9 +940,7 @@ window.subtractInterval = subtractInterval;
 
 window.filterTeachers = function() {
     const programId = document.getElementById('programId').value;
-    const selectedSubjectIds = getSelectedSubjectIds();
-    const subjectId = document.getElementById('subjectId').value;
-    const subjectIds = selectedSubjectIds.length > 0 ? selectedSubjectIds : (subjectId ? [subjectId] : []);
+    const subjectIds = getSelectedSubjectIds();
     const teacherSelect = document.getElementById('preferredTeacher');
     
     // Capture current teacher selection before changes
@@ -1063,6 +1158,21 @@ function renderSelectedSubjects() {
     const list = document.getElementById('selectedSubjectsList');
     if (!list) return;
 
+    const picker = document.getElementById('studentSubjectPicker');
+    const selectionText = document.getElementById('subjectSelectionText');
+    picker?.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+        checkbox.checked = selectedSubjectIds.some(id => String(id) === String(checkbox.value));
+    });
+
+    if (selectionText) {
+        const names = selectedSubjectIds.map(getSubjectName);
+        selectionText.textContent = names.length ? names.join(', ') : 'Select one or more subjects';
+        list.textContent = names.length
+            ? `${names.length} subject${names.length === 1 ? '' : 's'} selected`
+            : 'No subjects selected yet.';
+        return;
+    }
+
     if (selectedSubjectIds.length === 0) {
         list.innerHTML = '<span class="text-muted small">No subjects added yet.</span>';
         return;
@@ -1075,6 +1185,28 @@ function renderSelectedSubjects() {
         </span>
     `).join('');
 }
+
+window.toggleStudentSubjectPicker = function() {
+    const toggle = document.getElementById('subjectId');
+    const picker = document.getElementById('studentSubjectPicker');
+    if (!toggle || !picker) return;
+    const isOpening = picker.classList.contains('d-none');
+    picker.classList.toggle('d-none', !isOpening);
+    toggle.classList.toggle('open', isOpening);
+    toggle.setAttribute('aria-expanded', String(isOpening));
+};
+
+window.setStudentSelectedSubject = function(checkbox) {
+    const subjectId = String(checkbox?.value || '');
+    if (!subjectId) return;
+    if (checkbox.checked && !selectedSubjectIds.some(id => String(id) === subjectId)) {
+        selectedSubjectIds.push(subjectId);
+    } else if (!checkbox.checked) {
+        selectedSubjectIds = selectedSubjectIds.filter(id => String(id) !== subjectId);
+    }
+    renderSelectedSubjects();
+    filterTeachers();
+};
 
 window.addSelectedSubject = function() {
     const subjectSelect = document.getElementById('subjectId');
@@ -1387,6 +1519,7 @@ function renderDownpaymentStep() {
                         }
                         if (amountInput) {
                             amountInput.value = downpayment.toFixed(2);
+                        amountInput.min = downpayment.toFixed(2);
                         }
                         loadProgramProductsPreview(this.value, 'downpaymentProgramProductsPreview');
                     });
@@ -1402,7 +1535,8 @@ function renderDownpaymentStep() {
 }
 async function handleSubmitDownpayment() {
     const programId = document.getElementById('downpaymentProgramInput')?.value;
-    const amount = parseFloat(document.getElementById('downpaymentAmountInput')?.value);
+    const amount = Number(document.getElementById('downpaymentAmountInput')?.value);
+    const minimum = Number(document.getElementById('downpaymentProgramInput')?.selectedOptions?.[0]?.dataset.downpayment || 0);
     const methodId = document.getElementById('paymentMethodInput')?.value || null;
     const ref = document.getElementById('transactionReferenceInput')?.value.trim();
 
@@ -1410,10 +1544,15 @@ async function handleSubmitDownpayment() {
         Swal.fire("Program Required", "Please select a tutorial program first.", "warning");
         return;
     }
-    if (!amount || amount <= 0) {
+    if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) {
         Swal.fire("Invalid Amount", "Please enter a valid downpayment amount.", "warning");
         return;
     }
+    if (Math.round(amount * 100) < Math.round(minimum * 100)) {
+        Swal.fire('Insufficient Downpayment', `Payment must be at least PHP ${minimum.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. You may enter a higher amount or pay in full.`, 'warning');
+        return;
+    }
+
     if (!methodId) {
         Swal.fire("Invalid Payment", "GCash payment is not configured. Please contact administrator.", "warning");
         return;
@@ -1459,25 +1598,12 @@ async function handleSubmitDownpayment() {
                 downpaymentModal.hide();
             }
 
-            const receiptData = {
-                enrollmentId: res.data.enrollment_id,
-                studentName: res.data.student_name || 'Student',
-                programName: res.data.program_display_name || '',
-                programType: res.data.program_type || '',
-                paymentFor: 'Enrollment Downpayment',
-                paymentMethod: res.data.payment_method || 'GCash',
-                referenceNo: res.data.reference_no || ref,
-                receiptNo: res.data.receipt_id || null,
-                amountPaid: amount,
-                balance: parseFloat(res.data.balance || 0),
-                totalAmount: amount,
-                paymentDate: new Date()
-            };
-
-            const receiptHandler = getStudentReceiptHandler();
-            if (typeof receiptHandler === 'function') {
-                await receiptHandler(receiptData);
-            }
+            await Swal.fire({
+                title: 'Payment submitted for review',
+                text: 'Your payment is awaiting approval. Your receipt will be generated after your payment is approved. Continue with your enrollment details for center review.',
+                icon: 'info',
+                confirmButtonText: 'Continue to Enrollment Details'
+            });
 
             const enrollmentModal = new bootstrap.Modal(document.getElementById('enrollmentDetailsModal'));
             enrollmentModal.show();
@@ -1492,10 +1618,7 @@ async function handleSubmitDownpayment() {
 }
 
 function resolveEnrollmentPaymentQrUrl(qrPath) {
-    const value = String(qrPath || '').trim();
-    if (!value) return '';
-    if (/^(?:https?:|data:|blob:|\/)/i.test(value) || value.startsWith('../')) return value;
-    return `../../${value.replace(/^\.\//, '')}`;
+    return window.resolveUploadUrl(qrPath);
 }
 
 function buildEnrollmentPaymentMethodDetails(method) {
@@ -2081,12 +2204,12 @@ function renderDownpaymentStep() {
                     <p class="dp-card-description mb-3">We've read the information from your receipt. You can still edit if needed.</p>
                     <div class="dp-field-grid">
                         <div class="dp-field">
-                            <label class="form-label" for="downpaymentAmountInput">Amount</label>
+                            <label class="form-label" for="downpaymentAmountInput">Amount Paid</label>
                             <div class="input-group">
                                 <span class="input-group-text">&#8369;</span>
                                 <input type="number" class="form-control" id="downpaymentAmountInput" value="0.00" step="0.01" min="0" required>
                             </div>
-                            <small class="dp-help">Auto-filled from your receipt.</small>
+                            <small class="dp-help">Pay at least the required downpayment. You may enter a higher amount or pay in full.</small>
                         </div>
                         <div class="dp-field" id="referenceField" style="display:${gcashMethodId ? 'block' : 'none'};">
                             <label class="form-label" for="transactionReferenceInput">GCash Reference Number</label>
@@ -2119,6 +2242,7 @@ function renderDownpaymentStep() {
                     }
                     if (amountInput) {
                         amountInput.value = downpayment.toFixed(2);
+                        amountInput.min = downpayment.toFixed(2);
                     }
 
                     loadProgramProductsPreview(this.value, 'downpaymentProgramProductsPreview');
@@ -2156,7 +2280,8 @@ function renderDownpaymentStep() {
 
 async function handleSubmitDownpayment() {
     const programId = document.getElementById('downpaymentProgramInput')?.value;
-    const amount = parseFloat(document.getElementById('downpaymentAmountInput')?.value);
+    const amount = Number(document.getElementById('downpaymentAmountInput')?.value);
+    const minimum = Number(document.getElementById('downpaymentProgramInput')?.selectedOptions?.[0]?.dataset.downpayment || 0);
     const methodId = document.getElementById('paymentMethodInput')?.value || null;
     const ref = document.getElementById('transactionReferenceInput')?.value.trim();
     const screenshotFile = document.getElementById('downpaymentScreenshotInput')?.files?.[0] || null;
@@ -2166,10 +2291,15 @@ async function handleSubmitDownpayment() {
         Swal.fire("Program Required", "Please select a tutorial program first.", "warning");
         return;
     }
-    if (!amount || amount <= 0 || Number.isNaN(amount)) {
+    if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) {
         Swal.fire("Invalid Amount", "Please enter a valid downpayment amount.", "warning");
         return;
     }
+    if (Math.round(amount * 100) < Math.round(minimum * 100)) {
+        Swal.fire('Insufficient Downpayment', `Payment must be at least PHP ${minimum.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. You may enter a higher amount or pay in full.`, 'warning');
+        return;
+    }
+
     if (!methodId) {
         Swal.fire("Invalid Payment", "GCash payment is not configured. Please contact administrator.", "warning");
         return;
@@ -2229,26 +2359,12 @@ async function handleSubmitDownpayment() {
                 downpaymentModal.hide();
             }
 
-            const receiptData = {
-                enrollmentId: res.data.enrollment_id,
-                studentName: res.data.student_name || 'Student',
-                programName: res.data.program_display_name || '',
-                programType: res.data.program_type || '',
-                paymentFor: 'Enrollment Downpayment',
-                paymentMethod: res.data.payment_method || 'GCash',
-                referenceNo: res.data.reference_no || ref,
-                paymentScreenshotPath: res.data.payment_screenshot_path || null,
-                receiptNo: res.data.receipt_id || null,
-                amountPaid: amount,
-                balance: parseFloat(res.data.balance || 0),
-                totalAmount: amount,
-                paymentDate: new Date()
-            };
-
-            const receiptHandler = getStudentReceiptHandler();
-            if (typeof receiptHandler === 'function') {
-                await receiptHandler(receiptData);
-            }
+            await Swal.fire({
+                title: 'Payment submitted for review',
+                text: 'Your payment is awaiting approval. Your receipt will be generated after your payment is approved. Continue with your enrollment details for center review.',
+                icon: 'info',
+                confirmButtonText: 'Continue to Enrollment Details'
+            });
 
             const enrollmentModal = new bootstrap.Modal(document.getElementById('enrollmentDetailsModal'));
             enrollmentModal.show();

@@ -170,7 +170,7 @@ class NotificationService {
                        eps.start_time,
                        eps.end_time,
                        eps.status,
-                       ed.preferred_teacher AS teacher_id,
+                       COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) AS teacher_id,
                        eh.student_id,
                        eh.branch_id,
                        TRIM(CONCAT_WS(' ', s.first_name, s.last_name, NULLIF(TRIM(s.ext), ''))) AS student_name,
@@ -182,7 +182,7 @@ class NotificationService {
                 INNER JOIN enrollment_details ed ON eps.enrollment_details_id = ed.enrollment_details_id
                 INNER JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id
                 INNER JOIN student s ON eh.student_id = s.student_id
-                LEFT JOIN employee t ON ed.preferred_teacher = t.employee_id
+                LEFT JOIN employee t ON COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = t.employee_id
                 LEFT JOIN program p ON ed.program_id = p.program_id
                 LEFT JOIN subject sub ON ed.subject_id = sub.subject_id
                 LEFT JOIN branch b ON eh.branch_id = b.branch_id

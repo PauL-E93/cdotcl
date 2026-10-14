@@ -1,0 +1,39 @@
+#scheduleModal .modal-header { background: var(--primary-pink, #ea9aa6); color: #351321; }
+#scheduleModal .modal-body { padding: 1.5rem; }
+#scheduleModal fieldset { min-width: 0; }
+#scheduleModal .schedule-builder { padding: 1.25rem; border: 1px solid var(--primary-pink, #ea9aa6); border-radius: 14px; background: var(--soft-pink, #f9e7ec); }
+#scheduleModal .schedule-day-shortcuts, #scheduleModal .schedule-time-presets { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+#scheduleModal .schedule-day-picker { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .5rem; margin: 1rem 0; }
+#scheduleModal .schedule-day-choice { border: 1px solid #d6c6cb; background: white; padding: .65rem .25rem; color: #59434b; font-weight: 600; }
+#scheduleModal .btn-check:checked + .schedule-day-choice { background: var(--primary-pink, #ea9aa6); border-color: var(--primary-pink, #ea9aa6); color: #351321; }
+#scheduleModal .btn-check:focus-visible + .schedule-day-choice { outline: 3px solid var(--dark-pink, #d7768e); outline-offset: 3px; }
+#scheduleModal .schedule-builder-times { display: grid; grid-template-columns: 1fr 1fr auto; gap: .75rem; align-items: end; margin-top: 1rem; }
+#scheduleModal .schedule-add-button, #scheduleModal #scheduleSaveButton { background: var(--primary-pink, #ea9aa6); border-color: var(--primary-pink, #ea9aa6); color: #351321; font-weight: 600; }
+#scheduleModal .schedule-add-button:hover, #scheduleModal #scheduleSaveButton:hover { background: var(--hover-pink, #d8898f); border-color: var(--hover-pink, #d8898f); }
+#scheduleModal .schedule-day-shortcuts .btn, #scheduleModal .schedule-time-presets .btn { border-color: var(--primary-pink, #ea9aa6); color: #59434b; background: white; }
+#scheduleModal .schedule-day-shortcuts .btn:hover, #scheduleModal .schedule-time-presets .btn:hover { background: var(--primary-pink, #ea9aa6); color: #351321; }
+#scheduleModal .schedule-day-add { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: 50%; background: var(--soft-pink, #f9e7ec); border: 1px solid var(--primary-pink, #ea9aa6); color: #592039; }
+#scheduleModal .schedule-day-add:hover, #scheduleModal .schedule-day-add:active { background: var(--primary-pink, #ea9aa6); border-color: var(--dark-pink, #d7768e); color: #351321; }
+#scheduleModal .schedule-day-add:focus-visible { outline: 3px solid var(--dark-pink, #d7768e); outline-offset: 3px; }
+#scheduleModal .schedule-week { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+#scheduleModal .schedule-day-card { border: 1px solid #e4e1e2; border-radius: 12px; padding: .85rem; background: #fafafa; }
+#scheduleModal .schedule-day-card.has-shifts { background: white; border-color: var(--primary-pink, #ea9aa6); }
+#scheduleModal .schedule-day-header { display: flex; justify-content: space-between; align-items: center; gap: .5rem; margin-bottom: .75rem; }
+#scheduleModal .schedule-day-header h6 { font-weight: 650; color: #592039; }
+#scheduleModal .schedule-shift { display: flex; align-items: end; gap: .4rem; margin-top: .65rem; }
+#scheduleModal .schedule-shift-time { flex: 1; min-width: 0; }
+#scheduleModal .schedule-shift-time input { min-width: 0; min-height: 36px; }
+#scheduleModal .schedule-time-arrow { align-self: center; margin-top: 1rem; color: #888; }
+#scheduleModal .schedule-remove { min-height: 36px; }
+#scheduleModal .form-control:focus { border-color: var(--primary-pink, #ea9aa6); box-shadow: 0 0 0 .2rem rgba(234, 154, 166, .25); }
+#scheduleModal fieldset:disabled { opacity: .6; }
+@media (max-width: 575.98px) {
+    #scheduleModal .modal-body { padding: 1rem; }
+    #scheduleModal .schedule-builder { padding: 1rem; }
+    #scheduleModal .schedule-week { grid-template-columns: 1fr; }
+    #scheduleModal .schedule-builder-times { grid-template-columns: 1fr 1fr; }
+    #scheduleModal .schedule-add-button { grid-column: 1 / -1; }
+    #scheduleModal .schedule-day-picker { gap: .25rem; }
+    #scheduleModal .schedule-day-choice { font-size: .8rem; }
+    #scheduleModal .modal-footer > span { flex-basis: 100%; }
+}

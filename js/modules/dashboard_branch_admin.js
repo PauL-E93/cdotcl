@@ -126,8 +126,8 @@ function renderTodaySchedules() {
 }
 
 function renderPipeline() {
-    const statuses = ['pending', 'approved', 'enrolled', 'incomplete', 'cancelled'];
-    const colors = { pending:'#ef6f91', approved:'#348bd4', enrolled:'#4d9d5e', incomplete:'#ffb22d', cancelled:'#d2d7de' };
+    const statuses = ['pending', 'approved', 'enrolled', 'incomplete', 'completed'];
+    const colors = { pending:'#ef6f91', approved:'#348bd4', enrolled:'#4d9d5e', incomplete:'#ffb22d', completed:'#ea9aa6' };
     const values = Object.fromEntries(statuses.map(status => [
         status,
         state.enrollmentPipeline
@@ -446,7 +446,7 @@ function getDashboardModalContent(key) {
 }
 
 function normalizedPipelineRows() {
-    const statuses = ['pending', 'approved', 'enrolled', 'incomplete', 'cancelled'];
+    const statuses = ['pending', 'approved', 'enrolled', 'incomplete', 'completed'];
     return statuses.map(status => ({
         status,
         total: state.enrollmentPipeline

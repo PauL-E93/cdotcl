@@ -1,6 +1,8 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 header('Content-Type: application/json');
-header('Access-Control-Allow-Origin: *');
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -28,7 +30,7 @@ function fetchSecretaryDashboardRow($conn, $sql) {
 
 try {
     requireSecretaryDashboardAccess();
-    require_once __DIR__ . '/../admin/connection-pdo.php';
+    $conn = AuthGuard::connection();
 
     $branches = fetchSecretaryDashboardRows($conn, "
         SELECT branch_id, branch_name, branch_location
@@ -87,6 +89,32 @@ try {
         ORDER BY b.branch_name
     ");
 
+    // Count each header once per category, even when it has multiple program details.
+    $enrollmentCounts = fetchSecretaryDashboardRows($conn, "
+        SELECT eh.branch_id, COALESCE(b.branch_name, 'Unassigned Center') AS branch_name,
+               'all' AS category, COUNT(*) AS total
+        FROM enrollment_header eh
+        LEFT JOIN branch b ON b.branch_id = eh.branch_id
+        GROUP BY eh.branch_id, b.branch_name
+        UNION ALL
+        SELECT categorized.branch_id, COALESCE(b.branch_name, 'Unassigned Center') AS branch_name,
+               categorized.category, COUNT(DISTINCT categorized.enrollment_header_id) AS total
+        FROM (
+            SELECT eh.branch_id, eh.enrollment_header_id,
+                   CASE
+                       WHEN p.program_type = 4 OR LOWER(REPLACE(REPLACE(p.name, '-', ''), ' ', '')) LIKE '%playschool%' THEN 'playschool'
+                       WHEN p.program_type = 3 OR LOWER(REPLACE(REPLACE(p.name, '-', ''), ' ', '')) LIKE '%preschool%' THEN 'preschool'
+                       WHEN p.program_type IN (1, 2) THEN 'tutorial'
+                       ELSE 'other'
+                   END AS category
+            FROM enrollment_header eh
+            JOIN enrollment_details ed ON ed.enrollment_header_id = eh.enrollment_header_id
+            JOIN program p ON p.program_id = ed.program_id
+        ) categorized
+        LEFT JOIN branch b ON b.branch_id = categorized.branch_id
+        GROUP BY categorized.branch_id, b.branch_name, categorized.category
+    ");
+
     $enrollmentPipeline = fetchSecretaryDashboardRows($conn, "
         SELECT branch_id, status, COUNT(*) AS total
         FROM enrollment_header
@@ -119,7 +147,7 @@ try {
         JOIN student st ON st.student_id = eh.student_id
         LEFT JOIN branch b ON b.branch_id = eh.branch_id
         LEFT JOIN program p ON p.program_id = ed.program_id
-        LEFT JOIN employee teacher ON teacher.employee_id = ed.preferred_teacher
+        LEFT JOIN employee teacher ON teacher.employee_id = COALESCE(eps.substitute_teacher_id, ed.preferred_teacher)
         WHERE eps.date = CURDATE() AND eps.status <> 'cancelled'
         ORDER BY eps.start_time
     ");
@@ -178,6 +206,7 @@ try {
         'branches' => $branches,
         'summary_all' => $summaryAll,
         'center_workload' => $centerWorkload,
+        'enrollment_counts' => $enrollmentCounts,
         'enrollment_pipeline' => $enrollmentPipeline,
         'enrollment_trend' => $enrollmentTrend,
         'today_schedules' => $todaySchedules,

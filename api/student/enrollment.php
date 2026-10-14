@@ -1,8 +1,10 @@
 <?php
-session_start();
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
+if (session_status() === PHP_SESSION_NONE) session_start();
 
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, GET");
 header("Access-Control-Allow-Headers: Content-Type");
 
@@ -45,17 +47,23 @@ class StudentEnrollmentAPI {
             $search = isset($_GET['search']) ? trim($_GET['search']) : '';
             $status = isset($_GET['status']) ? trim($_GET['status']) : '';
             $subject = isset($_GET['subject']) ? trim($_GET['subject']) : '';
+            $program = isset($_GET['program']) ? trim($_GET['program']) : '';
             $teacher = isset($_GET['teacher']) ? trim($_GET['teacher']) : '';
             $typeFilter = $this->buildProgramTypeFilter($type);
             $subjectExpression = "COALESCE(NULLIF(TRIM(esub.subject_names), ''), NULLIF(TRIM(sub.subject_name), ''), p.name)";
             $teacherExpression = "COALESCE(NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), ''), NULLIF(TRIM(CONCAT_WS(' ', sec_e.first_name, sec_e.last_name)), ''))";
+            $studentExpression = "TRIM(CONCAT_WS(' ', st.first_name, st.last_name, NULLIF(TRIM(st.ext), '')))";
             $effectiveStatusExpression = "COALESCE(NULLIF(eh.status, ''), ed.status)";
             $filterSql = "";
             $params = [':sid' => $student_id];
 
             if ($search !== '') {
-                $filterSql .= " AND ($subjectExpression LIKE :search OR $teacherExpression LIKE :search)";
-                $params[':search'] = "%$search%";
+                $filterSql .= " AND ($studentExpression LIKE :search_student OR p.name LIKE :search_program OR $subjectExpression LIKE :search_subject OR $teacherExpression LIKE :search_teacher)";
+                $searchPattern = "%$search%";
+                $params[':search_student'] = $searchPattern;
+                $params[':search_program'] = $searchPattern;
+                $params[':search_subject'] = $searchPattern;
+                $params[':search_teacher'] = $searchPattern;
             }
             if ($status !== '') {
                 $filterSql .= " AND $effectiveStatusExpression = :status";
@@ -64,6 +72,10 @@ class StudentEnrollmentAPI {
             if ($subject !== '') {
                 $filterSql .= " AND $subjectExpression LIKE :subject";
                 $params[':subject'] = "%$subject%";
+            }
+            if ($program !== '') {
+                $filterSql .= " AND p.name = :program";
+                $params[':program'] = $program;
             }
             if ($teacher !== '') {
                 $filterSql .= " AND $teacherExpression = :teacher";
@@ -74,6 +86,7 @@ class StudentEnrollmentAPI {
             $countSql = "SELECT COUNT(*)
                          FROM enrollment_details ed
                          JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id
+                         JOIN student st ON eh.student_id = st.student_id
                          JOIN program p ON ed.program_id = p.program_id
                          LEFT JOIN subject sub ON ed.subject_id = sub.subject_id
                          LEFT JOIN (SELECT es.enrollment_details_id, GROUP_CONCAT(s.subject_name ORDER BY s.subject_name SEPARATOR ', ') AS subject_names FROM enrollment_subjects es JOIN subject s ON es.subject_id = s.subject_id GROUP BY es.enrollment_details_id) esub ON ed.enrollment_details_id = esub.enrollment_details_id
@@ -90,6 +103,10 @@ class StudentEnrollmentAPI {
 
             // Get paginated data for this student
             $sql = "SELECT ed.enrollment_details_id,
+                           ea.application_id,
+                           ea.applicant_type,
+                           ea.status AS application_status,
+                           ea.submission_stage,
                            TRIM(CONCAT_WS(' ', st.first_name, st.last_name, NULLIF(TRIM(st.ext), ''))) AS student_name,
                            p.name AS program_name,
                            p.program_type,
@@ -106,6 +123,31 @@ class StudentEnrollmentAPI {
                     LEFT JOIN employee e ON ed.preferred_teacher = e.employee_id
                     LEFT JOIN sections sec ON ed.section_id = sec.section_id
                     LEFT JOIN employee sec_e ON sec.employee_id = sec_e.employee_id
+                    LEFT JOIN enrollment_applications ea ON ea.application_id = COALESCE(
+                        (
+                            SELECT MAX(linked_ea.application_id)
+                            FROM enrollment_applications linked_ea
+                            WHERE linked_ea.enrollment_details_id = ed.enrollment_details_id
+                              AND linked_ea.applicant_type = 'existing_student'
+                        ),
+                        (
+                            SELECT MAX(active_ea.application_id)
+                            FROM enrollment_applications active_ea
+                            WHERE active_ea.student_id = eh.student_id
+                              AND active_ea.program_id = ed.program_id
+                              AND active_ea.applicant_type = 'existing_student'
+                              AND active_ea.enrollment_details_id IS NULL
+                              AND active_ea.status IN ('pending_review', 'approved_for_payment', 'ready_for_scheduling')
+                              AND ed.enrollment_details_id = (
+                                  SELECT MAX(candidate_ed.enrollment_details_id)
+                                  FROM enrollment_details candidate_ed
+                                  JOIN enrollment_header candidate_eh ON candidate_eh.enrollment_header_id = candidate_ed.enrollment_header_id
+                                  WHERE candidate_eh.student_id = eh.student_id
+                                    AND candidate_ed.program_id = ed.program_id
+                                    AND COALESCE(NULLIF(candidate_eh.status, ''), candidate_ed.status) = 'incomplete'
+                              )
+                        )
+                    )
                     WHERE eh.student_id = :sid" . $typeFilter . $filterSql . "
                     ORDER BY eh.date_created DESC
                     LIMIT :limit OFFSET :offset";
@@ -170,8 +212,9 @@ class StudentEnrollmentAPI {
             echo json_encode([
                 "status" => "success",
                 "data" => [
-                    "statuses" => $loadValues($statusExpression),
+                    "statuses" => ['pending', 'approved', 'enrolled', 'incomplete', 'completed'],
                     "subjects" => $loadValues($subjectExpression),
+                    "programs" => $loadValues('p.name'),
                     "teachers" => $loadValues($teacherExpression)
                 ]
             ]);
@@ -201,15 +244,15 @@ class StudentEnrollmentAPI {
             $pending->execute([$student_id]);
             $pending = $pending->fetchColumn();
 
-            $cancelled = $this->conn->prepare("SELECT COUNT(*)" . $baseFrom . $typeFilter . " AND ed.status = 'cancelled'");
-            $cancelled->execute([$student_id]);
-            $cancelled = $cancelled->fetchColumn();
+            $completed = $this->conn->prepare("SELECT COUNT(*)" . $baseFrom . $typeFilter . " AND COALESCE(NULLIF(eh.status, ''), ed.status) = 'completed'");
+            $completed->execute([$student_id]);
+            $completed = $completed->fetchColumn();
 
             $new = $this->conn->prepare("SELECT COUNT(*)" . $baseFrom . $typeFilter . " AND eh.date_created >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
             $new->execute([$student_id]);
             $new = $new->fetchColumn();
 
-            echo json_encode(["status" => "success", "data" => ["total" => $total, "new" => $new, "pending" => $pending, "cancelled" => $cancelled]]);
+            echo json_encode(["status" => "success", "data" => ["total" => $total, "new" => $new, "pending" => $pending, "completed" => $completed]]);
         } catch (Exception $e) {
             echo json_encode(["status" => "error", "message" => $e->getMessage()]);
         }
@@ -218,6 +261,40 @@ class StudentEnrollmentAPI {
     public function getPrePlayEnrollmentStats() {
         $_GET['type'] = 'preschool';
         $this->getEnrollmentStats();
+    }
+
+    // Report which payment navigation categories belong to this student's enrollments.
+    public function getNavigationAccess() {
+        if (!isset($_SESSION['user_id'])) {
+            echo json_encode(["status" => "error", "message" => "Not logged in"]);
+            return;
+        }
+
+        try {
+            $studentId = $_SESSION['user_id'];
+            $baseSql = "SELECT EXISTS(
+                            SELECT 1
+                            FROM enrollment_details ed
+                            JOIN enrollment_header eh ON ed.enrollment_header_id = eh.enrollment_header_id
+                            JOIN program p ON ed.program_id = p.program_id
+                            WHERE eh.student_id = ?";
+
+            $hasTutorial = $this->conn->prepare($baseSql . $this->buildProgramTypeFilter('tutorial') . ")");
+            $hasTutorial->execute([$studentId]);
+
+            $hasPreschool = $this->conn->prepare($baseSql . $this->buildProgramTypeFilter('preschool') . ")");
+            $hasPreschool->execute([$studentId]);
+
+            echo json_encode([
+                "status" => "success",
+                "data" => [
+                    "tutorial" => (bool)$hasTutorial->fetchColumn(),
+                    "preschool" => (bool)$hasPreschool->fetchColumn()
+                ]
+            ]);
+        } catch (Exception $e) {
+            echo json_encode(["status" => "error", "message" => $e->getMessage()]);
+        }
     }
 
     // Get enrollment details for the logged-in student
@@ -321,6 +398,18 @@ class StudentEnrollmentAPI {
             $stmt = $this->conn->prepare($sql);
             $stmt->execute([$id]);
             $details = $stmt->fetch(PDO::FETCH_ASSOC);
+            $stmtApplication = $this->conn->prepare("SELECT application_id, status FROM enrollment_applications WHERE enrollment_details_id = ? ORDER BY application_id DESC LIMIT 1");
+            $stmtApplication->execute([$id]);
+            $application = $stmtApplication->fetch(PDO::FETCH_ASSOC);
+            if (!$application && is_array($details) && strtolower((string)($details['status'] ?? '')) === 'incomplete') {
+                $stmtApplication = $this->conn->prepare("SELECT application_id, status FROM enrollment_applications WHERE student_id = ? AND program_id = ? AND applicant_type = 'existing_student' AND enrollment_details_id IS NULL AND status IN ('pending_review', 'approved_for_payment', 'ready_for_scheduling') AND ? = (SELECT MAX(candidate_ed.enrollment_details_id) FROM enrollment_details candidate_ed JOIN enrollment_header candidate_eh ON candidate_eh.enrollment_header_id = candidate_ed.enrollment_header_id WHERE candidate_eh.student_id = ? AND candidate_ed.program_id = ? AND COALESCE(NULLIF(candidate_eh.status, ''), candidate_ed.status) = 'incomplete') ORDER BY application_id DESC LIMIT 1");
+                $stmtApplication->execute([$student_id, $details['program_id'], $id, $student_id, $details['program_id']]);
+                $application = $stmtApplication->fetch(PDO::FETCH_ASSOC);
+            }
+            if (is_array($details)) {
+                $details['application_id'] = $application['application_id'] ?? null;
+                $details['application_status'] = $application['status'] ?? null;
+            }
 
             // Get schedule
             $sqlSched = "SELECT day, start_time, end_time, date FROM enrollment_preferred_schedule WHERE enrollment_details_id = ?";
@@ -363,6 +452,7 @@ switch($op){
     case "getEnrollmentFilterLookups": $api->getEnrollmentFilterLookups(); break;
     case "getEnrollmentStats": $api->getEnrollmentStats(); break;
     case "getPrePlayEnrollmentStats": $api->getPrePlayEnrollmentStats(); break;
+    case "getNavigationAccess": $api->getNavigationAccess(); break;
     case "getEnrollmentDetails": $api->getEnrollmentDetails(); break;
     default: echo json_encode(["status" => "error", "message" => "Invalid Operation"]); break;
 }

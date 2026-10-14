@@ -1,7 +1,7 @@
 // js/modules/program_type.js
 
 import { refreshProgramTypes } from './program.js';
-import { canUseProgramPermission, guardProgramPermission } from './program_rbac.js';
+import { canUseProgramPermission, guardProgramPermission } from './program_rbac.js?v=20261001-payment-view-only';
 
 // Function to load program types into the table
 export function loadProgramTypes() {

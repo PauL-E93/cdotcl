@@ -172,8 +172,8 @@ function openDueRowAction(row) {
     if (!enrollmentId) return;
 
     if (row.dataset.category === 'pending_review') {
-        if (typeof window.openPrePlayPaymentHistoryModal === 'function') {
-            window.openPrePlayPaymentHistoryModal(enrollmentId, true);
+        if (typeof window.openStudentPrePlayPaymentHistoryModal === 'function') {
+            window.openStudentPrePlayPaymentHistoryModal(enrollmentId);
         }
         return;
     }

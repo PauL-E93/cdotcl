@@ -1,6 +1,9 @@
-import { getResolvedRolePermissions, initRbacPermissions, normalizeRbacRoleKey } from "../utilities/rbac_navigation.js";
+import { getResolvedRolePermissions, initRbacPermissions, normalizeRbacRoleKey } from "../utilities/rbac_navigation.js?v=20261001-payment-view-only";
 
 const DEFAULT_PROGRAM_PERMISSIONS = {
+    view_session_automation: true,
+    create_session_automation: false,
+    edit_session_automation: false,
     view: true,
     create: true,
     edit: true,
@@ -36,14 +39,15 @@ const DEFAULT_PROGRAM_PERMISSIONS = {
     create_registration: true,
     edit_registration: true,
     view_payment_methods: true,
-    create_payment_methods: true,
-    edit_payment_methods: true,
-    delete_payment_methods: true,
+    create_payment_methods: false,
+    edit_payment_methods: false,
+    delete_payment_methods: false,
     view_landing: true,
     edit_landing: true
 };
 
 const PROGRAM_SECTION_CONFIG = [
+    { permissionKey: 'view_session_automation', featureKey: 'session_automation', anchorSelector: '#session-automation-table' },
     { permissionKey: 'view_programs', featureKey: 'programs', anchorSelector: '#program_table_body' },
     { permissionKey: 'view_types', featureKey: 'types', anchorSelector: '#program_type_table_body' },
     { permissionKey: 'view_grades', featureKey: 'grades', anchorSelector: '#grade_level_table_body' },

@@ -1,14 +1,35 @@
-import { canUseProgramPermission, guardProgramPermission } from './program_rbac.js';
+import { canUseProgramPermission, guardProgramPermission } from './program_rbac.js?v=20261001-payment-view-only';
 
 const API_URL = '../../api/landing_page.php';
-const FIELDS = ['announcement_1', 'announcement_2', 'announcement_3', 'picture_1', 'picture_2', 'picture_3', 'mission', 'vision', 'core_values', 'gmail', 'contact_number', 'facebook'];
+const FIELDS = [
+    'hero_eyebrow', 'hero_title', 'hero_tagline', 'hero_description',
+    'highlight_1_value', 'highlight_1_label', 'highlight_2_value', 'highlight_2_label',
+    'highlight_3_value', 'highlight_3_label', 'highlight_4_value', 'highlight_4_label',
+    'announcement_1', 'announcement_2', 'announcement_3',
+    'picture_1', 'picture_2', 'picture_3', 'mission', 'vision', 'core_values',
+    'gmail', 'contact_number', 'facebook'
+];
+const DEFAULTS = {
+    hero_eyebrow: 'WELCOME TO CDO TUTOR!',
+    hero_title: 'We Are\nYour Teachers!',
+    hero_tagline: 'Kind friendly, dedicated professionals',
+    hero_description: 'We are licensed professional teachers who cater all levels and all subjects with excellent and quality services.',
+    highlight_1_value: '5.3K+',
+    highlight_1_label: 'Followers\nand growing',
+    highlight_2_value: 'Licensed',
+    highlight_2_label: 'Professional\nTeachers',
+    highlight_3_value: 'All Levels',
+    highlight_3_label: 'All Subjects\nCovered',
+    highlight_4_value: 'Quality',
+    highlight_4_label: 'Education You\nCan Trust'
+};
 
 let record = null;
 
 function populate(data = {}) {
     FIELDS.forEach(field => {
         const input = document.getElementById(`landing-${field}`);
-        if (input) input.value = data[field] || '';
+        if (input) input.value = data[field] || DEFAULTS[field] || '';
     });
     document.getElementById('landing-page-save')?.replaceChildren(document.createTextNode(data.landingpage_id ? 'Save Landing Page Content' : 'Create Landing Page Content'));
 }
@@ -34,7 +55,10 @@ export async function initLandingPageManager() {
     form.addEventListener('submit', async event => {
         event.preventDefault();
         if (!guardProgramPermission('edit_landing', 'You do not have permission to edit landing-page content.')) return;
-        const data = Object.fromEntries(FIELDS.map(field => [field, document.getElementById(`landing-${field}`).value.trim()]));
+        const data = Object.fromEntries(FIELDS.map(field => {
+            const input = document.getElementById(`landing-${field}`);
+            return [field, input ? input.value.trim() : (record?.[field] || '')];
+        }));
         if (record?.landingpage_id) data.landingpage_id = record.landingpage_id;
         try {
             await axios.post(API_URL, new URLSearchParams({ operation: record ? 'updateLandingPage' : 'insertLandingPage', json: JSON.stringify(data) }));

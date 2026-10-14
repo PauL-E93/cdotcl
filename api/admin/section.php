@@ -1,7 +1,9 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 // api/admin/section.php
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -107,9 +109,10 @@ class Section {
         }
         
         // First, verify and update section status based on current enrollment
-        $verifySql = "SELECT s.section_id, s.max, s.status, COUNT(ed.enrollment_details_id) as enrolled_count
+        $verifySql = "SELECT s.section_id, s.max, s.status,
+                            COUNT(ed.enrollment_details_id) as enrolled_count
                      FROM sections s
-                     LEFT JOIN enrollment_details ed ON s.section_id = ed.section_id AND ed.status = 'enrolled'
+                     LEFT JOIN enrollment_details ed ON s.section_id = ed.section_id
                      WHERE s.class_id = :class_id
                      GROUP BY s.section_id, s.max, s.status";
         $verifyStmt = $conn->prepare($verifySql);
@@ -253,7 +256,9 @@ class Section {
             $status = $data['status'];
 
             if ($maxCapacity !== null) {
-                $countSql = "SELECT COUNT(enrollment_details_id) AS enrolled_count FROM enrollment_details WHERE section_id = :section_id AND status = 'enrolled'";
+                $countSql = "SELECT COUNT(enrollment_details_id) AS enrolled_count
+                             FROM enrollment_details
+                             WHERE section_id = :section_id";
                 $countStmt = $conn->prepare($countSql);
                 $countStmt->bindParam(":section_id", $sectionId);
                 $countStmt->execute();

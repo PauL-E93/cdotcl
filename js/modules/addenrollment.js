@@ -1,6 +1,11 @@
-import { renderPreschoolEnrollment } from './pre_play_enrollment.js';
+import { getTutorialValidityPreview, formatTutorialDate } from './tutorial_validity.js?v=20261013';
+import { renderPreschoolEnrollment } from './pre_play_enrollment.js?v=20261006-upload-images-r2';
+import { buildAppUrl } from '../utilities/app_url.js';
+import { saveRequestedSubject } from './requested_subject.js?v=20261004-other-subject';
+import { updateTeacherSubjectNotice, teacherSubjectConfirmationRequired } from './teacher_subject_confirmation.js?v=20261004-teacher-fallback';
 import { showPaymentReceipt } from './receipt.js';
 import { canUseEnrollmentPermission, guardEnrollmentPermission, initEnrollmentPermissions, shouldApplyEnrollmentRbac } from './enrollment_rbac.js';
+import { initEnrollmentTimePickers, refreshEnrollmentTimePickers } from './enrollment_time_picker.js?v=20261011-disabled-hours';
 
 let globalLookups = {};
 let currentStudentId = null;
@@ -13,6 +18,9 @@ let pendingDownpaymentEnrollment = null;
 let pendingEnrollmentDetails = null;
 let currentStudentHealthNote = null; // Store health note for enrollment submission
 let isNewStudentEnrollment = true;
+let studentSearchRequest = 0;
+let studentSelectionRequest = 0;
+let studentAddressReady = Promise.resolve();
 let applicationDownpaymentContext = null;
 let preschoolServiceSelection = {
     include: false,
@@ -26,6 +34,7 @@ let teacherBookedSlots = []; // Store teacher's already-booked schedule slots
 let teacherAvailableDates = []; // Store permitted schedule dates for selected teacher
 let teacherAvailableSlotsPerDate = {}; // {date: [{start: '13:00', end: '17:00'}]}
 let teacherFullShiftsPerDate = {}; // {date: {start: '13:00', end: '17:00'}}
+let teacherAvailabilityRequest = 0;
 let selectedSubjectIds = [];
 const PENDING_ENROLLMENT_COMPLETION_STORAGE_KEY = 'pendingEnrollmentCompletionRequest';
 
@@ -135,9 +144,24 @@ function ensureEnrollmentValidationSupport() {
 
     if (document.documentElement.dataset.enrollmentValidationBound === 'true') return;
     document.documentElement.dataset.enrollmentValidationBound = 'true';
-    const clearChangedField = event => clearEnrollmentFieldError(event.target);
+    const clearChangedField = event => {
+        if (event.target?.id === 'downpaymentAmountInput') {
+            validateLiveDownpaymentAmount(event.target);
+            return;
+        }
+        clearEnrollmentFieldError(event.target);
+    };
     document.addEventListener('input', clearChangedField);
     document.addEventListener('change', clearChangedField);
+    document.addEventListener('click', event => {
+        const subjectControl = document.querySelector('#enrollmentDetailsModal .tutorial-subject-control');
+        if (subjectControl && !subjectControl.contains(event.target)) {
+            closeSubjectPicker();
+        }
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') closeSubjectPicker();
+    });
 }
 
 function getEnrollmentFieldContainer(element) {
@@ -185,6 +209,7 @@ function clearEnrollmentValidation(container = document) {
 
 function markEnrollmentFieldInvalid(element, message, highlightElement = null) {
     if (!element) return;
+    if (element.type === 'hidden') element = document.getElementById(`${element.id}Display`) || element;
     ensureEnrollmentValidationSupport();
     clearEnrollmentFieldError(element);
 
@@ -222,7 +247,8 @@ function showEnrollmentValidationAlert(title, issues) {
         text: messages.length ? `Please correct: ${messages.join(' ')}` : 'Please complete the highlighted required fields.',
         confirmButtonText: 'Review highlighted fields'
     }).then(() => {
-        const firstField = validIssues[0]?.element;
+        const issueField = validIssues[0]?.element;
+        const firstField = issueField?.type === 'hidden' ? document.getElementById(`${issueField.id}Display`) || issueField : issueField;
         if (!firstField) return;
         firstField.scrollIntoView({ behavior: 'smooth', block: 'center' });
         if (!firstField.disabled && typeof firstField.focus === 'function') {
@@ -296,6 +322,8 @@ export function openEnrollmentModal() {
 }
 
 export function resetEnrollmentState() {
+    studentSearchRequest++;
+    studentSelectionRequest++;
     currentStudentId = null;
     enrollmentStudentName = null;
     enrollmentStudentId = null;
@@ -506,6 +534,8 @@ export async function openPendingEnrollmentCompletion(enrollmentId, category = '
 window.openPendingEnrollmentCompletion = openPendingEnrollmentCompletion;
 
 document.addEventListener("DOMContentLoaded", async () => {
+    if (!document.querySelector('#addEnrollmentModal, #enrollmentDetailsModal, #downpaymentModal')) return;
+
     if (shouldApplyEnrollmentRbac()) {
         await initEnrollmentPermissions();
     }
@@ -562,7 +592,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 function loadLookups() {
-    return axios.get("../../api/admin/enrollment.php?operation=getLookups")
+    return axios.get(buildAppUrl("api/admin/enrollment.php?operation=getLookups"))
         .then(res => {
             globalLookups = res.data;
         })
@@ -572,6 +602,21 @@ function loadLookups() {
 }
 
 const PH_ADDRESS_API_BASE = 'https://psgc.cloud/api/v2';
+function updateAdminGuardianRelationshipField() {
+    const other = document.getElementById('guardianRelationship').value === 'others';
+    const input = document.getElementById('otherGuardianRelationship');
+    document.getElementById('otherGuardianRelationshipField').classList.toggle('d-none', !other);
+    input.disabled = !other;
+    input.required = other;
+    clearEnrollmentFieldError(input);
+    if (other) input.focus();
+}
+
+function adminGuardianRelationshipValue() {
+    const select = document.getElementById('guardianRelationship');
+    return (select.value === 'others' ? document.getElementById('otherGuardianRelationship').value : select.value).trim().replace(/\s+/g, ' ');
+}
+
 const NCR_ADDRESS_OPTION = { code: '1300000000', name: 'Metro Manila (NCR)', isRegion: true };
 const phAddressCache = {
     provinces: null,
@@ -597,17 +642,17 @@ async function fetchAddressItems(url) {
 function setAddressSelectOptions(select, items, placeholder, selectedName = '') {
     if (!select) return;
     const normalizedSelected = normalizeAddressName(selectedName);
-    select.innerHTML = `<option value="">${placeholder}</option>` + items.map(item => {
+    select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>` + items.map(item => {
         const name = (item.name || '').trim();
         const selected = normalizedSelected && normalizeAddressName(name) === normalizedSelected ? ' selected' : '';
-        return `<option value="${name}" data-code="${item.code || ''}"${selected}>${name}</option>`;
+        return `<option value="${escapeHtml(name)}" data-code="${escapeHtml(item.code || '')}"${selected}>${escapeHtml(name)}</option>`;
     }).join('');
     select.disabled = false;
 }
 
 function resetAddressSelect(select, placeholder) {
     if (!select) return;
-    select.innerHTML = `<option value="">${placeholder}</option>`;
+    select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>`;
     select.disabled = true;
 }
 
@@ -779,24 +824,13 @@ function validateBirthdayForEnrollmentCategory(birthday, isPreschool) {
     return { valid: true };
 }
 
-function attachBirthdayValidation(input, isPreschool) {
+function attachBirthdayValidation(input) {
     if (!input) return;
 
-    input.addEventListener('change', () => {
-        const birthday = input.value;
-        if (!birthday) {
-            input.setCustomValidity('');
-            return;
-        }
-
-        const validation = validateBirthdayForEnrollmentCategory(birthday, isPreschool);
-        if (!validation.valid) {
-            input.setCustomValidity(validation.message);
-            input.value = '';
-            showEnrollmentValidationAlert(validation.title, [{ element: input, message: validation.message }]);
-            return;
-        }
-
+    // iOS may dispatch change events while its native date picker is merely
+    // being opened or adjusted. Do not reject/clear that provisional value;
+    // the birthday and minimum age are validated when the form is submitted.
+    input.addEventListener('input', () => {
         input.setCustomValidity('');
     });
 }
@@ -1009,7 +1043,8 @@ function prepareStudentEnrollmentModal() {
             transform: translateY(-50%);
             pointer-events: none;
         }
-        #addEnrollmentModal .student-field-control > .form-control {
+        #addEnrollmentModal .student-field-control > .form-control,
+        #addEnrollmentModal .student-field-control > .form-select {
             padding-left: 43px;
         }
         #addEnrollmentModal .student-contact-group .input-group-text {
@@ -1129,27 +1164,32 @@ function renderStudentStep() {
     const saveBtn = document.getElementById("saveEnrollment");
     if (!saveBtn) return;
 
+    studentSearchRequest++;
+    studentSelectionRequest++;
+    currentStudentId = null;
+    enrollmentStudentId = null;
+    enrollmentStudentName = null;
+    currentStudentHealthNote = null;
+    isNewStudentEnrollment = true;
+    saveBtn.disabled = false;
+
     saveBtn.innerHTML = '<span>Save Student &amp; Next</span><i class="bi bi-arrow-right"></i>';
     saveBtn.onclick = handleSaveStudent;
     saveBtn.style.display = canUseEnrollmentPermission('create') ? 'inline-flex' : 'none';
     const isPreschool = window.currentEnrollmentCategory === 'preschool';
 
     let html = `
-        <section class="student-enrollment-type">
+        <section id="searchSection" class="student-enrollment-type">
             <div class="student-section-heading">
-                <span class="student-section-icon"><i class="bi bi-mortarboard-fill"></i></span>
-                <span>Enrollment Type</span>
+                <span class="student-section-icon"><i class="bi bi-search"></i></span>
+                <label class="mb-0" for="studentSearch">Search Student</label>
             </div>
-            <div class="student-type-options">
-                <label class="student-type-option" for="newStudent">
-                    <input type="radio" id="newStudent" name="enrollmentType" value="new" checked>
-                    <span>Create New Student</span>
-                </label>
-                <label class="student-type-option" for="existingStudent">
-                    <input type="radio" id="existingStudent" name="enrollmentType" value="existing">
-                    <span>Enroll Existing Student</span>
-                </label>
+            <div class="student-search-actions">
+                <input type="search" class="form-control" id="studentSearch" placeholder="Enter student name or school ID" autocomplete="off" aria-describedby="studentSearchHelp">
+                <button type="button" class="btn student-save-btn" id="searchBtn"><i class="bi bi-search"></i><span>Search</span></button>
             </div>
+            <small id="studentSearchHelp" class="student-help-text">Select an existing student to fill their saved details. Clear the search to enter a new student.</small>
+            <div id="searchResults" class="mt-3" aria-live="polite"></div>
         </section>
 
         <div id="studentForm">
@@ -1251,45 +1291,45 @@ function renderStudentStep() {
                     </div>
                     <div class="col-12">
                         <label class="form-label" for="guardianRelationship">Relationship</label>
-                        <div class="student-field-control"><i class="bi bi-heart"></i><input type="text" class="form-control" id="guardianRelationship" placeholder="e.g., Mother, Father, Guardian, Aunt, etc." required></div>
+                        <div class="student-field-control"><i class="bi bi-heart"></i><select class="form-select" id="guardianRelationship" required><option value="">Select relationship</option>${(globalLookups.relationships || []).map(item => `<option value="${escapeHtml(item.relationship_name)}">${escapeHtml(item.relationship_name)}</option>`).join('')}<option value="others">Others</option></select></div>
+                    </div>
+                    <div class="col-12 d-none" id="otherGuardianRelationshipField">
+                        <label class="form-label" for="otherGuardianRelationship">Specify relationship</label>
+                        <div class="student-field-control"><i class="bi bi-heart"></i><input type="text" class="form-control" id="otherGuardianRelationship" maxlength="50" placeholder="Example: Aunt, Uncle, Sister" disabled aria-describedby="otherGuardianRelationshipHelp"></div>
+                        <small class="student-help-text" id="otherGuardianRelationshipHelp">This relationship will be saved with the student and added to future choices.</small>
                     </div>
                 </div>
             </section>
         </div>
 
-        <section id="searchSection" class="student-form-section" style="display:none;">
-            <div class="student-section-heading">
-                <span class="student-section-icon"><i class="bi bi-search"></i></span>
-                <span>Search Existing Student</span>
-            </div>
-            <div class="student-search-actions">
-                <input type="text" class="form-control" id="studentSearch" placeholder="Enter student name or school ID">
-                <button type="button" class="btn student-save-btn" id="searchBtn"><i class="bi bi-search"></i><span>Search</span></button>
-            </div>
-            <div id="searchResults" class="mt-3"></div>
-        </section>
     `;
     form.innerHTML = html;
     markRequiredFieldLabels(form);
-    initPhilippineAddressSelectors();
-    attachBirthdayValidation(document.getElementById('birthday'), isPreschool);
+    studentAddressReady = initPhilippineAddressSelectors();
+    attachBirthdayValidation(document.getElementById('birthday'));
     attachPhilippineContactFormatting(document.getElementById('guardianContact'));
-
-    document.getElementById('newStudent').addEventListener('change', () => {
-        isNewStudentEnrollment = true;
-        document.getElementById('studentForm').style.display = 'block';
-        document.getElementById('searchSection').style.display = 'none';
-        saveBtn.style.display = canUseEnrollmentPermission('create') ? 'inline-flex' : 'none';
-    });
-
-    document.getElementById('existingStudent').addEventListener('change', () => {
-        isNewStudentEnrollment = false;
-        document.getElementById('studentForm').style.display = 'none';
-        document.getElementById('searchSection').style.display = 'block';
-        saveBtn.style.display = 'none';
-    });
+    document.getElementById('guardianRelationship').addEventListener('change', updateAdminGuardianRelationshipField);
 
     document.getElementById('searchBtn').addEventListener('click', handleSearch);
+    let searchTimer;
+    document.getElementById('studentSearch').addEventListener('input', event => {
+        clearTimeout(searchTimer);
+        studentSearchRequest++;
+        if (!event.target.value.trim()) {
+            studentSelectionRequest++;
+            renderStudentStep();
+            document.getElementById('studentSearch').focus();
+            return;
+        }
+        searchTimer = setTimeout(handleSearch, 300);
+    });
+    document.getElementById('studentSearch').addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            clearTimeout(searchTimer);
+            handleSearch();
+        }
+    });
 }
 
 // --- STEP 2: TUTORIAL SPECIALIZED RENDER ---
@@ -1455,37 +1495,95 @@ function prepareTutorialEnrollmentModal() {
             font-size: 11px;
         }
         #enrollmentDetailsModal .tutorial-subject-control {
+            position: relative;
+        }
+        #enrollmentDetailsModal .tutorial-subject-toggle {
+            width: 100%;
+            min-height: 44px;
+            padding: 9px 13px;
             display: flex;
-            gap: 10px;
-        }
-        #enrollmentDetailsModal .tutorial-subject-control .form-select {
-            flex: 1 1 auto;
-        }
-        #enrollmentDetailsModal .tutorial-add-btn {
-            display: inline-flex;
             align-items: center;
-            justify-content: center;
-            gap: 7px;
-            min-width: 96px;
-            color: var(--tutorial-accent-dark);
-            border: 1px solid var(--tutorial-accent);
+            justify-content: space-between;
+            gap: 12px;
+            color: var(--tutorial-text);
+            border: 1px solid var(--tutorial-neutral-border);
+            border-radius: 7px;
             background: #fff;
-            border-radius: 7px;
-            font-weight: 600;
+            text-align: left;
         }
-        #enrollmentDetailsModal .tutorial-add-btn:hover {
-            color: #fff;
-            background: var(--tutorial-accent);
+        #enrollmentDetailsModal .tutorial-subject-toggle:hover,
+        #enrollmentDetailsModal .tutorial-subject-toggle:focus,
+        #enrollmentDetailsModal .tutorial-subject-toggle.open {
+            border-color: var(--tutorial-accent);
+            box-shadow: 0 0 0 .2rem rgba(232, 93, 136, .12);
+            outline: 0;
         }
-        #enrollmentDetailsModal .tutorial-subject-badge {
-            display: inline-flex;
+        #enrollmentDetailsModal .tutorial-subject-toggle > span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        #enrollmentDetailsModal .tutorial-subject-toggle > i {
+            flex: 0 0 auto;
+            transition: transform .2s ease;
+        }
+        #enrollmentDetailsModal .tutorial-subject-toggle.open > i {
+            transform: rotate(180deg);
+        }
+        #enrollmentDetailsModal .tutorial-subject-menu {
+            position: absolute;
+            z-index: 1060;
+            top: calc(100% + 7px);
+            right: 0;
+            left: 0;
+            max-height: 230px;
+            overflow-y: auto;
+            padding: 7px;
+            border: 1px solid var(--tutorial-neutral-border);
+            border-radius: 9px;
+            background: #fff;
+            box-shadow: 0 16px 36px rgba(55, 38, 45, .15);
+        }
+        #enrollmentDetailsModal .tutorial-subject-option {
+            margin: 0;
+            padding: 10px 11px;
+            display: flex;
             align-items: center;
-            gap: 5px;
-            padding: 7px 9px;
-            color: var(--tutorial-accent-dark);
-            border: 1px solid var(--tutorial-border);
+            gap: 10px;
             border-radius: 7px;
+            cursor: pointer;
+            transition: background-color .15s ease;
+        }
+        #enrollmentDetailsModal .tutorial-subject-option:hover {
             background: var(--tutorial-soft);
+        }
+        #enrollmentDetailsModal .tutorial-subject-option input {
+            width: 17px;
+            height: 17px;
+            flex: 0 0 auto;
+            accent-color: var(--tutorial-accent);
+        }
+        #enrollmentDetailsModal .tutorial-subject-option .subject-name {
+            flex: 1;
+            font-size: .9rem;
+        }
+        #enrollmentDetailsModal .tutorial-subject-option .bi-check2 {
+            color: var(--tutorial-accent-dark);
+            opacity: 0;
+        }
+        #enrollmentDetailsModal .tutorial-subject-option:has(input:checked) {
+            color: var(--tutorial-accent-dark);
+            background: var(--tutorial-soft);
+            font-weight: 700;
+        }
+        #enrollmentDetailsModal .tutorial-subject-option:has(input:checked) .bi-check2 {
+            opacity: 1;
+        }
+        #enrollmentDetailsModal .tutorial-subject-summary {
+            min-height: 17px;
+            margin-top: 6px;
+            color: var(--tutorial-muted);
+            font-size: 12px;
         }
         #enrollmentDetailsModal .tutorial-branch {
             display: flex;
@@ -1662,7 +1760,6 @@ function renderEnrollmentStep(studentName) {
 
     const tutorials = globalLookups.programs.filter(p => p.program_type == 1 || p.program_type == 2);
     const pendingProgramId = pendingDownpaymentEnrollment?.program_id || '';
-
     const branchOptions = generateOptions(globalLookups.branches || [], 'branch_id', 'branch_name', globalLookups.current_branch?.branch_id || '');
 
     let html = `
@@ -1670,7 +1767,6 @@ function renderEnrollmentStep(studentName) {
             <i class="bi bi-info-circle"></i>
             <span><strong>Tutorial Enrollment</strong> for ${escapeHtml(studentName)}</span>
         </div>
-
         <section class="tutorial-section">
             <h3 class="tutorial-section-title">
                 <span class="tutorial-section-icon"><i class="bi bi-mortarboard-fill"></i></span>
@@ -1695,16 +1791,30 @@ function renderEnrollmentStep(studentName) {
                 <div class="col-md-6">
                     <label class="form-label">Subjects <span class="text-danger" aria-hidden="true">*</span></label>
                     <div class="tutorial-subject-control">
-                        <select class="form-select" id="subjectId">
-                            <option value="">Select Subject</option>
-                            ${generateOptions(globalLookups.subjects, 'subject_id', 'subject_name')}
-                        </select>
-                        <button type="button" class="btn tutorial-add-btn" onclick="addSelectedSubject()">
-                            <i class="bi bi-plus-lg"></i><span>Add</span>
+                        <button type="button" class="tutorial-subject-toggle" id="subjectId" aria-expanded="false" aria-controls="subjectPicker" onclick="toggleSubjectPicker()">
+                            <span id="subjectSelectionText">Select one or more subjects</span>
+                            <i class="bi bi-chevron-down"></i>
                         </button>
+                        <div class="tutorial-subject-menu d-none" id="subjectPicker" role="group" aria-label="Select subjects">
+                            ${(globalLookups.subjects || []).map(subject => `
+                                <label class="tutorial-subject-option">
+                                    <input type="checkbox" value="${escapeHtml(subject.subject_id)}" onchange="setSelectedSubject(this)">
+                                    <span class="subject-name">${escapeHtml(subject.subject_name)}</span>
+                                    <i class="bi bi-check2"></i>
+                                </label>
+                            `).join('') || '<span class="d-block p-2 text-muted">No subjects configured.</span>'}
+                            <label class="tutorial-subject-option">
+                                <input type="checkbox" id="adminOtherSubjectOption" value="others" onchange="setSelectedSubject(this)">
+                                <span class="subject-name">Others</span><i class="bi bi-check2"></i>
+                            </label>
+                        </div>
                     </div>
-                    <div id="selectedSubjectsList" class="mt-2 d-flex flex-wrap gap-2">
-                        <span class="text-muted small">No subjects added yet.</span>
+                    <div id="selectedSubjectsList" class="tutorial-subject-summary"></div>
+                    <div class="mt-3 d-none" id="adminOtherSubjectField">
+                        <label class="form-label" for="adminOtherSubjectName">Requested subject</label>
+                        <input type="text" class="form-control" id="adminOtherSubjectName" maxlength="100" placeholder="Enter the requested subject" disabled>
+                        <button type="button" class="btn tutorial-add-btn mt-2" id="adminAddOtherSubject" onclick="addRequestedEnrollmentSubject()">Add subject</button>
+                        <small class="d-block text-muted mt-2">Add the subject to save it in the Subject list and check teacher alignment.</small>
                     </div>
                 </div>
                 <div class="col-md-6">
@@ -1716,7 +1826,7 @@ function renderEnrollmentStep(studentName) {
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">School Year</label>
-                    <input type="text" class="form-control" disabled value="${globalLookups.active_school_year ? globalLookups.active_school_year.school_year : 'No active school year'}">
+                    <input type="text" class="form-control" disabled value="${escapeHtml(globalLookups.active_school_year ? globalLookups.active_school_year.school_year : 'No active school year')}">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label" for="preferredTeacher">Teacher <small class="text-muted">(Filtered)</small></label>
@@ -1724,6 +1834,7 @@ function renderEnrollmentStep(studentName) {
                         <option value="">Select Teacher</option>
                         ${generateOptions(getActiveTeachers(), 'employee_id', 'name')}
                     </select>
+                    <div class="alert alert-warning mt-2 d-none" id="teacherSubjectNotice" role="status"></div>
                 </div>
             </div>
         </section>
@@ -1763,12 +1874,14 @@ function renderEnrollmentStep(studentName) {
                     <div id="dateCalendarContainer" style="display:none; position:absolute; top:100%; left:0; width:100%; z-index:1050;"></div>
                 </div>
                 <div>
-                    <label class="form-label" for="schedTime">Start Time</label>
-                    <input type="time" class="form-control" id="schedTime">
+                    <label class="form-label" for="schedTimeDisplay">Start Time</label>
+                    <input type="hidden" id="schedTime">
+                    <button type="button" class="form-control enrollment-time-trigger" id="schedTimeDisplay" aria-label="Choose start time" aria-haspopup="dialog" aria-expanded="false" disabled>Select teacher and date</button>
                 </div>
                 <div>
-                    <label class="form-label" for="schedEndTime">End Time</label>
-                    <input type="time" class="form-control" id="schedEndTime">
+                    <label class="form-label" for="schedEndTimeDisplay">End Time</label>
+                    <input type="hidden" id="schedEndTime">
+                    <button type="button" class="form-control enrollment-time-trigger" id="schedEndTimeDisplay" aria-label="Choose end time" aria-haspopup="dialog" aria-expanded="false" disabled>Select teacher and date</button>
                 </div>
                 <div>
                     <button type="button" class="btn tutorial-add-btn" onclick="addSchedule()">
@@ -1832,12 +1945,13 @@ function renderEnrollmentStep(studentName) {
 
     renderSelectedSubjects();
     renderScheduleList();
+    initEnrollmentTimePickers();
     updateProgramSchedulePreview();
     filterTeachers();
 
     // Import and setup date picker - module not loaded, use dynamic import
-    import('./enrollmentDatePicker.js?v=20260812-edit-teacher-schedule').then(module => {
-        module.initEnrollmentDatePicker();
+    import('./enrollmentDatePicker.js?v=20261011-disabled-hours').then(module => {
+        module.initEnrollmentDatePicker({ onDateSelected: refreshEnrollmentTimePickers });
     }).catch(err => {
         console.error('Date picker module load error:', err);
         // Fallback: simple select with loading
@@ -1852,7 +1966,7 @@ function renderEnrollmentStep(studentName) {
     
     // Listen for teacher availability updates to refresh calendar
     window.addEventListener('teacherAvailabilityUpdated', () => {
-        if (window.setupDatePicker) window.setupDatePicker();
+        if (window.setupDatePicker) window.setupDatePicker({ onDateSelected: refreshEnrollmentTimePickers });
     });
 }
 
@@ -1932,6 +2046,15 @@ function mergeTeacherScheduleIntervals(intervals) {
         }, []);
 }
 
+function getSelectedDateTimeSlots() {
+    const teacherId = document.getElementById('preferredTeacher')?.value;
+    const date = document.getElementById('schedDate')?.value;
+    if (!teacherId || !date) return [];
+    return mergeTeacherScheduleIntervals((window.teacherAvailableSlotsPerDate?.[date] || []).map(slot => ({
+        start: parseTimeToMinutes(slot.start), end: parseTimeToMinutes(slot.end)
+    })));
+}
+
 window.parseTimeToMinutes = parseTimeToMinutes;
 window.minutesToTime = minutesToTime;
 window.subtractInterval = subtractInterval;
@@ -1942,19 +2065,23 @@ window.filterTeachers = function() {
     const teacherSelect = document.getElementById('preferredTeacher');
     const branchId = document.getElementById('preferredBranch')?.value || '';
     if (!teacherSelect) return;
-    
-    // Capture current teacher selection before changes
     const currentTeacherId = teacherSelect.value;
+    teacherSelect.value = '';
+    updateTeacherSubjectNotice(teacherSelect, document.getElementById('teacherSubjectNotice'));
 
     const resetTeacherAvailability = () => {
+        teacherAvailabilityRequest++;
         teacherAvailableSlots = [];
         teacherBookedSlots = [];
         teacherAvailableDates = [];
         window.teacherAvailableSlots = [];
         window.teacherBookedSlots = [];
         window.teacherAvailableDates = [];
+        window.teacherAvailableSlotsPerDate = {};
+        window.teacherFullShiftsPerDate = {};
         populateAvailableDateOptions();
     };
+    resetTeacherAvailability();
     
     if (!programId) {
         teacherSelect.disabled = true;
@@ -1991,12 +2118,12 @@ window.filterTeachers = function() {
         endTime: s.endTime
     })));
     
-    axios.get(`../../api/admin/enrollment.php?operation=getFilteredTeachers&program_id=${programId}&subject_ids=${encodeURIComponent(subjectIds.join(','))}&branch_id=${encodeURIComponent(branchId)}&preferred_schedules=${encodeURIComponent(schedulesJson)}`)
+    axios.get(`../../api/admin/enrollment.php?operation=getFilteredTeachers&include_unassigned_subjects=1&program_id=${programId}&subject_ids=${encodeURIComponent(subjectIds.join(','))}&branch_id=${encodeURIComponent(branchId)}&preferred_schedules=${encodeURIComponent(schedulesJson)}`)
         .then(res => {
             teacherSelect.disabled = false;
             if (res.data.status === 'success') {
                 if (res.data.data.length > 0) {
-                    const optionsHtml = res.data.data.map(t => `<option value="${t.employee_id}">${t.name}</option>`).join('');
+                    const optionsHtml = res.data.data.map(t => `<option value="${escapeHtml(t.employee_id)}" data-unassigned-subjects="${escapeHtml(JSON.stringify(t.unassigned_subjects || []))}">${escapeHtml(t.name)}${t.requires_subject_confirmation ? ' — subject confirmation needed' : ''}</option>`).join('');
                     teacherSelect.innerHTML = '<option value="">Select Teacher</option>' + optionsHtml;
                     
                     // Restore teacher selection if still available in filtered list
@@ -2042,9 +2169,13 @@ window.filterTeachers = function() {
 };
 
 window.onTeacherChange = function() {
+    const request = ++teacherAvailabilityRequest;
+    updateTeacherSubjectNotice(document.getElementById('preferredTeacher'), document.getElementById('teacherSubjectNotice'));
     window.teacherAvailableSlots = [];
     window.teacherBookedSlots = [];
     window.teacherAvailableDates = [];
+    window.teacherAvailableSlotsPerDate = {};
+    window.teacherFullShiftsPerDate = {};
     
     const teacherId = document.getElementById('preferredTeacher').value;
     const dateInput = document.getElementById('schedDateInput');
@@ -2058,6 +2189,7 @@ window.onTeacherChange = function() {
     if (hiddenDate) {
         hiddenDate.value = '';
     }
+    refreshEnrollmentTimePickers();
     if (calendarContainer) {
         calendarContainer.style.display = 'none';
     }
@@ -2068,6 +2200,7 @@ window.onTeacherChange = function() {
     
     axios.get(`../../api/admin/enrollment.php?operation=getTeacherAvailableSlots&teacher_id=${teacherId}`)
         .then(res => {
+            if (request !== teacherAvailabilityRequest || document.getElementById('preferredTeacher')?.value !== teacherId) return;
             if (res.data.status === 'success') {
                 window.teacherAvailableSlots = res.data.data.slots || [];
                 window.teacherBookedSlots = res.data.data.bookings || [];
@@ -2095,6 +2228,7 @@ window.onTeacherChange = function() {
             }
         })
         .catch(err => {
+            if (request !== teacherAvailabilityRequest || document.getElementById('preferredTeacher')?.value !== teacherId) return;
             if (dateInput) {
                 dateInput.value = '';
                 dateInput.placeholder = 'Unable to load dates';
@@ -2104,10 +2238,9 @@ window.onTeacherChange = function() {
 };
 
 function getAvailableTeacherDates(slots, bookings, daysAhead = 180) {
-    if (!Array.isArray(slots) || slots.length === 0) return [];
-
     teacherAvailableSlotsPerDate = {};
     teacherFullShiftsPerDate = {};
+    if (!Array.isArray(slots) || slots.length === 0) return [];
 
     const bookingsByDate = {};
     (bookings || []).forEach(b => {
@@ -2171,6 +2304,7 @@ function populateAvailableDateOptions() {
     if (hiddenDate) {
         hiddenDate.value = '';
     }
+    refreshEnrollmentTimePickers();
 }
 
 function updateUnitPreview() {
@@ -2294,6 +2428,14 @@ function showScheduleRequirementAlert(validation, title = 'Schedule Requirement'
 }
 
 function updateProgramSchedulePreview() {
+    const program = globalLookups.programs?.find(p => String(p.program_id) === String(document.getElementById('programId')?.value));
+    const validity = getTutorialValidityPreview(program, preferredSchedules);
+    let validityPreview = document.getElementById('tutorial-validity-preview');
+    if (!validityPreview && document.getElementById('programId')) {
+        validityPreview = document.createElement('div'); validityPreview.id = 'tutorial-validity-preview';
+        validityPreview.className = 'form-text'; document.getElementById('programId').after(validityPreview);
+    }
+    if (validityPreview) { validityPreview.textContent = validity?.error || validity?.message || ''; validityPreview.classList.toggle('text-danger', Boolean(validity?.error)); }
     const validation = getSelectedProgramScheduleRequirement();
     if (!validation.applicable) {
         hideUnitPreview();
@@ -2336,12 +2478,17 @@ function handleSaveStudent() {
 
     const isPreschool = window.currentEnrollmentCategory === 'preschool';
     const healthNotesInput = document.getElementById("healthNotes");
-    const healthNoteValue = isPreschool && healthNotesInput && healthNotesInput.value.trim() !== ''
-        ? healthNotesInput.value.trim()
-        : null;
+    const healthNoteValue = isPreschool && healthNotesInput
+        ? healthNotesInput.value.trim() || null
+        : (currentStudentId && !isNewStudentEnrollment ? currentStudentHealthNote : null);
     
     // Store health note globally for enrollment submission
     currentStudentHealthNote = healthNoteValue;
+
+    if (currentStudentId && !isNewStudentEnrollment) {
+        switchModal(document.getElementById('addEnrollmentModal'), document.getElementById('downpaymentModal'));
+        return;
+    }
     
     const data = {
         first_name: document.getElementById("firstName").value,
@@ -2354,7 +2501,7 @@ function handleSaveStudent() {
         email: document.getElementById("email").value,
         guardian_name: document.getElementById("guardianName").value,
         guardian_contact: formatPhilippineContactNumber(document.getElementById("guardianContact").value),
-        guardian_relationship: document.getElementById("guardianRelationship").value,
+        guardian_relationship: adminGuardianRelationshipValue(),
         adr_street: document.getElementById("adrStreet").value,
         adr_barangay: document.getElementById("adrBarangay").value,
         adr_city: document.getElementById("adrCity").value,
@@ -2372,7 +2519,7 @@ function handleSaveStudent() {
         {key: 'guardian_name', label: 'Guardian Name', id: 'guardianName'},
         {key: 'email', label: 'Email', id: 'email'},
         {key: 'guardian_contact', label: 'Guardian Contact', id: 'guardianContact'},
-        {key: 'guardian_relationship', label: 'Guardian Relationship', id: 'guardianRelationship'},
+        {key: 'guardian_relationship', label: 'Guardian Relationship', id: document.getElementById('guardianRelationship').value === 'others' ? 'otherGuardianRelationship' : 'guardianRelationship'},
         {key: 'adr_province', label: 'Province', id: 'adrProvince'},
         {key: 'adr_city', label: 'City / Municipality', id: 'adrCity'},
         {key: 'adr_barangay', label: 'Barangay', id: 'adrBarangay'},
@@ -2387,6 +2534,14 @@ function handleSaveStudent() {
             element: document.getElementById(field.id),
             message: `${field.label} is required.`
         })));
+        return;
+    }
+
+    if ([...data.guardian_relationship].length > 50 || /^(other|others)$/i.test(data.guardian_relationship) || /\p{C}/u.test(data.guardian_relationship)) {
+        showEnrollmentValidationAlert('Invalid Relationship', [{
+            element: document.getElementById(document.getElementById('guardianRelationship').value === 'others' ? 'otherGuardianRelationship' : 'guardianRelationship'),
+            message: 'Specify the guardian relationship using 1 to 50 characters.'
+        }]);
         return;
     }
 
@@ -2423,6 +2578,11 @@ function handleSaveStudent() {
     }).then(res => {
         if(res.data.status === "success") {
             // If the API returned the current branch (employee's branch), merge into lookups
+            const savedRelationship = res.data.guardian_relationship;
+            globalLookups.relationships ||= [];
+            if (savedRelationship && !globalLookups.relationships.some(item => item.relationship_name === savedRelationship)) {
+                globalLookups.relationships.push({ relationship_name: savedRelationship });
+            }
             if (res.data.current_branch) {
                 globalLookups.current_branch = res.data.current_branch;
             }
@@ -2524,6 +2684,8 @@ function handleSaveEnrollmentDetails() {
     const subjectIds = getSelectedSubjectIds();
     const program = globalLookups.programs.find(p => p.program_id == progId);
     const scheduleValidation = getSelectedProgramScheduleRequirement();
+    const validity = getTutorialValidityPreview(program, preferredSchedules);
+    if (validity?.error) { Swal.fire('Tutorial validity', validity.error, 'warning'); return; }
     const preferredTimeDay = preferredSchedules
         .map(s => `${s.day} ${s.time}${s.endTime ? ' - ' + s.endTime : ''}`)
         .join(', ');
@@ -2533,6 +2695,12 @@ function handleSaveEnrollmentDetails() {
     const preferredBranch = document.getElementById("preferredBranch")?.value || '';
     const preferredTeacher = document.getElementById("preferredTeacher").value;
     const validationIssues = [];
+    if (teacherSubjectConfirmationRequired(document.getElementById('preferredTeacher'), document.getElementById('teacherSubjectNotice'))) {
+        validationIssues.push({ element: document.getElementById('preferredTeacher'), message: 'Confirm that the selected teacher can handle the requested subjects.' });
+    }
+    if (document.getElementById('adminOtherSubjectOption')?.checked) {
+        validationIssues.push({ element: document.getElementById('adminOtherSubjectName'), message: 'Add the requested subject before finalizing enrollment.' });
+    }
     if (!progId) {
         validationIssues.push({ element: document.getElementById('programId'), message: 'Program is required.' });
     }
@@ -2875,44 +3043,103 @@ function getSubjectName(subjectId) {
 
 function renderSelectedSubjects() {
     const list = document.getElementById('selectedSubjectsList');
-    if (!list) return;
+    const selectionText = document.getElementById('subjectSelectionText');
+    const checkboxes = document.querySelectorAll('#subjectPicker input[type="checkbox"]');
+    const selectedNames = selectedSubjectIds.map(getSubjectName);
 
-    if (selectedSubjectIds.length === 0) {
-        list.innerHTML = '<span class="text-muted small">No subjects added yet.</span>';
-        return;
+    checkboxes.forEach(checkbox => {
+        if (checkbox.value === 'others') return;
+        checkbox.checked = selectedSubjectIds.some(id => String(id) === String(checkbox.value));
+    });
+
+    if (selectionText) {
+        selectionText.textContent = selectedSubjectIds.length
+            ? `${selectedSubjectIds.length} subject${selectedSubjectIds.length === 1 ? '' : 's'} selected`
+            : 'Select one or more subjects';
     }
-
-    list.innerHTML = selectedSubjectIds.map(subjectId => `
-        <span class="tutorial-subject-badge">
-            ${getSubjectName(subjectId)}
-            <button type="button" class="btn-close btn-close-sm ms-1" aria-label="Remove ${getSubjectName(subjectId)}" onclick="removeSelectedSubject('${subjectId}')"></button>
-        </span>
-    `).join('');
+    if (list) {
+        list.textContent = selectedNames.join(', ');
+    }
 }
 
-window.addSelectedSubject = function() {
-    const subjectSelect = document.getElementById('subjectId');
-    if (!subjectSelect || !subjectSelect.value) {
-        Swal.fire("Subject Required", "Please choose a subject to add.", "warning");
+window.toggleSubjectPicker = function() {
+    const picker = document.getElementById('subjectPicker');
+    const toggle = document.getElementById('subjectId');
+    if (!picker || !toggle) return;
+
+    const opening = picker.classList.contains('d-none');
+    picker.classList.toggle('d-none', !opening);
+    toggle.classList.toggle('open', opening);
+    toggle.setAttribute('aria-expanded', String(opening));
+};
+
+function closeSubjectPicker() {
+    const picker = document.getElementById('subjectPicker');
+    const toggle = document.getElementById('subjectId');
+    if (!picker || !toggle) return;
+
+    picker.classList.add('d-none');
+    toggle.classList.remove('open');
+    toggle.setAttribute('aria-expanded', 'false');
+}
+
+window.setSelectedSubject = function(checkbox) {
+    if (!checkbox?.value) return;
+    if (checkbox.value === 'others') {
+        const input = document.getElementById('adminOtherSubjectName');
+        document.getElementById('adminOtherSubjectField')?.classList.toggle('d-none', !checkbox.checked);
+        if (input) {
+            input.disabled = !checkbox.checked;
+            if (checkbox.checked) input.focus();
+            else clearEnrollmentFieldError(input);
+        }
+        closeSubjectPicker();
         return;
     }
 
-    if (selectedSubjectIds.includes(subjectSelect.value)) {
-        Swal.fire("Already Added", "That subject is already in the list.", "info");
-        return;
+    if (checkbox.checked) {
+        if (!selectedSubjectIds.some(id => String(id) === String(checkbox.value))) {
+            selectedSubjectIds.push(String(checkbox.value));
+        }
+    } else {
+        selectedSubjectIds = selectedSubjectIds.filter(id => String(id) !== String(checkbox.value));
     }
 
-    selectedSubjectIds.push(subjectSelect.value);
-    subjectSelect.value = "";
+    clearEnrollmentFieldError(document.getElementById('subjectId'));
     renderSelectedSubjects();
     filterTeachers();
 };
 
-window.removeSelectedSubject = function(subjectId) {
-    selectedSubjectIds = selectedSubjectIds.filter(id => String(id) !== String(subjectId));
-    renderSelectedSubjects();
-    filterTeachers();
-}
+window.addRequestedEnrollmentSubject = async function() {
+    if (!guardEnrollmentPermission(getEnrollmentFinalizePermissionKey(), 'You do not have permission to complete enrollment records.')) return;
+    const input = document.getElementById('adminOtherSubjectName');
+    const button = document.getElementById('adminAddOtherSubject');
+    if (!input || !button || button.disabled) return;
+    button.disabled = true;
+    try {
+        globalLookups.subjects ||= [];
+        const subject = await saveRequestedSubject(input.value, globalLookups.subjects);
+        const id = String(subject.subject_id);
+        if (!selectedSubjectIds.some(selected => String(selected) === id)) selectedSubjectIds.push(id);
+        const picker = document.getElementById('subjectPicker');
+        if (picker && ![...picker.querySelectorAll('input')].some(item => item.value === id)) {
+            const option = document.createElement('label');
+            option.className = 'tutorial-subject-option';
+            option.innerHTML = `<input type="checkbox" value="${escapeHtml(id)}" onchange="setSelectedSubject(this)"><span class="subject-name">${escapeHtml(subject.subject_name)}</span><i class="bi bi-check2"></i>`;
+            picker.insertBefore(option, document.getElementById('adminOtherSubjectOption')?.closest('label') || null);
+        }
+        const other = document.getElementById('adminOtherSubjectOption');
+        if (other) { other.checked = false; window.setSelectedSubject(other); }
+        input.value = '';
+        clearEnrollmentFieldError(input);
+        renderSelectedSubjects();
+        filterTeachers();
+    } catch (error) {
+        showEnrollmentValidationAlert('Subject Not Added', [{ element: input, message: error.response?.data?.message || error.message }]);
+    } finally {
+        button.disabled = false;
+    }
+};
 
 function getProgramServiceForSelection(programId) {
     if (!programId) return null;
@@ -3328,7 +3555,7 @@ function renderDownpaymentStep(studentName) {
         .then(res => {
             if (res.data.status === 'success' && Array.isArray(res.data.data)) {
                 const paymentOptions = res.data.data.map(pm => 
-                    `<option value="${pm.payment_method_id}">${pm.payment_method}</option>`
+                    `<option value="${escapeHtml(pm.payment_method_id)}">${escapeHtml(pm.payment_method)}</option>`
                 ).join('');
                 const feeColumnClass = includeRegistrationFee ? 'col-md-4' : 'col-md-6';
                 
@@ -3347,7 +3574,7 @@ function renderDownpaymentStep(studentName) {
                             <label class="form-label" for="downpaymentProgramInput">Program</label>
                             <select class="form-select" id="downpaymentProgramInput" required ${applicationDownpaymentContext ? 'disabled' : ''}>
                                 <option value="">Select Program</option>
-                                ${categoryPrograms.map(p => `<option value="${p.program_id}" data-tuition="${p.tuition || 0}" data-registration-fee="${p.registration_fee || 0}" data-downpayment="${p.downpayment || 0}" data-program-type="${getProgramTypeName(p)}">${getProgramDisplayName(p)}</option>`).join('')}
+                                ${categoryPrograms.map(p => `<option value="${escapeHtml(p.program_id)}" data-tuition="${escapeHtml(p.tuition || 0)}" data-registration-fee="${escapeHtml(p.registration_fee || 0)}" data-downpayment="${escapeHtml(p.downpayment || 0)}" data-program-type="${escapeHtml(getProgramTypeName(p))}">${escapeHtml(getProgramDisplayName(p))}</option>`).join('')}
                             </select>
                         </div>
                         </div>
@@ -3401,14 +3628,14 @@ function renderDownpaymentStep(studentName) {
                             </div>
                         </div>
                         <div class="downpayment-due-panel mt-3">
-                            <label class="form-label" for="downpaymentAmountInput">Amount Due Now</label>
+                            <label class="form-label" for="downpaymentAmountInput">Amount Paid</label>
                             <div class="input-group">
                                 <span class="input-group-text">&#8369;</span>
-                                <input type="number" class="form-control" id="downpaymentAmountInput" value="0.00" step="0.01" min="0" required readonly>
+                                <input type="number" class="form-control" id="downpaymentAmountInput" value="0.00" step="0.01" min="0" required>
                             </div>
                             <small class="downpayment-help">
                                 <i class="bi bi-info-circle"></i>
-                                <span>${includeRegistrationFee ? "This uses the selected program's registration fee plus downpayment." : "Existing students pay the selected program's downpayment only."}</span>
+                                <span>${includeRegistrationFee ? "Pay at least the selected program's registration fee plus downpayment." : "Pay at least the selected program's downpayment."} You may enter a higher amount or pay in full.</span>
                             </small>
                         </div>
                     </section>
@@ -3486,6 +3713,12 @@ function renderDownpaymentStep(studentName) {
                         }
                         if (amountInput) {
                             amountInput.value = dueNow.toFixed(2);
+                            amountInput.min = dueNow.toFixed(2);
+                            if (selectedProgramId) {
+                                validateLiveDownpaymentAmount(amountInput);
+                            } else {
+                                clearEnrollmentFieldError(amountInput);
+                            }
                         }
 
                         if (window.currentEnrollmentCategory === 'preschool' && serviceContainer) {
@@ -3572,6 +3805,28 @@ export async function openApplicationDownpaymentModal(application, options = {})
     getBootstrapModal(modalElement)?.show();
 }
 
+function getDownpaymentAmountError(amountInput) {
+    const amount = Number(amountInput?.value);
+    const minimum = Number(amountInput?.min || 0);
+    if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) {
+        return 'Enter a valid payment amount with up to two decimal places.';
+    }
+    if (Math.round(amount * 100) < Math.round(minimum * 100)) {
+        return `Payment must be at least PHP ${minimum.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to cover the downpayment and any applicable registration fee.`;
+    }
+    return null;
+}
+
+function validateLiveDownpaymentAmount(amountInput) {
+    const message = getDownpaymentAmountError(amountInput);
+    if (message) {
+        markEnrollmentFieldInvalid(amountInput, message);
+        document.getElementById(`${amountInput.id}-enrollment-error`)?.setAttribute('aria-live', 'polite');
+    } else {
+        clearEnrollmentFieldError(amountInput);
+    }
+}
+
 async function handleApplicationDownpayment() {
     const context = applicationDownpaymentContext;
     if (!context) return;
@@ -3593,7 +3848,8 @@ async function handleApplicationDownpayment() {
 
     const issues = [];
     if (!programInput?.value) issues.push({ element: programInput, message: 'Program is required.' });
-    if (!amount || amount <= 0) issues.push({ element: amountInput, message: 'Enter a valid downpayment amount.' });
+    const amountError = getDownpaymentAmountError(amountInput);
+    if (amountError) issues.push({ element: amountInput, message: amountError });
     if (!methodId) issues.push({ element: methodInput, message: 'Payment method is required.' });
     if (methodName.toLowerCase().includes('gcash') && !referenceNo) {
         issues.push({ element: referenceInput, message: 'GCash reference number is required.' });
@@ -3676,8 +3932,9 @@ async function handleSubmitDownpayment() {
     if (!programId) {
         validationIssues.push({ element: programInput, message: 'Program is required.' });
     }
-    if (!amount || amount <= 0) {
-        validationIssues.push({ element: amountInput, message: 'Enter a valid downpayment amount.' });
+    const amountError = getDownpaymentAmountError(amountInput);
+    if (amountError) {
+        validationIssues.push({ element: amountInput, message: amountError });
     }
     if (!method) {
         validationIssues.push({ element: methodInput, message: 'Payment method is required.' });
@@ -3751,7 +4008,7 @@ async function handleSubmitDownpayment() {
             totalAmount: amount,
             lineItems: [
                 ...(parseFloat(res.data.registration_fee || 0) > 0 ? [{ label: 'Registration Fee', amount: parseFloat(res.data.registration_fee || 0) }] : []),
-                ...(parseFloat(res.data.downpayment_amount || 0) > 0 ? [{ label: 'Downpayment', amount: parseFloat(res.data.downpayment_amount || 0) }] : [])
+                ...(amount - parseFloat(res.data.registration_fee || 0) > 0 ? [{ label: 'Downpayment / Advance Payment', amount: amount - parseFloat(res.data.registration_fee || 0) }] : [])
             ],
             paymentDate: new Date()
         });
@@ -3775,7 +4032,7 @@ function generateOptions(dataArray, valueKey, textKey, selectedValue = '') {
     if (!Array.isArray(dataArray)) return "";
     return dataArray.map(item => {
         const selected = item[valueKey] == selectedValue ? ' selected' : '';
-        return `<option value="${item[valueKey]}"${selected}>${item[textKey]}</option>`;
+        return `<option value="${escapeHtml(item[valueKey])}"${selected}>${escapeHtml(item[textKey])}</option>`;
     }).join('');
 }
 
@@ -3793,7 +4050,7 @@ function generateOptionsWithType(dataArray, valueKey, textKey, typeKey, selected
         const typeObj = globalLookups.program_types.find(pt => pt.program_type_id == item[typeKey]);
         const typeName = typeObj ? typeObj.type : item[typeKey];
         const selected = item[valueKey] == selectedValue ? ' selected' : '';
-        return `<option value="${item[valueKey]}"${selected}>${item[textKey]} (${typeName})</option>`;
+        return `<option value="${escapeHtml(item[valueKey])}"${selected}>${escapeHtml(item[textKey])} (${escapeHtml(typeName)})</option>`;
     }).join('');
 }
 
@@ -3831,7 +4088,7 @@ window.addSchedule = function() {
     // Validate teacher availability
     const teacherId = document.getElementById("preferredTeacher").value;
     if (teacherId) {
-        const available = window.teacherAvailableSlotsPerDate[dateInput];
+        const available = window.teacherAvailableSlotsPerDate?.[dateInput];
         if (!available) {
             showEnrollmentValidationAlert('Date Not Available', [{
                 element: document.getElementById('schedDateInput'),
@@ -3841,13 +4098,12 @@ window.addSchedule = function() {
         }
         const start = parseTimeToMinutes(timeInput);
         const end = parseTimeToMinutes(endTimeInput);
-        const overlaps = available.some(a => {
-            const aStart = parseTimeToMinutes(a.start);
-            const aEnd = parseTimeToMinutes(a.end);
-            return start < aEnd && end > aStart;
+        const fitsAvailableSlot = getSelectedDateTimeSlots().some(a => {
+            return start >= a.start && end <= a.end;
         });
-        if (!overlaps) {
-            const message = 'The selected time is not within the available slots for this teacher on this date.';
+        if (!fitsAvailableSlot) {
+            const allowedTimes = getSelectedDateTimeSlots().map(slot => `${formatTime(minutesToTime(slot.start))} - ${formatTime(minutesToTime(slot.end))}`).join(', ');
+            const message = `Start and end time must fit within the teacher's available hours on this date: ${allowedTimes}.`;
             showEnrollmentValidationAlert('Time Not Available', [
                 { element: document.getElementById('schedTime'), message },
                 { element: document.getElementById('schedEndTime'), message }
@@ -3891,9 +4147,10 @@ window.addSchedule = function() {
         filterTeachers();
     }
     
-    // Only clear the selected date; keep the previous time values
+    // Only clear the selected date; keep the previous time values.
     document.getElementById("schedDate").value = "";
     document.getElementById("schedDateInput").value = "";
+    refreshEnrollmentTimePickers();
 };
 
 function renderScheduleList() {
@@ -3908,9 +4165,9 @@ function renderScheduleList() {
     preferredSchedules.forEach((item, index) => {
         tbody.innerHTML += `
             <tr>
-                <td>${item.date}</td>
-                <td><span class="badge bg-secondary">${item.day}</span></td>
-                <td>${formatTime(item.time)} - ${formatTime(item.endTime)}</td>
+                <td>${escapeHtml(formatTutorialDate(item.date))}</td>
+                <td><span class="badge bg-secondary">${escapeHtml(item.day)}</span></td>
+                <td>${escapeHtml(formatTime(item.time))} - ${escapeHtml(formatTime(item.endTime))}</td>
                 <td class="text-center">
                     <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeSchedule(${index})">
                         <i class="bi bi-trash"></i>
@@ -3934,47 +4191,164 @@ window.removeSchedule = function(index) {
     }
 };
 
-function handleSearch() {
-    const query = document.getElementById('studentSearch').value;
-    axios.get(`../../api/admin/enrollment.php?operation=searchStudents&query=${encodeURIComponent(query)}`)
-        .then(res => {
-            let html = '<ul class="list-group shadow-sm">';
-            if (Array.isArray(res.data)) {
-                res.data.forEach(s => {
-                    const fullName = formatStudentName(s);
-                    const safeName = fullName.replace(/'/g, "\\'");
-                    html += `<li class="list-group-item d-flex justify-content-between align-items-center">
-                        <div>
-                            <div class="fw-semibold">${fullName}</div>
-                            <small class="text-muted">School ID: ${s.student_id_number || 'Not assigned'}</small>
-                        </div>
-                        <button class="btn btn-sm student-select-btn" onclick="selectStudent(${s.student_id}, '${safeName}')">Select</button>
-                    </li>`;
-                });
-            }
+async function handleSearch() {
+    const input = document.getElementById('studentSearch');
+    const query = input.value.trim();
+    const request = ++studentSearchRequest;
+    const results = document.getElementById('searchResults');
+    if (!query) {
+        results.replaceChildren();
+        return;
+    }
+    results.textContent = 'Searching students...';
+    try {
+        const res = await axios.get(`../../api/admin/enrollment.php?operation=searchStudents&query=${encodeURIComponent(query)}`);
+        if (request !== studentSearchRequest || input !== document.getElementById('studentSearch')) return;
+        if (!Array.isArray(res.data)) throw new Error(res.data?.message || 'Unable to search students.');
+        const list = document.createElement('ul');
+        list.className = 'list-group shadow-sm';
+        if (Array.isArray(res.data)) {
+            res.data.forEach(s => {
+                const fullName = formatStudentName(s);
+                const row = document.createElement('li');
+                row.className = 'list-group-item d-flex justify-content-between align-items-center';
+                const details = document.createElement('div');
+                const name = document.createElement('div');
+                name.className = 'fw-semibold';
+                name.textContent = fullName;
+                const schoolId = document.createElement('small');
+                schoolId.className = 'text-muted';
+                schoolId.textContent = `School ID: ${s.student_id_number || 'Not assigned'}`;
+                details.append(name, schoolId);
+                const selectButton = document.createElement('button');
+                selectButton.type = 'button';
+                selectButton.className = 'btn btn-sm student-select-btn';
+                selectButton.textContent = 'Select';
+                selectButton.addEventListener('click', () => selectStudent(s.student_id, fullName));
+                row.append(details, selectButton);
+                list.appendChild(row);
+            });
+        }
 
-            if (html === '<ul class="list-group shadow-sm">') {
-                html += '<li class="list-group-item text-muted">No students found.</li>';
-            }
+        if (!list.children.length) {
+            const empty = document.createElement('li');
+            empty.className = 'list-group-item text-muted';
+            empty.textContent = 'No students found.';
+            list.appendChild(empty);
+        }
 
-            document.getElementById('searchResults').innerHTML = html + '</ul>';
-        });
+        results.replaceChildren(list);
+    } catch (error) {
+        if (request !== studentSearchRequest || input !== document.getElementById('studentSearch')) return;
+        results.textContent = 'Unable to search students. Please try again.';
+        console.error('Student search error:', error);
+    }
 }
 
-function selectStudent(id, name) {
+function setSavedStudentField(id, value) {
+    const field = document.getElementById(id);
+    if (!field) return;
+    const savedValue = String(value ?? '');
+    if (field.tagName === 'SELECT' && savedValue && !Array.from(field.options).some(option => option.value === savedValue)) {
+        field.add(new Option(savedValue, savedValue));
+    }
+    field.value = savedValue;
+}
+
+async function loadSavedStudentAddress(student) {
+    // Build options separately so an older selection cannot overwrite the current form.
+    const province = document.createElement('select');
+    const city = document.createElement('select');
+    const barangay = document.createElement('select');
+    const preserveValue = (select, value) => {
+        const savedValue = String(value ?? '');
+        if (savedValue && !Array.from(select.options).some(option => normalizeAddressName(option.value) === normalizeAddressName(savedValue))) {
+            select.add(new Option(savedValue, savedValue));
+        }
+        if (savedValue) {
+            select.value = Array.from(select.options).find(option => normalizeAddressName(option.value) === normalizeAddressName(savedValue))?.value || savedValue;
+        }
+    };
+    try {
+        await loadProvinceOptions(province, student.adr_province);
+        preserveValue(province, student.adr_province);
+        await loadCityOptions(getSelectedAddressCode(province), city, student.adr_city);
+        preserveValue(city, student.adr_city);
+        await loadBarangayOptions(getSelectedAddressCode(city), barangay, student.adr_barangay);
+    } catch (error) {
+        console.error('Unable to load saved student address options:', error);
+    }
+    // Legacy addresses and unavailable address services must still show the saved data.
+    preserveValue(province, student.adr_province);
+    preserveValue(city, student.adr_city);
+    preserveValue(barangay, student.adr_barangay);
+    return { adrProvince: province, adrCity: city, adrBarangay: barangay };
+}
+
+async function selectStudent(id, name) {
     const sid = Number(id);
     if (!Number.isInteger(sid) || sid <= 0) {
         Swal.fire('Error', 'Invalid student selected. Please choose another student.', 'error');
         return;
     }
-    currentStudentId = sid;
-    enrollmentStudentId = sid;
-    enrollmentStudentName = name;
-    currentStudentHealthNote = null; // Clear any previously entered health note
-    isNewStudentEnrollment = false;
-    const addEnrollmentModal = document.getElementById('addEnrollmentModal');
-    const downpaymentModal = document.getElementById('downpaymentModal');
-    switchModal(addEnrollmentModal, downpaymentModal);
+    const request = ++studentSelectionRequest;
+    studentSearchRequest++;
+    const saveBtn = document.getElementById('saveEnrollment');
+    const searchInput = document.getElementById('studentSearch');
+    const results = document.getElementById('searchResults');
+    saveBtn.disabled = true;
+    results.textContent = 'Loading student details...';
+    try {
+        const res = await axios.get('../../api/admin/student.php', {
+            params: { operation: 'getStudentProfile', student_id: sid }
+        });
+        if (request !== studentSelectionRequest) return;
+        if (res.data?.status !== 'success' || Number(res.data.data?.student_id) !== sid) {
+            throw new Error(res.data?.message || 'Unable to load this student.');
+        }
+        const student = res.data.data;
+        await studentAddressReady;
+        if (request !== studentSelectionRequest) return;
+        const address = await loadSavedStudentAddress(student);
+        if (request !== studentSelectionRequest) return;
+
+        clearEnrollmentValidation(document.getElementById('studentForm'));
+        const fields = {
+            firstName: student.first_name, middleName: student.middle_name,
+            lastName: student.last_name, nameExt: student.ext,
+            nickname: student.nickname, birthday: student.birthday?.slice(0, 10),
+            genderId: student.gender_id, email: student.email,
+            adrStreet: student.adr_street, adrNote: student.adr_note,
+            guardianName: student.guardian_name,
+            guardianContact: getPhilippineContactLocalDigits(student.guardian_contact),
+            guardianRelationship: student.guardian_relationship,
+            otherGuardianRelationship: '', healthNotes: student.health_note
+        };
+        Object.entries(fields).forEach(([fieldId, value]) => setSavedStudentField(fieldId, value));
+        updateAdminGuardianRelationshipField();
+        Object.entries(address).forEach(([fieldId, select]) => {
+            document.getElementById(fieldId).replaceChildren(...Array.from(select.options));
+        });
+        // Saved profile details are displayed for review; enrollment reuses this student.
+        document.querySelectorAll('#studentForm input, #studentForm select').forEach(field => {
+            if (field.tagName === 'SELECT') field.disabled = true;
+            else field.readOnly = true;
+        });
+        currentStudentId = sid;
+        enrollmentStudentId = sid;
+        enrollmentStudentName = formatStudentName(student) || name;
+        currentStudentHealthNote = student.health_note || null;
+        isNewStudentEnrollment = false;
+        searchInput.value = enrollmentStudentName;
+        results.textContent = `Selected: ${enrollmentStudentName}. Saved details are shown below.`;
+        saveBtn.innerHTML = '<span>Next</span><i class="bi bi-arrow-right"></i>';
+    } catch (error) {
+        if (request !== studentSelectionRequest) return;
+        results.textContent = 'Unable to load student details. Please search and select again.';
+        console.error('Student selection error:', error);
+    } finally {
+        if (request === studentSelectionRequest) saveBtn.disabled = false;
+    }
 }
 
 window.selectStudent = selectStudent;

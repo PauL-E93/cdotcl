@@ -1,14 +1,77 @@
 <?php
 // api/admin/employee.php
 
+require_once __DIR__ . '/../security/SecretCipher.php';
+require_once __DIR__ . '/../security/PasswordExpiration.php';
+require_once __DIR__ . '/../email_service.php';
+require_once __DIR__ . '/../security/AuthGuard.php';
+require_once __DIR__ . '/../security/SafeImageUpload.php';
+require_once __DIR__ . '/../security/AccountActivation.php';
+require_once __DIR__ . '/../security/PasswordPolicy.php';
+require_once __DIR__ . '/../security/EmployeeCredentials.php';
+require_once __DIR__ . '/../employee_schedule_helper.php';
+
 // Set headers for JSON content and CORS
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type");
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+SessionBootstrap::start();
+
+$requestMethod = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$requestBody = $requestMethod === 'POST' && strpos($_SERVER['CONTENT_TYPE'] ?? '', 'multipart/form-data') === false
+    ? json_decode(file_get_contents('php://input'), true) : null;
+$requestedOperation = $requestMethod === 'GET' ? ($_GET['operation'] ?? '')
+    : ($_POST['operation'] ?? (is_array($requestBody) ? ($requestBody['operation'] ?? '') : ''));
+$requestedData = $requestMethod === 'GET' ? ($_GET['json'] ?? '')
+    : ($_POST['json'] ?? (is_array($requestBody) ? ($requestBody['json'] ?? '') : ''));
+$requestedData = is_string($requestedData) ? json_decode($requestedData, true) : $requestedData;
+$actor = AuthGuard::requireUser();
+$staffRoles = ['owner', 'secretary', 'branch admin'];
+$ownerOnly = ['saveRbacModulePermissions', 'clearRbacRolePermissions', 'updateOwnerSmtpSettings', 'getEmployeeLoginCredentials'];
+$staffOnly = ['signup', 'updateEmployee', 'getEmployees', 'getAllEmployees',
+    'assignPrograms', 'addProgram'];
+if (in_array($requestedOperation, $ownerOnly, true) && $actor['role_name'] !== 'owner') AuthGuard::deny();
+if (in_array($requestedOperation, $staffOnly, true) && !in_array($actor['role_name'], $staffRoles, true)) AuthGuard::deny();
+if ($requestedOperation === 'getRbacPermissions' && $actor['user_type'] !== 'employee') AuthGuard::deny();
+$targetId = (int) (($requestedData['employee_id'] ?? null) ?: ($_GET['employee_id'] ?? 0));
+if ($requestedOperation === 'saveSchedule'
+    && !in_array($actor['role_name'], $staffRoles, true)
+    && !($actor['user_type'] === 'employee' && $actor['role_name'] === 'teacher'
+        && $targetId > 0 && $targetId === (int) $actor['user_id'])) AuthGuard::deny();
+if (in_array($requestedOperation, ['getEmployeeProfile', 'updateEmployeeProfile', 'updateEmployeePassword'], true)
+    && ($actor['user_type'] !== 'employee'
+        || ($targetId !== $actor['user_id'] && !in_array($actor['role_name'], $staffRoles, true)))) AuthGuard::deny();
+if ($requestedOperation === 'updateEmployeePassword' && $targetId !== $actor['user_id']) AuthGuard::deny();
+if ($requestedOperation === 'updateEmployeeProfile' && $targetId > 0 && $targetId !== $actor['user_id']
+    && $actor['role_name'] !== 'owner') {
+    $target = AuthGuard::account(AuthGuard::connection(), 'employee', $targetId);
+    if (!$target || in_array(preg_replace('/[\s_-]+/', ' ', strtolower($target['role_name'])),
+        ['owner', 'secretary', 'branch admin'], true)) AuthGuard::deny();
+}
+if ($actor['role_name'] === 'branch admin') {
+    if ($requestedOperation === 'signup' && ((int) ($requestedData['branch_id'] ?? 0) !== (int) ($_SESSION['branch_id'] ?? 0)
+        || strtolower((string) ($requestedData['role'] ?? '')) !== 'teacher')) AuthGuard::deny();
+    if ($requestedOperation === 'updateEmployee'
+        && (int) ($requestedData['branch_id'] ?? 0) !== (int) ($_SESSION['branch_id'] ?? 0)) AuthGuard::deny();
+    if ($targetId > 0) {
+        $target = AuthGuard::account(AuthGuard::connection(), 'employee', $targetId);
+        if (!$target || (int) ($target['branch_id'] ?? 0) !== (int) ($_SESSION['branch_id'] ?? 0)) AuthGuard::deny();
+    }
+}
+if ($actor['role_name'] !== 'owner' && in_array($requestedOperation, ['signup', 'updateEmployee'], true)) {
+    $newRole = preg_replace('/[\s_-]+/', ' ', strtolower(trim((string) ($requestedData['role'] ?? ''))));
+    if (in_array($newRole, ['owner', 'secretary', 'branch admin'], true)) AuthGuard::deny();
+    if ($requestedOperation === 'updateEmployee' && $targetId > 0) {
+        $target = AuthGuard::account(AuthGuard::connection(), 'employee', $targetId);
+        if (!$target || in_array(preg_replace('/[\s_-]+/', ' ', strtolower($target['role_name'])),
+            ['owner', 'secretary', 'branch admin'], true)) AuthGuard::deny();
+    }
+}
+if ($requestMethod === 'GET' && in_array($requestedOperation,
+    ['signup', 'updateEmployee', 'saveSchedule', 'saveRbacModulePermissions', 'clearRbacRolePermissions',
+        'assignPrograms', 'addProgram', 'updateEmployeeProfile', 'updateEmployeePassword', 'updateOwnerSmtpSettings'], true)) {
+    AuthGuard::deny(405, 'Method not allowed.');
 }
 
 function getEmployeeLookupBranchId() {
@@ -24,6 +87,37 @@ function getEmployeeLookupBranchId() {
 }
 
 class Employee {
+    function getEmployeeLoginCredentials($employeeId) {
+        header('Cache-Control: no-store');
+        include "connection-pdo.php";
+        EmployeeCredentials::ensureSchema($conn);
+        $stmt = $conn->prepare('SELECT e.username, e.password_hash, c.password_encrypted
+            FROM employee e LEFT JOIN employee_generated_credentials c ON c.employee_id = e.employee_id
+            WHERE e.employee_id = ?');
+        $stmt->execute([(int) $employeeId]);
+        $employee = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$employee) {
+            echo json_encode(['status' => 'error', 'message' => 'Employee not found.']);
+            return;
+        }
+        $password = null;
+        if (!empty($employee['password_encrypted'])) {
+            try {
+                $stored = SecretCipher::decrypt($employee['password_encrypted']);
+                if (password_verify($stored, $employee['password_hash'])) $password = $stored;
+            } catch (Throwable $error) {
+                echo json_encode(['status' => 'error', 'message' => 'Unable to decrypt generated credentials. Please check the server secret key configuration.']);
+                return;
+            }
+            if ($password === null) {
+                $conn->prepare('DELETE FROM employee_generated_credentials WHERE employee_id = ? AND password_encrypted = ?')
+                    ->execute([(int) $employeeId, $employee['password_encrypted']]);
+            }
+        }
+        echo json_encode(['status' => 'success', 'username' => $employee['username'], 'password' => $password,
+            'message' => $password === null ? 'The password was changed or this account predates generated credentials. Its current password cannot be displayed.' : 'Keep these credentials private.']);
+    }
+
     private function getNormalizedSessionRole() {
         $role = strtolower(trim((string) ($_SESSION['user_role'] ?? '')));
         return preg_replace('/[\s_-]+/', ' ', $role);
@@ -59,16 +153,50 @@ class Employee {
         $branchId = filter_var($value, FILTER_VALIDATE_INT);
         return ($branchId !== false && $branchId > 0) ? $branchId : null;
     }
+
+    private function credentialNamePart($value) {
+        $value = strtolower(trim((string) $value));
+        if (function_exists('iconv')) {
+            $ascii = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+            if ($ascii !== false) {
+                $value = $ascii;
+            }
+        }
+        return preg_replace('/[^a-z0-9]/', '', $value);
+    }
+
+    private function generatedEmployeeUsername(PDO $conn, $firstName, $lastName) {
+        $firstPart = $this->credentialNamePart($firstName);
+        $lastPart = $this->credentialNamePart($lastName);
+        $base = trim($firstPart . '.' . $lastPart, '.');
+        if ($base === '') {
+            $base = 'employee';
+        }
+
+        $check = $conn->prepare('SELECT 1 FROM employee WHERE username = :username LIMIT 1');
+        for ($suffix = 1; $suffix <= 9999; $suffix++) {
+            $suffixText = $suffix === 1 ? '' : (string) $suffix;
+            $candidate = substr($base, 0, max(1, 100 - strlen($suffixText))) . $suffixText;
+            $check->execute([':username' => $candidate]);
+            if (!$check->fetchColumn()) {
+                return $candidate;
+            }
+        }
+
+        throw new RuntimeException('Unable to generate a unique employee username.');
+    }
     
     // --- SIGNUP FUNCTION ---
     function signup($json) {
+        header('Cache-Control: no-store');
         include "connection-pdo.php";
+        PasswordExpiration::ensureSchema($conn);
 
         $data = json_decode($json, true);
 
         // 1. Validate Required Fields
-        if (empty($data['first_name']) || empty($data['last_name']) || empty($data['role']) || empty($data['username']) || empty($data['email']) || empty($data['password'])) {
-            echo json_encode(["status" => "error", "message" => "First name, last name, role, username, email, and password are required"]);
+        if (empty($data['first_name']) || empty($data['last_name']) || empty($data['role']) || empty($data['email'])) {
+            echo json_encode(["status" => "error", "message" => "First name, last name, role, and email are required"]);
             return;
         }
 
@@ -77,9 +205,7 @@ class Employee {
         $middle_name = !empty($data['middle_name']) ? $data['middle_name'] : null;
         $last_name = $data['last_name'];
         $role_name = $data['role'];
-        $username = $data['username'];
         $email = trim($data['email']);
-        $password = password_hash($data['password'], PASSWORD_DEFAULT);
         $branch_id = $this->normalizeBranchId($data['branch_id'] ?? null);
         $birthday = $this->normalizeBirthday($data['birthday'] ?? null);
 
@@ -88,8 +214,8 @@ class Employee {
             return;
         }
 
-        if ($birthday === false) {
-            echo json_encode(["status" => "error", "message" => "Invalid birthday selected"]);
+        if (!EmployeeCredentials::adultBirthday($birthday)) {
+            echo json_encode(["status" => "error", "message" => "Employees must be at least 18 years old. Please select a valid birthday."]);
             return;
         }
 
@@ -104,15 +230,16 @@ class Employee {
             return;
         }
 
-        // 4. Check Duplicate Username
-        $sqlCheck = "SELECT COUNT(*) FROM employee WHERE username = :username";
-        $stmt = $conn->prepare($sqlCheck);
-        $stmt->bindParam(":username", $username);
-        $stmt->execute();
-        if ($stmt->fetchColumn() > 0) {
-            echo json_encode(["status" => "error", "message" => "Username already exists"]);
+        $username = $this->generatedEmployeeUsername($conn, $first_name, $last_name);
+        $generatedPassword = EmployeeCredentials::generatePassword();
+        try {
+            $encryptedPassword = SecretCipher::encrypt($generatedPassword);
+            EmployeeCredentials::ensureSchema($conn);
+        } catch (Throwable $error) {
+            echo json_encode(["status" => "error", "message" => "Unable to securely store login credentials. Please check the server secret key configuration."]);
             return;
         }
+        $password = password_hash($generatedPassword, PASSWORD_DEFAULT);
 
         // 5. Check Duplicate Email
         $stmtEmailCheck = $conn->prepare("SELECT COUNT(*) FROM employee WHERE email = :email");
@@ -125,33 +252,73 @@ class Employee {
 
         // 6. Insert Employee
         $sqlInsert = "INSERT INTO employee
-                      (first_name, middle_name, last_name, birthday, role_id, username, email, password_hash, status, branch_id, date_created)
+                      (first_name, middle_name, last_name, birthday, role_id, username, email, password_hash, password_changed_at, password_is_temporary, status, branch_id, date_created)
                       VALUES
-                      (:first_name, :middle_name, :last_name, :birthday, :role_id, :username, :email, :password, 'active', :branch_id, NOW())";
+                      (:first_name, :middle_name, :last_name, :birthday, :role_id, :username, :email, :password, NOW(), 1, 'inactive', :branch_id, NOW())";
 
-        $stmt = $conn->prepare($sqlInsert);
-        $result = $stmt->execute([
-            ":first_name" => $first_name,
-            ":middle_name" => $middle_name,
-            ":last_name" => $last_name,
-            ":birthday" => $birthday,
-            ":role_id" => $role_id,
-            ":username" => $username,
-            ":email" => $email,
-            ":password" => $password,
-            ":branch_id" => $branch_id
-        ]);
+        $conn->beginTransaction();
+        try {
+            $stmt = $conn->prepare($sqlInsert);
+            $result = $stmt->execute([
+                ":first_name" => $first_name,
+                ":middle_name" => $middle_name,
+                ":last_name" => $last_name,
+                ":birthday" => $birthday,
+                ":role_id" => $role_id,
+                ":username" => $username,
+                ":email" => $email,
+                ":password" => $password,
+                ":branch_id" => $branch_id
+            ]);
 
+            $lastId = $conn->lastInsertId();
+            $conn->prepare('INSERT INTO employee_generated_credentials (employee_id, password_encrypted) VALUES (?, ?)')
+                ->execute([$lastId, $encryptedPassword]);
+            $conn->commit();
+        } catch (Throwable $error) {
+            if ($conn->inTransaction()) $conn->rollBack();
+            echo json_encode(["status" => "error", "message" => "Unable to create employee account. Please try again."]);
+            return;
+        }
         if ($result) {
             // assign subjects if provided
-            $lastId = $conn->lastInsertId();
             if (isset($data['subjects']) && is_array($data['subjects'])) {
                 $this->assignSubjects($lastId, $data['subjects']);
             }
             if (isset($data['programs']) && is_array($data['programs'])) {
                 $this->assignPrograms($lastId, $data['programs']);
             }
-            echo json_encode(["status" => "success", "message" => "Employee account created successfully"]);
+
+            $safeName = htmlspecialchars(trim($first_name . ' ' . $last_name), ENT_QUOTES, 'UTF-8');
+            $safeUsername = htmlspecialchars($username, ENT_QUOTES, 'UTF-8');
+            $safePassword = htmlspecialchars($generatedPassword, ENT_QUOTES, 'UTF-8');
+            $emailSent = (new EmailService($conn))->send(
+                $email,
+                'Your CDO Tutor employee account',
+                "<div style='font-family:Arial,sans-serif;line-height:1.6;color:#25304a'>
+                    <h2 style='color:#c42f69'>Welcome to CDO Tutor, {$safeName}!</h2>
+                    <p>Your employee portal account has been created.</p>
+                    <div style='padding:16px;border-radius:12px;background:#fff3f7'>
+                        <p><strong>Username:</strong> {$safeUsername}</p>
+                        <p><strong>Temporary password:</strong> {$safePassword}</p>
+                    </div>
+                    <p>Sign in with this temporary password to create your own password. Your account becomes active after password setup. Then sign in again with your new password.</p>
+                    <p>Never share your login credentials with anyone.</p>
+                </div>",
+                [
+                    'recipient_name' => trim($first_name . ' ' . $last_name),
+                    'alt_body' => "Welcome to CDO Tutor. Username: {$username}. Temporary password: {$generatedPassword}. Sign in to create your own password and activate your account, then sign in again with your new password."
+                ]
+            );
+
+            echo json_encode([
+                "status" => "success",
+                "message" => $emailSent
+                    ? "Inactive employee account created and temporary login credentials emailed successfully. The account becomes active after password setup."
+                    : "Inactive employee account created, but the email could not be sent. The owner can view the temporary password under Actions > Login Credentials. The account becomes active after password setup.",
+                "username" => $username,
+                "email_sent" => $emailSent
+            ]);
         } else {
             echo json_encode(["status" => "error", "message" => "Failed to create employee account"]);
         }
@@ -180,6 +347,7 @@ class Employee {
     // --- GET EMPLOYEES FUNCTION ---
 function getEmployees() {
         include "connection-pdo.php";
+        $branchId = getEmployeeLookupBranchId();
         // Include assigned subjects and programs as comma-separated lists
         $sql = "SELECT e.employee_id, e.first_name, e.middle_name, e.last_name, e.birthday, e.username, e.status, e.branch_id, r.role_name, b.branch_name, e.date_created,
                    GROUP_CONCAT(DISTINCT s.subject_name SEPARATOR ', ') AS subjects,
@@ -192,10 +360,11 @@ function getEmployees() {
             LEFT JOIN program_teacher pt ON e.employee_id = pt.employee_id
             LEFT JOIN program p ON pt.program_id = p.program_id
             LEFT JOIN program_type pt2 ON p.program_type = pt2.program_type_id
+            " . ($branchId ? "WHERE e.branch_id = :branch_id" : "") . "
             GROUP BY e.employee_id
             ORDER BY e.date_created DESC";
         $stmt = $conn->prepare($sql);
-        $stmt->execute();
+        $stmt->execute($branchId ? [':branch_id' => $branchId] : []);
         $employees = $stmt->fetchAll(PDO::FETCH_ASSOC);
         echo json_encode(["status" => "success", "data" => $employees]);
     }
@@ -252,8 +421,8 @@ function getAllEmployees() {
         }
 
         $birthday = $this->normalizeBirthday($data['birthday'] ?? null);
-        if ($birthday === false) {
-            echo json_encode(["status" => "error", "message" => "Invalid birthday selected"]);
+        if (!EmployeeCredentials::adultBirthday($birthday)) {
+            echo json_encode(["status" => "error", "message" => "Employees must be at least 18 years old. Please select a valid birthday."]);
             return;
         }
 
@@ -363,7 +532,12 @@ function getAllEmployees() {
         }
 
         $empId = $data['employee_id'];
-        $schedules = $data['schedules']; // Expecting array of {day, start, end}
+        $schedules = $data['schedules'] ?? null; // Expecting array of {day, start, end}
+        $validationError = employeeScheduleValidationError($schedules);
+        if ($validationError !== null) {
+            echo json_encode(["status" => "error", "message" => $validationError]);
+            return;
+        }
 
         try {
             $conn->beginTransaction();
@@ -422,6 +596,13 @@ function getAllEmployees() {
 
             $decoded = json_decode($row['permissions_json'] ?? '{}', true);
             $permissions[$roleName][$moduleKey] = is_array($decoded) ? $decoded : [];
+        }
+
+        $currentRole = $this->getNormalizedSessionRole();
+        if (!in_array($currentRole, ['owner', 'secretary'], true)) {
+            $permissions = isset($permissions[$currentRole])
+                ? [$currentRole => $permissions[$currentRole]]
+                : [];
         }
 
         echo json_encode(["status" => "success", "data" => $permissions]);
@@ -577,9 +758,17 @@ function getAllEmployees() {
     // --- GET EMPLOYEE PROFILE FUNCTION ---
     function getEmployeeProfile($employee_id) {
         include "connection-pdo.php";
+        PasswordExpiration::ensureSchema($conn);
+        $passwordAgeDays = PasswordExpiration::MAX_PASSWORD_AGE_DAYS;
         
         $sql = "SELECT e.employee_id, e.first_name, e.middle_name, e.last_name, e.username, e.email, e.contact_number, 
                        e.birthday, e.degree, e.status, e.date_created, e.profile_picture, r.role_name, b.branch_name,
+                       e.password_changed_at,
+                       DATE_ADD(e.password_changed_at, INTERVAL {$passwordAgeDays} DAY) AS password_change_due_at,
+                       CASE WHEN e.password_changed_at <= DATE_SUB(NOW(), INTERVAL {$passwordAgeDays} DAY) THEN 1 ELSE 0 END AS password_expired,
+                       GREATEST(0, CEIL(GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(e.password_changed_at, INTERVAL {$passwordAgeDays} DAY))) / 86400)) AS password_days_remaining,
+                       CASE WHEN e.smtp_app_password_encrypted IS NOT NULL
+                                  AND TRIM(e.smtp_app_password_encrypted) <> '' THEN 1 ELSE 0 END AS smtp_app_password_configured,
                        GROUP_CONCAT(DISTINCT s.subject_name SEPARATOR ', ') AS subjects,
                        GROUP_CONCAT(DISTINCT CONCAT(p.name, ' (', COALESCE(pt2.type, 'Unknown'), ')') SEPARATOR ', ') AS programs
                 FROM employee e
@@ -610,8 +799,86 @@ function getAllEmployees() {
         include "connection-pdo.php";
         $data = json_decode($json, true);
 
-        if (empty($data['employee_id'])) {
+        if (!is_array($data) || empty($data['employee_id'])) {
             echo json_encode(["status" => "error", "message" => "Employee ID is required"]);
+            return;
+        }
+
+        if (!EmployeeCredentials::adultBirthday($data['birthday'] ?? null)) {
+            echo json_encode(["status" => "error", "message" => "Employees must be at least 18 years old. Please select a valid birthday."]);
+            return;
+        }
+
+        $employeeId = (int) $data['employee_id'];
+        $email = trim((string) ($data['email'] ?? ''));
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            echo json_encode(["status" => "error", "message" => "Please provide a valid email address"]);
+            return;
+        }
+
+        $currentStatement = $conn->prepare(
+            "SELECT e.email, e.password_hash, r.role_name
+             FROM employee e
+             INNER JOIN role r ON r.role_id = e.role_id
+             WHERE e.employee_id = :employee_id
+             LIMIT 1"
+        );
+        $currentStatement->execute([':employee_id' => $employeeId]);
+        $currentEmployee = $currentStatement->fetch(PDO::FETCH_ASSOC);
+        if (!$currentEmployee) {
+            echo json_encode(["status" => "error", "message" => "Employee not found"]);
+            return;
+        }
+
+        $targetRole = strtolower(trim((string) $currentEmployee['role_name']));
+        $emailChanged = strcasecmp(trim((string) $currentEmployee['email']), $email) !== 0;
+        if ($emailChanged) {
+            if ((int) ($_SESSION['employee_id'] ?? 0) !== $employeeId) {
+                $target = AuthGuard::account($conn, 'employee', $employeeId);
+                if (empty($target['password_is_temporary']) || ($target['status'] ?? '') !== 'inactive') AuthGuard::deny();
+                AccountActivation::ensureSchema($conn);
+                $conn->prepare('DELETE FROM account_activations WHERE user_type = ? AND user_id = ?')
+                    ->execute(['employee', $employeeId]);
+            } else {
+                AuthGuard::verifyCurrentPassword(is_array($data) ? $data : []);
+            }
+        }
+        $smtpAppPassword = preg_replace('/\s+/', '', (string) ($data['smtp_app_password'] ?? ''));
+        $encryptedSmtpPassword = null;
+
+        if ($targetRole === 'owner' && ($emailChanged || $smtpAppPassword !== '')) {
+            $sessionEmployeeId = (int) ($_SESSION['employee_id'] ?? 0);
+            if ($this->getNormalizedSessionRole() !== 'owner' || $sessionEmployeeId !== $employeeId) {
+                http_response_code(403);
+                echo json_encode(["status" => "error", "message" => "Only the logged-in owner can update owner email settings"]);
+                return;
+            }
+            if (!preg_match('/^[A-Za-z0-9]{16}$/', $smtpAppPassword)) {
+                echo json_encode(["status" => "error", "message" => "Enter the 16-character Gmail app password for the new owner email"]);
+                return;
+            }
+            if (!password_verify((string) ($data['current_account_password'] ?? ''), $currentEmployee['password_hash'])) {
+                http_response_code(403);
+                echo json_encode(["status" => "error", "message" => "Your current system password is incorrect"]);
+                return;
+            }
+
+            try {
+                $encryptedSmtpPassword = SecretCipher::encrypt($smtpAppPassword);
+            } catch (Throwable $error) {
+                error_log('Unable to encrypt owner SMTP settings: ' . $error->getMessage());
+                http_response_code(500);
+                echo json_encode(["status" => "error", "message" => "Unable to save the Gmail app password"]);
+                return;
+            }
+        }
+
+        $duplicateStatement = $conn->prepare(
+            "SELECT COUNT(*) FROM employee WHERE email = :email AND employee_id != :employee_id"
+        );
+        $duplicateStatement->execute([':email' => $email, ':employee_id' => $employeeId]);
+        if ((int) $duplicateStatement->fetchColumn() > 0) {
+            echo json_encode(["status" => "error", "message" => "Email address is already in use"]);
             return;
         }
 
@@ -624,6 +891,10 @@ function getAllEmployees() {
                 birthday = :birthday, 
                 degree = :degree";
 
+        if ($encryptedSmtpPassword !== null) {
+            $sql .= ", smtp_app_password_encrypted = :smtp_app_password";
+        }
+
         if (!empty($data['profile_picture'])) {
             $sql .= ", profile_picture = :profile_picture";
         }
@@ -635,7 +906,7 @@ function getAllEmployees() {
             ":first_name" => $data['first_name'],
             ":middle_name" => $data['middle_name'],
             ":last_name" => $data['last_name'],
-            ":email" => $data['email'],
+            ":email" => $email,
             ":contact_number" => $data['contact_number'],
             ":birthday" => $data['birthday'],
             ":degree" => $data['degree'],
@@ -645,11 +916,21 @@ function getAllEmployees() {
         if (!empty($data['profile_picture'])) {
             $params[':profile_picture'] = $data['profile_picture'];
         }
+        if ($encryptedSmtpPassword !== null) {
+            $params[':smtp_app_password'] = $encryptedSmtpPassword;
+        }
 
         $result = $stmt->execute($params);
 
         if ($result) {
-            echo json_encode(["status" => "success", "message" => "Profile updated successfully"]);
+            if ((int) ($_SESSION['employee_id'] ?? 0) === $employeeId) AuthGuard::refreshCurrentVersion($conn);
+            echo json_encode([
+                "status" => "success",
+                "message" => $encryptedSmtpPassword !== null
+                    ? "Profile and email sending settings updated successfully"
+                    : "Profile updated successfully",
+                "smtp_app_password_configured" => $encryptedSmtpPassword !== null
+            ]);
         } else {
             echo json_encode(["status" => "error", "message" => "Failed to update profile"]);
         }
@@ -658,7 +939,14 @@ function getAllEmployees() {
     // --- UPDATE EMPLOYEE PASSWORD & USERNAME ---
     function updateEmployeePassword($json) {
         include "connection-pdo.php";
+        PasswordExpiration::ensureSchema($conn);
         $data = json_decode($json, true);
+
+        $user = AuthGuard::requireUser();
+        if ($user['user_type'] !== 'employee' || (int) ($data['employee_id'] ?? 0) !== $user['user_id']) {
+            AuthGuard::deny();
+        }
+        AuthGuard::verifyCurrentPassword(is_array($data) ? $data : []);
 
         if (empty($data['employee_id']) || empty($data['new_password']) || empty($data['email'])) {
             echo json_encode(["status" => "error", "message" => "Employee ID, email, and new password are required"]);
@@ -671,12 +959,8 @@ function getAllEmployees() {
             return;
         }
 
-        if (strlen($data['new_password']) < 8 ||
-            !preg_match('/[A-Za-z]/', $data['new_password']) ||
-            !preg_match('/[A-Z]/', $data['new_password']) ||
-            !preg_match('/[0-9]/', $data['new_password']) ||
-            !preg_match('/[^A-Za-z0-9]/', $data['new_password'])) {
-            echo json_encode(["status" => "error", "message" => "Password must be at least 8 characters long and include at least 1 letter, 1 uppercase letter, 1 number, and 1 symbol"]);
+        if (!PasswordPolicy::valid($data['new_password'] ?? null)) {
+            echo json_encode(["status" => "error", "message" => PasswordPolicy::message()]);
             return;
         }
 
@@ -685,7 +969,7 @@ function getAllEmployees() {
             return;
         }
 
-        $stmt = $conn->prepare("SELECT username, password_hash FROM employee WHERE employee_id = :employee_id LIMIT 1");
+        $stmt = $conn->prepare("SELECT username, email, password_hash FROM employee WHERE employee_id = :employee_id LIMIT 1");
         $stmt->execute([":employee_id" => $data['employee_id']]);
         $employee = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -695,6 +979,14 @@ function getAllEmployees() {
         }
 
         $newUsername = trim($data['username'] ?? $employee['username']);
+        if ($this->getNormalizedSessionRole() === 'owner'
+            && strcasecmp($newEmail, trim((string) $employee['email'])) !== 0) {
+            echo json_encode([
+                "status" => "error",
+                "message" => "Change the owner email in Profile and provide the matching Gmail app password so email sending settings stay together"
+            ]);
+            return;
+        }
         if ($newUsername !== $employee['username']) {
             $stmtCheck = $conn->prepare("SELECT COUNT(*) FROM employee WHERE username = :username AND employee_id != :employee_id");
             $stmtCheck->execute([":username" => $newUsername, ":employee_id" => $data['employee_id']]);
@@ -712,7 +1004,7 @@ function getAllEmployees() {
         }
 
         $updatedPasswordHash = password_hash($data['new_password'], PASSWORD_DEFAULT);
-        $stmtUpdate = $conn->prepare("UPDATE employee SET username = :username, email = :email, password_hash = :password_hash WHERE employee_id = :employee_id");
+        $stmtUpdate = $conn->prepare("UPDATE employee SET username = :username, email = :email, password_hash = :password_hash, password_changed_at = NOW(), password_is_temporary = 0 WHERE employee_id = :employee_id");
         $success = $stmtUpdate->execute([
             ":username" => $newUsername,
             ":email" => $newEmail,
@@ -721,9 +1013,74 @@ function getAllEmployees() {
         ]);
 
         if ($success) {
+            AuthGuard::refreshCurrentVersion($conn);
             echo json_encode(["status" => "success", "message" => "Login credentials updated successfully"]);
         } else {
             echo json_encode(["status" => "error", "message" => "Failed to update login credentials"]);
+        }
+    }
+
+    function updateOwnerSmtpSettings($json) {
+        include "connection-pdo.php";
+        $data = json_decode($json, true);
+        $sessionEmployeeId = (int) ($_SESSION['employee_id'] ?? 0);
+
+        if ($this->getNormalizedSessionRole() !== 'owner' || $sessionEmployeeId <= 0) {
+            http_response_code(403);
+            echo json_encode(["status" => "error", "message" => "Only the logged-in owner can update email sending settings"]);
+            return;
+        }
+
+        $accountPassword = (string) ($data['account_password'] ?? '');
+        $appPassword = preg_replace('/\s+/', '', (string) ($data['smtp_app_password'] ?? ''));
+
+        if ($accountPassword === '' || !preg_match('/^[A-Za-z0-9]{16}$/', $appPassword)) {
+            echo json_encode([
+                "status" => "error",
+                "message" => "Enter your current account password and the 16-character Gmail app password"
+            ]);
+            return;
+        }
+
+        $statement = $conn->prepare(
+            "SELECT e.password_hash
+             FROM employee e
+             INNER JOIN role r ON r.role_id = e.role_id
+             WHERE e.employee_id = :employee_id
+               AND LOWER(TRIM(r.role_name)) = 'owner'
+               AND LOWER(TRIM(COALESCE(e.status, 'active'))) = 'active'
+             LIMIT 1"
+        );
+        $statement->execute([':employee_id' => $sessionEmployeeId]);
+        $passwordHash = $statement->fetchColumn();
+
+        if (!$passwordHash || !password_verify($accountPassword, $passwordHash)) {
+            http_response_code(403);
+            echo json_encode(["status" => "error", "message" => "Your current account password is incorrect"]);
+            return;
+        }
+
+        try {
+            $encryptedPassword = SecretCipher::encrypt($appPassword);
+            $update = $conn->prepare(
+                "UPDATE employee
+                 SET smtp_app_password_encrypted = :smtp_app_password
+                 WHERE employee_id = :employee_id"
+            );
+            $update->execute([
+                ':smtp_app_password' => $encryptedPassword,
+                ':employee_id' => $sessionEmployeeId
+            ]);
+
+            echo json_encode([
+                "status" => "success",
+                "message" => "Gmail app password saved securely",
+                "smtp_app_password_configured" => true
+            ]);
+        } catch (Throwable $error) {
+            error_log('Unable to update owner SMTP settings: ' . $error->getMessage());
+            http_response_code(500);
+            echo json_encode(["status" => "error", "message" => "Unable to save the Gmail app password"]);
         }
     }
 }
@@ -744,27 +1101,15 @@ else if($_SERVER['REQUEST_METHOD'] == 'POST'){
         $operation = $_POST['operation'] ?? "";
         $json = $_POST['json'] ?? "";
 
-        if (isset($_FILES['profile_picture']) && $_FILES['profile_picture']['error'] == UPLOAD_ERR_OK) {
-            $file = $_FILES['profile_picture'];
-            $upload_dir = '../../uploads/employee_profiles/';
-
-            if (!is_dir($upload_dir)) {
-                mkdir($upload_dir, 0755, true);
-            }
-
-            $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-            $filename = 'employee_' . time() . '_' . uniqid() . '.' . $file_ext;
-            $upload_path = $upload_dir . $filename;
-
-            $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
-            if (in_array($file['type'], $allowed_types) && $file['size'] <= 5 * 1024 * 1024) {
-                if (move_uploaded_file($file['tmp_name'], $upload_path)) {
-                    $data = json_decode($json, true);
-                    $relativePath = 'uploads/employee_profiles/' . $filename;
-                    $data['profile_picture'] = $relativePath;
-                    $json = json_encode($data);
-                }
-            }
+        if (isset($_FILES['profile_picture'])) {
+            if ($operation !== 'updateEmployeeProfile' || $targetId <= 0) AuthGuard::deny();
+            try {
+                $relativePath = SafeImageUpload::store($_FILES['profile_picture'], 'employee_profiles');
+                $data = json_decode($json, true);
+                if (!is_array($data)) AuthGuard::deny(400, 'Invalid profile data.');
+                $data['profile_picture'] = $relativePath;
+                $json = json_encode($data);
+            } catch (Throwable $e) { AuthGuard::deny(422, $e->getMessage()); }
         }
     } else {
         $content = file_get_contents('php://input');
@@ -778,6 +1123,7 @@ $employee = new Employee();
 
 switch($operation){
     case "signup": $employee->signup($json); break;
+    case "getEmployeeLoginCredentials": $employee->getEmployeeLoginCredentials($_GET['employee_id'] ?? 0); break;
     case "getRoles": $employee->getRoles(); break;
     case "getBranches": $employee->getBranches(); break;
     case "getEmployees": $employee->getEmployees(); break;
@@ -797,6 +1143,7 @@ switch($operation){
     case "getEmployeeProfile": $employee->getEmployeeProfile($_GET['employee_id']); break;
     case "updateEmployeeProfile": $employee->updateEmployeeProfile($json); break;
     case "updateEmployeePassword": $employee->updateEmployeePassword($json); break;
+    case "updateOwnerSmtpSettings": $employee->updateOwnerSmtpSettings($json); break;
     default: echo json_encode(["status" => "error", "message" => "Invalid Operation"]); break;
 
 }

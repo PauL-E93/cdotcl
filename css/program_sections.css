@@ -1,0 +1,6 @@
+[data-program-panel][hidden],
+.top-bar .search-wrapper[hidden], .filter-container[hidden] {
+    display: none !important;
+}
+.top-bar { flex-wrap: wrap; gap: 1rem; }
+.top-bar > .d-flex.gap-3 { margin-left: auto; }

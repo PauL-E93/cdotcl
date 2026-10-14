@@ -35,6 +35,10 @@ function getPasswordModalTemplate() {
                                     <input type="email" class="form-control" id="passwordEmail" placeholder="Enter email address" required>
                                 </div>
                                 <div class="col-md-12">
+                                    <label class="form-label">Current Password</label>
+                                    <input type="password" class="form-control" id="passwordCurrent" autocomplete="current-password" required>
+                                </div>
+                                <div class="col-md-12">
                                     <label class="form-label">New Password</label>
                                     ${getPasswordInputMarkup({
                                         inputId: 'passwordNew',
@@ -67,12 +71,12 @@ function getPasswordModalTemplate() {
     `;
 }
 
-export function setupPasswordModal(profileData) {
+export function setupPasswordModal(profileData, onComplete) {
     const passwordBtn = document.getElementById('passwordEmployeeProfileBtn');
     if (!passwordBtn) return;
 
     passwordBtn.addEventListener('click', () => {
-        openEmployeeCredentialsModal(profileData);
+        openEmployeeCredentialsModal(profileData, onComplete);
     });
 }
 
@@ -89,6 +93,7 @@ export function openEmployeeCredentialsModal(profileData, onComplete) {
     usernameInput.value = profileData.username || '';
     emailInput.value = profileData.email || '';
     newPasswordInput.value = '';
+    document.getElementById('passwordCurrent').value = '';
     confirmPasswordInput.value = '';
 
     const modalElement = document.getElementById('changePasswordModal');
@@ -116,9 +121,10 @@ function handleSavePassword(employeeId, onComplete) {
     const username = document.getElementById('passwordUsername')?.value.trim();
     const email = document.getElementById('passwordEmail')?.value.trim();
     const newPassword = document.getElementById('passwordNew')?.value.trim();
+    const currentPassword = document.getElementById('passwordCurrent')?.value;
     const confirmPassword = document.getElementById('passwordConfirm')?.value.trim();
 
-    if (!username || !email || !newPassword || !confirmPassword) {
+    if (!username || !email || !currentPassword || !newPassword || !confirmPassword) {
         Swal.fire('Required fields', 'Please complete all fields before saving.', 'warning');
         return;
     }
@@ -149,6 +155,7 @@ function handleSavePassword(employeeId, onComplete) {
             username,
             email,
             new_password: newPassword,
+            current_password: currentPassword,
             confirm_password: confirmPassword
         })
     })

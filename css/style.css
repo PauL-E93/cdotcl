@@ -4,6 +4,24 @@
             overflow: hidden;
         }
 
+        body.password-reset-page {
+            height: auto;
+            min-height: 100vh;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        .password-reset-page .container-fluid,
+        .password-reset-page .row.h-100,
+        .password-reset-page .col-md-6.d-flex {
+            min-height: 100vh;
+        }
+
+        .password-reset-page .col-md-6.d-flex {
+            padding-top: 1.5rem;
+            padding-bottom: 1.5rem;
+        }
+
         /* Left Panel Container for positioning images */
         .left-panel-container {
             position: relative;

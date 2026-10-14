@@ -9,7 +9,7 @@ const PAGE_SIZE = 10;
 const state = {
     students: [],
     filteredStudents: [],
-    lookups: { programs: [], branches: [], genders: [] },
+    lookups: { programs: [], branches: [], school_years: [], genders: [] },
     meta: { can_edit: false, can_export: false },
     page: 1,
     modal: null,
@@ -71,7 +71,7 @@ function initials(student) {
 function safeProfilePicture(path) {
     const normalized = String(path ?? '').trim().replaceAll('\\', '/');
     if (!normalized.startsWith('uploads/student_profiles/')) return '';
-    return buildAppUrl(normalized);
+    return window.resolveUploadUrl(normalized);
 }
 
 function avatarHtml(student, className = '') {
@@ -101,6 +101,16 @@ function formatDate(value, includeTime = false) {
         ? { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
         : { year: 'numeric', month: 'short', day: 'numeric' }
     ).format(date);
+}
+
+function newestStudentsFirst(students) {
+    return [...students].sort((studentA, studentB) => {
+        const dateComparison = String(studentB.date_created || '')
+            .localeCompare(String(studentA.date_created || ''));
+
+        if (dateComparison !== 0) return dateComparison;
+        return Number(studentB.student_id || 0) - Number(studentA.student_id || 0);
+    });
 }
 
 async function hydrateSharedTemplate() {
@@ -140,6 +150,7 @@ function renderAccessDenied(message) {
 function populateLookups() {
     const programSelect = document.getElementById('student-program-filter');
     const branchSelect = document.getElementById('student-branch-filter');
+    const schoolYearSelect = document.getElementById('student-school-year-filter');
     const genderSelect = document.getElementById('student-edit-gender');
 
     (state.lookups.programs || []).forEach(program => {
@@ -161,6 +172,13 @@ function populateLookups() {
     if ((state.lookups.branches || []).length <= 1) {
         branchSelect?.closest('.student-filter-field')?.classList.add('d-none');
     }
+
+    (state.lookups.school_years || []).forEach(schoolYear => {
+        const option = document.createElement('option');
+        option.value = schoolYear.school_year_id;
+        option.textContent = schoolYear.school_year;
+        schoolYearSelect?.appendChild(option);
+    });
 
     (state.lookups.genders || []).forEach(gender => {
         const option = document.createElement('option');
@@ -203,6 +221,7 @@ function applyFilters(resetPage = true) {
     const search = document.getElementById('student-search-input')?.value.trim().toLowerCase() || '';
     const programId = document.getElementById('student-program-filter')?.value || '';
     const branchId = document.getElementById('student-branch-filter')?.value || '';
+    const schoolYearId = document.getElementById('student-school-year-filter')?.value || '';
     const accountStatus = document.getElementById('student-status-filter')?.value || '';
 
     state.filteredStudents = state.students.filter(student => {
@@ -211,8 +230,9 @@ function applyFilters(resetPage = true) {
             .map(String)
             .includes(String(programId));
         const matchesBranch = !branchId || (student.branch_ids || []).map(String).includes(String(branchId));
+        const matchesSchoolYear = !schoolYearId || (student.school_year_ids || []).map(String).includes(String(schoolYearId));
         const matchesStatus = !accountStatus || normalizeStatus(student.student_status) === accountStatus;
-        return matchesSearch && matchesProgram && matchesBranch && matchesStatus;
+        return matchesSearch && matchesProgram && matchesBranch && matchesSchoolYear && matchesStatus;
     });
 
     if (resetPage) state.page = 1;
@@ -445,6 +465,32 @@ function setEditorReadOnly(readOnly) {
     document.getElementById('student-save-button')?.classList.toggle('d-none', readOnly);
 }
 
+function updateGuardianRelationshipInput() {
+    const select = document.getElementById('student-edit-guardian-relationship');
+    const input = document.getElementById('student-edit-other-relationship');
+    const others = select?.value === '__others__';
+    document.getElementById('student-edit-other-relationship-field')?.classList.toggle('d-none', !others);
+    if (input) {
+        input.disabled = !others || !state.meta.can_edit;
+        input.required = others && state.meta.can_edit;
+    }
+}
+
+function populateGuardianRelationships(relationships, currentValue = '') {
+    const select = document.getElementById('student-edit-guardian-relationship');
+    if (!select || select.tagName !== 'SELECT') return;
+    const current = String(currentValue || '').trim();
+    select.replaceChildren(new Option('Select relationship', ''));
+    (relationships || []).forEach(item => select.add(new Option(item.relationship_name, item.relationship_name)));
+    const matching = [...select.options].find(option => option.value.toLowerCase() === current.toLowerCase());
+    if (current && !matching) select.add(new Option(current, current));
+    select.add(new Option('Others', '__others__'));
+    select.value = matching?.value || current;
+    const input = document.getElementById('student-edit-other-relationship');
+    if (input) input.value = '';
+    updateGuardianRelationshipInput();
+}
+
 function populateStudentEditor(details) {
     const student = details.student;
     const fields = [
@@ -459,6 +505,7 @@ function populateStudentEditor(details) {
     renderEnrollmentHistory(details.enrollments || []);
     renderAuditHistory(details.audit || []);
     setEditorReadOnly(!state.meta.can_edit);
+    populateGuardianRelationships(details.relationships || state.lookups.relationships, student.guardian_relationship);
 }
 
 async function openStudent(studentId) {
@@ -487,6 +534,15 @@ async function saveStudent(event) {
     if (!form.reportValidity()) return;
 
     const data = Object.fromEntries(new FormData(form).entries());
+    if (data.guardian_relationship === '__others__') {
+        const input = document.getElementById('student-edit-other-relationship');
+        const relationship = input?.value.replace(/\s+/gu, ' ').trim() || '';
+        if (!relationship || [...relationship].length > 50 || /^(other|others)$/i.test(relationship) || /\p{C}/u.test(relationship)) {
+            Swal.fire('Relationship required', 'Specify the relationship using 1 to 50 characters.', 'warning');
+            return;
+        }
+        data.guardian_relationship = relationship;
+    }
     const button = document.getElementById('student-save-button');
     button.disabled = true;
     button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
@@ -704,13 +760,14 @@ function bindEvents() {
         window.clearTimeout(state.searchTimer);
         state.searchTimer = window.setTimeout(() => applyFilters(), 180);
     });
-    ['student-program-filter', 'student-branch-filter', 'student-status-filter'].forEach(id => {
+    ['student-program-filter', 'student-branch-filter', 'student-school-year-filter', 'student-status-filter'].forEach(id => {
         document.getElementById(id)?.addEventListener('change', () => applyFilters());
     });
     document.getElementById('student-clear-filters')?.addEventListener('click', () => {
         document.getElementById('student-search-input').value = '';
         document.getElementById('student-program-filter').value = '';
         document.getElementById('student-branch-filter').value = '';
+        document.getElementById('student-school-year-filter').value = '';
         document.getElementById('student-status-filter').value = '';
         applyFilters();
     });
@@ -720,11 +777,12 @@ function bindEvents() {
     });
     document.getElementById('student-export-button')?.addEventListener('click', openStudentExportPicker);
     document.getElementById('student-editor-form')?.addEventListener('submit', saveStudent);
+    document.getElementById('student-edit-guardian-relationship')?.addEventListener('change', updateGuardianRelationshipInput);
 }
 
 async function loadStudents() {
     const payload = await requestJson(apiUrl('list'));
-    state.students = Array.isArray(payload.data) ? payload.data : [];
+    state.students = newestStudentsFirst(Array.isArray(payload.data) ? payload.data : []);
     state.meta = { ...state.meta, ...(payload.meta || {}) };
     state.meta.can_edit = Boolean(state.meta.can_edit && canUseStudentManagementPermission('edit'));
     state.meta.can_export = Boolean(state.meta.can_export && canUseStudentManagementPermission('export'));
@@ -752,7 +810,7 @@ export async function initStudentManagementPage() {
             requestJson(apiUrl('list')),
             requestJson(apiUrl('lookups'))
         ]);
-        state.students = Array.isArray(listPayload.data) ? listPayload.data : [];
+        state.students = newestStudentsFirst(Array.isArray(listPayload.data) ? listPayload.data : []);
         state.lookups = lookupPayload.data || state.lookups;
         state.meta = { ...state.meta, ...(listPayload.meta || {}) };
         state.meta.can_edit = Boolean(state.meta.can_edit && canUseStudentManagementPermission('edit'));

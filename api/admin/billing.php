@@ -1,10 +1,14 @@
-    <?php
+<?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+require_once __DIR__ . '/../security/PaymentPermission.php';
+PaymentPermission::requirePermission('view');
+
     // api/billing.php
 
-    session_start();
+    if (session_status() === PHP_SESSION_NONE) session_start();
 
     header('Content-Type: application/json');
-    header("Access-Control-Allow-Origin: *");
     header("Access-Control-Allow-Methods: POST, GET");
     header("Access-Control-Allow-Headers: Content-Type");
 
@@ -59,7 +63,7 @@
                         bs.billing_type,
                         pay.amount_paid AS amount,
                         pay.penalty_paid AS penalty_amount,
-                        COALESCE(pp.penalty_amount, 0) AS penalty_rate,
+                        CASE WHEN " . tuitionBillingTypeSql() . " THEN COALESCE(pp.penalty_amount, 0) ELSE 0 END AS penalty_rate,
                         COALESCE(pp.grace_period_days, 2) AS grace_period_days,
                         DATE_ADD(bs.due_date, INTERVAL (COALESCE(pp.grace_period_days, 2) + 1) DAY) AS penalty_effective_date,
                         pay.payment_status AS status,
@@ -84,7 +88,7 @@
         // --- GET PAYMENT METHODS ---
         public function getPaymentMethods() {
             try {
-                $sql = "SELECT payment_method_id, payment_method FROM payment_method";
+                $sql = "SELECT payment_method_id, payment_method FROM payment_method WHERE status <> 'inactive'";
                 $stmt = $this->conn->prepare($sql);
                 $stmt->execute();
                 $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -111,7 +115,7 @@
                             bs.total_amount AS amount,
                             bs.original_amount,
                             bs.penalty_amount,
-                            COALESCE(pp.penalty_amount, 0) AS penalty_rate,
+                            CASE WHEN " . tuitionBillingTypeSql() . " THEN COALESCE(pp.penalty_amount, 0) ELSE 0 END AS penalty_rate,
                             COALESCE(pp.grace_period_days, 2) AS grace_period_days,
                             DATE_ADD(bs.due_date, INTERVAL (COALESCE(pp.grace_period_days, 2) + 1) DAY) AS penalty_effective_date,
                             bs.status,
@@ -184,7 +188,7 @@
                             bs.total_amount AS amount,
                             bs.original_amount,
                             bs.penalty_amount,
-                            COALESCE(pp.penalty_amount, 0) AS penalty_rate,
+                            CASE WHEN " . tuitionBillingTypeSql() . " THEN COALESCE(pp.penalty_amount, 0) ELSE 0 END AS penalty_rate,
                             COALESCE(pp.grace_period_days, 2) AS grace_period_days,
                             DATE_ADD(bs.due_date, INTERVAL (COALESCE(pp.grace_period_days, 2) + 1) DAY) AS penalty_effective_date,
                             bs.status,
@@ -252,6 +256,16 @@
 
             try {
                 $branchId = $this->getBranchAdminBranchId();
+                if ($branchId) {
+                    $access = $this->conn->prepare("SELECT 1 FROM enrollment_details ed
+                        JOIN enrollment_header eh ON eh.enrollment_header_id = ed.enrollment_header_id
+                        WHERE ed.enrollment_details_id = ? AND eh.branch_id = ? LIMIT 1");
+                    $access->execute([$enrollment_id, $branchId]);
+                    if (!$access->fetchColumn()) {
+                        echo json_encode(["status" => "error", "message" => "Enrollment not found"]);
+                        return;
+                    }
+                }
                 refreshBillingSchedulePenalties($this->conn, $enrollment_id);
                 // Get enrollment and student info
                 $sql = "SELECT
@@ -304,7 +318,7 @@
                                     bs.total_amount AS amount,
                                     bs.original_amount,
                                     bs.penalty_amount,
-                                    COALESCE(pp.penalty_amount, 0) AS penalty_rate,
+                                    CASE WHEN " . tuitionBillingTypeSql() . " THEN COALESCE(pp.penalty_amount, 0) ELSE 0 END AS penalty_rate,
                                     COALESCE(pp.grace_period_days, 2) AS grace_period_days,
                                     DATE_ADD(bs.due_date, INTERVAL (COALESCE(pp.grace_period_days, 2) + 1) DAY) AS penalty_effective_date,
                                     GREATEST(DATEDIFF(CURDATE(), DATE_ADD(bs.due_date, INTERVAL (COALESCE(pp.grace_period_days, 2) + 1) DAY)) + 1, 0) AS penalty_chargeable_days,
@@ -324,6 +338,7 @@
                 $stmtSchedule = $this->conn->prepare($sqlSchedule);
                 $stmtSchedule->execute([$enrollment_id]);
                 $schedule = $stmtSchedule->fetchAll(PDO::FETCH_ASSOC);
+                attachPenaltyAdjustments($this->conn, $schedule);
 
                 // Calculate total paid across ALL schedules for overview
                 $total_paid_global = 0;

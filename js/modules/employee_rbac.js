@@ -15,6 +15,11 @@ const MODULE_DETAIL_MAP = {
         { label: 'Add Enrollment', hint: 'Create new tutorial enrollment records.', permissionKey: 'create' },
         { label: 'Update Enrollment', hint: 'Modify enrollment records and details.', permissionKey: 'edit' },
         { label: 'Approve Enrollment', hint: 'Handle approval-related enrollment steps.', permissionKey: 'approve' },
+        { label: 'View Online Applications', hint: 'See and open applications submitted from the New Student Enrollment page.', permissionKey: 'view_online_applications' },
+        { label: 'Approve Online Applications', hint: 'Accept an online application after reviewing the student and enrollment information.', permissionKey: 'approve_online_applications' },
+        { label: 'Reject Online Applications', hint: 'Reject an online application and send the review notes to the applicant.', permissionKey: 'reject_online_applications' },
+        { label: 'Receive Online Application Payment', hint: 'Confirm GCash proof or record the required cash registration fee and downpayment.', permissionKey: 'receive_online_application_payment' },
+        { label: 'Finalize Online Enrollment', hint: 'Assign a teacher and schedule, or a class and section, then complete the online enrollment.', permissionKey: 'finalize_online_applications' },
         { label: 'Export Enrollment', hint: 'Export enrollment data and summaries.', permissionKey: 'export' }
     ],
     employee: [
@@ -145,7 +150,8 @@ function getCurrentViewerEmployeePermissions() {
         const permissions = getResolvedRolePermissions(normalizeRoleKey(user?.role_name)).employee || {};
         return {
             view: Boolean(permissions.view),
-            edit: Boolean(permissions.edit)
+            edit: Boolean(permissions.edit),
+            schedule: Boolean(permissions.view && permissions.approve)
         };
     } catch (error) {
         console.error('Error reading current viewer employee permissions for RBAC list:', error);
@@ -180,7 +186,7 @@ function buildAssignedUserActionCell(user) {
         `);
     }
 
-    if (permissions.edit && typeof window.openScheduleModal === 'function') {
+    if (permissions.schedule && typeof window.openScheduleModal === 'function') {
         actionItems.push(`
             <li>
                 <button class="dropdown-item" type="button" onclick="openScheduleModal(${Number(user.employee_id)})">

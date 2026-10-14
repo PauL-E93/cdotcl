@@ -1,4 +1,4 @@
-import { canUseProgramPermission, guardProgramPermission } from './program_rbac.js';
+import { canUseProgramPermission, guardProgramPermission } from './program_rbac.js?v=20261001-payment-view-only';
 
 const PAYMENT_METHOD_API = '../../api/admin/payment_method.php';
 const MAX_QR_FILE_SIZE = 5 * 1024 * 1024;
@@ -14,10 +14,7 @@ function escapeHtml(value) {
 }
 
 function getQrCodeUrl(path) {
-    const value = String(path || '').trim();
-    if (!value) return '';
-    if (/^(?:https?:|data:|blob:|\/)/i.test(value) || value.startsWith('../')) return value;
-    return `../../${value.replace(/^\.\//, '')}`;
+    return window.resolveUploadUrl(path);
 }
 
 function renderPaymentMethods() {
@@ -25,18 +22,19 @@ function renderPaymentMethods() {
     if (!tableBody) return;
 
     if (!paymentMethods.length) {
-        tableBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">No payment methods found.</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No payment methods found.</td></tr>';
         return;
     }
 
     const canEdit = canUseProgramPermission('edit_payment_methods');
-    const canDelete = canUseProgramPermission('delete_payment_methods');
+    const canArchive = canUseProgramPermission('delete_payment_methods');
     tableBody.innerHTML = paymentMethods.map(method => {
         const id = Number(method.payment_method_id);
         const qrUrl = getQrCodeUrl(method.qr_code);
+        const isInactive = method.status === 'inactive';
         const actions = [
             canEdit ? `<button type="button" class="btn btn-sm btn-outline-primary" data-payment-method-action="edit" data-payment-method-id="${id}" title="Edit" aria-label="Edit ${escapeHtml(method.payment_method)}"><i class="bi bi-pencil-square"></i></button>` : '',
-            canDelete ? `<button type="button" class="btn btn-sm btn-outline-danger" data-payment-method-action="delete" data-payment-method-id="${id}" title="Delete" aria-label="Delete ${escapeHtml(method.payment_method)}"><i class="bi bi-trash"></i></button>` : ''
+            canArchive && !isInactive ? `<button type="button" class="btn btn-sm btn-outline-warning" data-payment-method-action="archive" data-payment-method-id="${id}" title="Archive" aria-label="Archive ${escapeHtml(method.payment_method)}"><i class="bi bi-archive me-1"></i>Archive</button>` : ''
         ].filter(Boolean).join(' ');
 
         return `<tr>
@@ -44,6 +42,7 @@ function renderPaymentMethods() {
             <td>${method.account_name ? escapeHtml(method.account_name) : '<span class="text-muted">Not set</span>'}</td>
             <td>${method.account_number ? escapeHtml(method.account_number) : '<span class="text-muted">Not set</span>'}</td>
             <td>${qrUrl ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-payment-method-action="view-qr" data-payment-method-id="${id}"><i class="bi bi-qr-code me-1"></i>View QR</button>` : '<span class="text-muted">No QR code</span>'}</td>
+            <td><span class="badge ${isInactive ? 'bg-secondary' : 'bg-success'}">${isInactive ? 'Inactive' : 'Active'}</span></td>
             <td class="text-center"><div class="d-inline-flex gap-1">${actions || '<span class="text-muted">-</span>'}</div></td>
         </tr>`;
     }).join('');
@@ -53,7 +52,7 @@ export async function loadPaymentMethods() {
     if (!canUseProgramPermission('view_payment_methods')) return;
     const tableBody = document.getElementById('payment_method_table_body');
     if (!tableBody) return;
-    tableBody.innerHTML = '<tr><td colspan="5" class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading payment methods...</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="6" class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading payment methods...</td></tr>';
 
     try {
         const response = await axios.get(PAYMENT_METHOD_API, { params: { operation: 'getPaymentMethods' } });
@@ -62,7 +61,7 @@ export async function loadPaymentMethods() {
         renderPaymentMethods();
     } catch (error) {
         console.error('Unable to load payment methods:', error);
-        tableBody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-4">Unable to load payment methods.</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-4">Unable to load payment methods.</td></tr>';
     }
 }
 
@@ -85,7 +84,7 @@ export function initPaymentMethodsPage() {
             const method = paymentMethods.find(item => String(item.payment_method_id) === String(button.dataset.paymentMethodId));
             if (!method) return;
             if (button.dataset.paymentMethodAction === 'edit') setupEditPaymentMethodModal(method);
-            if (button.dataset.paymentMethodAction === 'delete') deletePaymentMethod(method);
+            if (button.dataset.paymentMethodAction === 'archive') archivePaymentMethod(method);
             if (button.dataset.paymentMethodAction === 'view-qr') viewQrCode(method);
         });
     }
@@ -131,6 +130,13 @@ function getPaymentMethodForm(method) {
         <div class="col-md-6">
             <label class="form-label" for="payment_method_account_number">Account Number</label>
             <input type="text" class="form-control" id="payment_method_account_number" maxlength="30" value="${escapeHtml(method.account_number)}" placeholder="Mobile or account number">
+        </div>
+        <div class="col-md-6">
+            <label class="form-label" for="payment_method_status">Status</label>
+            <select class="form-select" id="payment_method_status">
+                <option value="active" ${method.status !== 'inactive' ? 'selected' : ''}>Active</option>
+                <option value="inactive" ${method.status === 'inactive' ? 'selected' : ''}>Inactive</option>
+            </select>
         </div>
         <div class="col-md-7">
             <label class="form-label" for="payment_method_qr_code">QR Code Image</label>
@@ -182,6 +188,7 @@ async function submitPaymentMethod(id) {
     const name = document.getElementById('payment_method_name')?.value.trim();
     const accountName = document.getElementById('payment_method_account_name')?.value.trim() || '';
     const accountNumber = document.getElementById('payment_method_account_number')?.value.trim() || '';
+    const status = document.getElementById('payment_method_status')?.value || 'active';
     const file = document.getElementById('payment_method_qr_code')?.files?.[0];
     const removeQr = document.getElementById('payment_method_remove_qr')?.checked || false;
     if (!name) {
@@ -193,7 +200,7 @@ async function submitPaymentMethod(id) {
         return;
     }
 
-    const payload = { payment_method: name, account_name: accountName, account_number: accountNumber, remove_qr: removeQr };
+    const payload = { payment_method: name, account_name: accountName, account_number: accountNumber, status, remove_qr: removeQr };
     if (id) payload.payment_method_id = id;
     const formData = new FormData();
     formData.append('operation', id ? 'updatePaymentMethod' : 'insertPaymentMethod');
@@ -216,28 +223,28 @@ async function submitPaymentMethod(id) {
     }
 }
 
-async function deletePaymentMethod(method) {
-    if (!guardProgramPermission('delete_payment_methods', 'You do not have permission to delete payment methods.')) return;
+async function archivePaymentMethod(method) {
+    if (!guardProgramPermission('delete_payment_methods', 'You do not have permission to archive payment methods.')) return;
     const result = await Swal.fire({
-        title: 'Delete payment method?',
-        text: `${method.payment_method} will be permanently removed.`,
+        title: 'Archive payment method?',
+        text: `${method.payment_method} will become inactive and unavailable for new payments. You can reactivate it by editing its status.`,
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#dc3545',
-        confirmButtonText: 'Delete'
+        confirmButtonText: 'Archive'
     });
     if (!result.isConfirmed) return;
 
     try {
         const response = await axios.post(PAYMENT_METHOD_API, {
-            operation: 'deletePaymentMethod',
+            operation: 'archivePaymentMethod',
             json: JSON.stringify({ payment_method_id: method.payment_method_id })
         });
-        if (response.data?.status !== 'success') throw new Error(response.data?.message || 'Unable to delete the payment method.');
+        if (response.data?.status !== 'success') throw new Error(response.data?.message || 'Unable to archive the payment method.');
         await loadPaymentMethods();
-        Swal.fire('Deleted', response.data.message, 'success');
+        Swal.fire('Archived', response.data.message, 'success');
     } catch (error) {
-        Swal.fire('Delete failed', error.response?.data?.message || error.message || 'This method may already be used by payment records.', 'error');
+        Swal.fire('Archive failed', error.response?.data?.message || error.message || 'Unable to archive the payment method.', 'error');
     }
 }
 

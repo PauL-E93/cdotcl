@@ -1,0 +1,28 @@
+<?php
+
+// Copy this file to runtime.local.php on shared hosting and replace the
+// placeholders. runtime.local.php is ignored by Git.
+return [
+    'APP_BASE_URL' => 'https://example.com/tutorial_center',
+
+    'DB_HOST' => 'localhost',
+    'DB_PORT' => '3306',
+    'DB_NAME' => 'tutorial_db_V2',
+    'DB_USERNAME' => 'your_database_user',
+    'DB_PASSWORD' => 'your_database_password',
+
+    'CDO_TUTOR_SMTP_HOST' => 'smtp.gmail.com',
+    'CDO_TUTOR_SMTP_PORT' => '587',
+    'CDO_TUTOR_SMTP_ENCRYPTION' => 'tls',
+    // Sender email and app password are managed in Owner Profile, not here.
+    // Generate with: php -r "echo base64_encode(random_bytes(32)), PHP_EOL;"
+    'CDO_TUTOR_SECRET_KEY' => 'your_base64_encoded_32_byte_secret_key',
+    'CDO_TUTOR_SMTP_FROM_NAME' => 'CDO Tutor',
+    'CDO_TUTOR_SMTP_ALLOW_SELF_SIGNED' => '0',
+
+    // Set to 1 when the public site is HTTPS but PHP is behind a TLS proxy.
+    'SESSION_COOKIE_SECURE' => '1',
+
+    // Comma-separated IP addresses/CIDRs for trusted reverse proxies only.
+    'LOGIN_TRUSTED_PROXIES' => ''
+];

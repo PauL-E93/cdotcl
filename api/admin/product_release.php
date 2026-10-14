@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 date_default_timezone_set('Asia/Manila');
@@ -58,7 +61,7 @@ class ProductReleaseAPI
             JOIN enrollment_header eh ON eh.enrollment_header_id = ed.enrollment_header_id
             LEFT JOIN enrollment_applications ea ON ea.enrollment_details_id = ed.enrollment_details_id
             WHERE eh.date_created >= '2026-08-25 00:00:00'
-              AND COALESCE(NULLIF(eh.status, ''), ed.status) NOT IN ('cancelled', 'withdrawn', 'completed')
+              AND COALESCE(NULLIF(eh.status, ''), ed.status) IN ('pending', 'approved', 'enrolled', 'incomplete')
               AND EXISTS (SELECT 1 FROM program_products pp WHERE pp.program_id = ed.program_id)";
         $params = [];
         if ($admin['role'] === 'branch admin') {

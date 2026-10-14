@@ -1,6 +1,7 @@
 import { getResolvedRolePermissions, initRbacPermissions, normalizeRbacRoleKey } from "../utilities/rbac_navigation.js";
 
 const DEFAULT_ENROLLMENT_PERMISSIONS = {
+    extend_tutorial_validity: false,
     view: true,
     create: true,
     edit: true,

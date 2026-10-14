@@ -1,10 +1,19 @@
 // js/modules/edit_enrollment.js
+import { formatTutorialDate } from './tutorial_validity.js?v=20261013';
 import { guardEnrollmentPermission } from './enrollment_rbac.js';
+import { saveRequestedSubject } from './requested_subject.js?v=20261004-other-subject';
+import { updateTeacherSubjectNotice, teacherSubjectConfirmationRequired } from './teacher_subject_confirmation.js?v=20261004-teacher-fallback';
 
 let editLookups = {};
 let editEnrollmentDetails = null;
 let editSubjectIds = [];
 let editSchedules = [];
+let editCurrentSchedules = [];
+let editTeacherFilterRequest = 0;
+
+function escapeEditHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+}
 
 window.teacherAvailableDates = [];
 window.teacherAvailableSlots = [];
@@ -184,7 +193,7 @@ function showEditScheduleRequirementAlert(validation, title = 'Schedule Requirem
     let message = `This tutorial requires exactly ${required} session unit(s). Current total: ${current}.`;
     if (validation.differenceMinutes > 0) message += ` Add ${difference} more session unit(s) to match the program.`;
     if (validation.differenceMinutes < 0) message += ` Remove ${difference} session unit(s) to match the program.`;
-    Swal.fire(title, message, 'warning');
+    Swal.showValidationMessage(`${title}: ${message}`);
 }
 
 function updateEditProgramSchedulePreview() {
@@ -192,7 +201,7 @@ function updateEditProgramSchedulePreview() {
     if (!preview) return;
 
     const validation = getEditProgramScheduleRequirement();
-    if (!validation.applicable) {
+    if (!validation.applicable || editSchedules.length === 0) {
         preview.style.display = 'none';
         return;
     }
@@ -220,6 +229,13 @@ function getDayName(dateValue) {
 
 function normalizeTime(timeValue) {
     return timeValue ? String(timeValue).slice(0, 5) : '';
+}
+
+function formatEditScheduleTime(timeValue) {
+    if (!timeValue) return 'N/A';
+    const [hours, minutes] = normalizeTime(timeValue).split(':');
+    const hour = Number(hours);
+    return `${hour % 12 || 12}:${minutes} ${hour >= 12 ? 'PM' : 'AM'}`;
 }
 
 function parseTimeToMinutes(timeString) {
@@ -342,7 +358,7 @@ window.validateEditTeacherDateSelection = function() {
     if (!teacherId || !dateValue || !window.teacherAvailableDates?.length) return true;
 
     if (!window.teacherAvailableDates.includes(dateValue)) {
-        Swal.fire('Date Not Available', 'Please select a date that is available for this teacher.', 'warning');
+        Swal.showValidationMessage('Date Not Available: Please select a date that is available for this teacher.');
         document.getElementById('editScheduleDate').value = '';
         document.getElementById('editScheduleDateInput').value = '';
         return false;
@@ -351,6 +367,7 @@ window.validateEditTeacherDateSelection = function() {
 };
 
 window.handleEditTeacherChange = function() {
+    updateTeacherSubjectNotice(document.getElementById('editTeacherId'), document.getElementById('editTeacherSubjectNotice'));
     window.teacherAvailableSlots = [];
     window.teacherBookedSlots = [];
     window.teacherAvailableDates = [];
@@ -388,7 +405,7 @@ window.handleEditTeacherChange = function() {
             if (res.data.status === 'success') {
                 window.teacherAvailableSlots = res.data.data.slots || [];
                 window.teacherBookedSlots = res.data.data.bookings || [];
-                window.teacherAvailableDates = getAvailableTeacherDates(window.teacherAvailableSlots, window.teacherBookedSlots, 180);
+                window.teacherAvailableDates = getAvailableTeacherDates(window.teacherAvailableSlots, window.teacherBookedSlots, 180).filter(date => !editEnrollmentDetails?.validity_end_date || (date >= editEnrollmentDetails.validity_start_date && date <= editEnrollmentDetails.validity_end_date));
 
                 if (dateInput) {
                     dateInput.value = '';
@@ -424,12 +441,16 @@ window.handleEditTeacherChange = function() {
 };
 
 async function filterEditTeachers(keepTeacherId = null) {
+    const requestId = ++editTeacherFilterRequest;
     const teacherSelect = document.getElementById('editTeacherId');
     const programId = document.getElementById('editProgramId')?.value;
     if (!teacherSelect) return;
+    teacherSelect.value = '';
+    window.handleEditTeacherChange();
+    updateTeacherSubjectNotice(teacherSelect, document.getElementById('editTeacherSubjectNotice'));
 
     if (!programId || editSubjectIds.length === 0) {
-        teacherSelect.innerHTML = '<option value="">Select Teacher</option>' + optionList(editLookups.teachers, 'employee_id', 'name', keepTeacherId || '');
+        teacherSelect.innerHTML = '<option value="">Select a program and subjects first</option>';
         populateEditAvailableDateOptions();
         return;
     }
@@ -438,36 +459,82 @@ async function filterEditTeachers(keepTeacherId = null) {
     const schedulesJson = JSON.stringify(editSchedules);
     try {
         const excludeId = editEnrollmentDetails?.enrollment_details_id || document.getElementById('editEnrollmentId')?.value || '';
-        const res = await axios.get(`../../api/admin/enrollment.php?operation=getFilteredTeachers&program_id=${programId}&subject_ids=${encodeURIComponent(editSubjectIds.join(','))}&preferred_schedules=${encodeURIComponent(schedulesJson)}&exclude_enrollment_id=${encodeURIComponent(excludeId)}`);
+        const branchId = document.getElementById('editBranchId')?.value || '';
+        const res = await axios.get(`../../api/admin/enrollment.php?operation=getFilteredTeachers&include_unassigned_subjects=1&program_id=${programId}&subject_ids=${encodeURIComponent(editSubjectIds.join(','))}&branch_id=${encodeURIComponent(branchId)}&preferred_schedules=${encodeURIComponent(schedulesJson)}&exclude_enrollment_id=${encodeURIComponent(excludeId)}`);
+        if (requestId !== editTeacherFilterRequest || !teacherSelect.isConnected) return;
         const teachers = res.data.status === 'success' ? (res.data.data || []) : [];
         teacherSelect.innerHTML = '<option value="">Select Teacher</option>';
         if (teachers.length === 0) {
             teacherSelect.innerHTML += '<option disabled>No matching teachers found</option>';
         } else {
-            teacherSelect.innerHTML += optionList(teachers, 'employee_id', 'name', keepTeacherId || '');
+            teachers.forEach(teacher => {
+                const option = new Option(`${teacher.name}${teacher.requires_subject_confirmation ? ' — subject confirmation needed' : ''}`, String(teacher.employee_id));
+                option.dataset.unassignedSubjects = JSON.stringify(teacher.unassigned_subjects || []);
+                option.selected = String(teacher.employee_id) === String(keepTeacherId || '');
+                teacherSelect.add(option);
+            });
         }
         if (teacherSelect.value) {
             handleEditTeacherChange();
         }
     } catch (err) {
+        if (requestId !== editTeacherFilterRequest || !teacherSelect.isConnected) return;
         console.error('Error filtering edit teachers:', err);
         teacherSelect.innerHTML = '<option value="">Unable to load teachers</option>';
     }
 }
 
-window.addEditSubject = function() {
+window.handleEditBranchChange = function() {
+    filterEditTeachers();
+};
+
+window.toggleEditOtherSubject = function() {
+    const selected = document.getElementById('editSubjectSelect')?.value === 'others';
+    document.getElementById('editOtherSubjectField')?.classList.toggle('d-none', !selected);
+    const input = document.getElementById('editOtherSubjectName');
+    if (input) {
+        input.disabled = !selected;
+        if (selected) input.focus();
+    }
+};
+
+window.addEditSubject = async function() {
     const select = document.getElementById('editSubjectSelect');
     if (!select || !select.value) {
-        Swal.fire('Subject Required', 'Please choose a subject to add.', 'warning');
+        Swal.showValidationMessage('Please choose a subject to add.');
         return;
     }
+    if (select.value === 'others') {
+        if (!guardEnrollmentPermission('edit', 'You do not have permission to update enrollment records.')) return;
+        const input = document.getElementById('editOtherSubjectName');
+        const button = document.getElementById('editAddSubject');
+        if (!button || button.disabled) return;
+        button.disabled = true;
+        try {
+            editLookups.subjects ||= [];
+            const subject = await saveRequestedSubject(input?.value, editLookups.subjects);
+            const id = String(subject.subject_id);
+            if (![...select.options].some(option => option.value === id)) {
+                select.add(new Option(subject.subject_name, id), select.querySelector('option[value="others"]'));
+            }
+            select.value = id;
+            if (input) input.value = '';
+            window.toggleEditOtherSubject();
+        } catch (error) {
+            Swal.showValidationMessage(error.response?.data?.message || error.message);
+            return;
+        } finally {
+            button.disabled = false;
+        }
+    }
     if (editSubjectIds.includes(select.value)) {
-        Swal.fire('Already Added', 'That subject is already in the list.', 'info');
+        Swal.showValidationMessage('That subject is already in the list.');
         return;
     }
 
     editSubjectIds.push(select.value);
     select.value = '';
+    window.toggleEditOtherSubject();
     renderEditSubjects();
     filterEditTeachers(document.getElementById('editTeacherId')?.value || editEnrollmentDetails?.preferred_teacher || null);
 };
@@ -479,16 +546,17 @@ window.removeEditSubject = function(subjectId) {
 };
 
 window.addEditProperSchedule = function() {
+    Swal.resetValidationMessage();
     const date = document.getElementById('editScheduleDate')?.value;
     const time = document.getElementById('editScheduleStart')?.value;
     const endTime = document.getElementById('editScheduleEnd')?.value;
 
     if (!date || !time || !endTime) {
-        Swal.fire('Missing Schedule', 'Please select date, start time, and end time.', 'warning');
+        Swal.showValidationMessage('Missing Schedule: Please select date, start time, and end time.');
         return;
     }
     if (endTime <= time) {
-        Swal.fire('Invalid Time', 'End time must be after start time.', 'warning');
+        Swal.showValidationMessage('Invalid Time: End time must be after start time.');
         return;
     }
 
@@ -501,13 +569,13 @@ window.addEditProperSchedule = function() {
             startMinutes >= parseTimeToMinutes(slot.start) && endMinutes <= parseTimeToMinutes(slot.end)
         );
         if (!fitsAvailableSlot) {
-            Swal.fire('Time Not Available', 'The selected time is not within the available slots for this teacher on this date.', 'warning');
+            Swal.showValidationMessage('Time Not Available: The selected time is not within the available slots for this teacher on this date.');
             return;
         }
     }
 
     if (editSchedules.some(schedule => schedule.date === date && schedule.time === time && schedule.endTime === endTime)) {
-        Swal.fire('Duplicate Schedule', 'This schedule has already been added. Please choose a different date or time.', 'warning');
+        Swal.showValidationMessage('Duplicate Schedule: This schedule has already been added. Please choose a different date or time.');
         return;
     }
 
@@ -533,18 +601,19 @@ window.removeEditProperSchedule = function(index) {
 };
 
 window.updateEditProperScheduleTime = function(index, field, value) {
+    Swal.resetValidationMessage();
     const schedule = editSchedules[index];
     if (!schedule || !['time', 'endTime'].includes(field) || !value) return;
 
     const updatedSchedule = { ...schedule, [field]: value };
     if (parseTimeToMinutes(updatedSchedule.endTime) <= parseTimeToMinutes(updatedSchedule.time)) {
-        Swal.fire('Invalid Time', 'End time must be after start time.', 'warning');
+        Swal.showValidationMessage('Invalid Time: End time must be after start time.');
         renderEditSchedules();
         return;
     }
 
     if (editSchedules.some((item, itemIndex) => itemIndex !== index && item.date === updatedSchedule.date && item.time === updatedSchedule.time && item.endTime === updatedSchedule.endTime)) {
-        Swal.fire('Duplicate Schedule', 'This schedule has already been added. Please choose a different date or time.', 'warning');
+        Swal.showValidationMessage('Duplicate Schedule: This schedule has already been added. Please choose a different date or time.');
         renderEditSchedules();
         return;
     }
@@ -597,21 +666,36 @@ function buildEditHtml(details) {
                 <div class="col-md-6">
                     <label class="form-label">Subjects</label>
                     <div class="tutorial-subject-control">
-                        <select class="form-select" id="editSubjectSelect">
+                        <select class="form-select" id="editSubjectSelect" onchange="toggleEditOtherSubject()">
                             <option value="">Select Subject</option>
                             ${optionList(editLookups.subjects, 'subject_id', 'subject_name')}
+                            <option value="others">Others</option>
                         </select>
-                        <button type="button" class="btn tutorial-add-btn" onclick="addEditSubject()">
+                        <button type="button" class="btn tutorial-add-btn" id="editAddSubject" onclick="addEditSubject()">
                             <i class="bi bi-plus-lg"></i><span>Add</span>
                         </button>
                     </div>
+                    <div class="mt-3 d-none" id="editOtherSubjectField">
+                        <label class="form-label" for="editOtherSubjectName">Requested subject</label>
+                        <input type="text" class="form-control" id="editOtherSubjectName" maxlength="100" placeholder="Enter the requested subject" disabled>
+                        <small class="text-muted">Click Add to save and select this subject, then check teacher alignment.</small>
+                    </div>
                     <div id="editSelectedSubjects" class="mt-2 d-flex flex-wrap gap-2"></div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="editBranchId">Branch</label>
+                    <select class="form-select" id="editBranchId" onchange="handleEditBranchChange()">
+                        <option value="">Select Branch</option>
+                        ${optionList(editLookups.branches, 'branch_id', 'branch_name', details.branch_id || editLookups.current_branch?.branch_id || '')}
+                    </select>
+                    <small class="text-muted">Choose the student's branch to filter available teachers.</small>
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">Teacher</label>
                     <select class="form-select" id="editTeacherId" onchange="handleEditTeacherChange()">
                         <option value="">Select Teacher</option>
                     </select>
+                    <div class="alert alert-warning mt-2 d-none" id="editTeacherSubjectNotice" role="status"></div>
                 </div>
                 </div>
             </section>
@@ -622,6 +706,16 @@ function buildEditHtml(details) {
                     <textarea class="form-control" id="editGoal" rows="2">${details.goal || ''}</textarea>
                 </div>
             </section>
+            <section class="tutorial-section">
+                <h3 class="tutorial-section-title"><span class="tutorial-section-icon"><i class="bi bi-calendar-check"></i></span><span>Current Schedule</span></h3>
+                <p class="small text-muted">${escapeEditHtml(details.branch_name || 'No branch assigned')} &middot; ${escapeEditHtml(details.teacher_name || 'No teacher assigned')}</p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered tutorial-schedule-table">
+                        <thead><tr><th>Date</th><th>Day</th><th>Start - End</th></tr></thead>
+                        <tbody>${editCurrentSchedules.length ? editCurrentSchedules.map(schedule => `<tr><td>${escapeEditHtml(schedule.date || 'Recurring')}</td><td>${escapeEditHtml(schedule.day)}</td><td>${escapeEditHtml(formatEditScheduleTime(schedule.time))} - ${escapeEditHtml(formatEditScheduleTime(schedule.endTime))}</td></tr>`).join('') : '<tr><td colspan="3" class="text-center text-muted">No current schedule.</td></tr>'}</tbody>
+                    </table>
+                </div>
+            </section>
             <div id="editUnitPreview" class="edit-unit-preview" style="display:none;">
                 <strong>Required Units:</strong> <span id="editRequiredUnits">-</span>
                 <strong class="ms-3">Current Schedule Units:</strong> <span id="editCurrentUnits">0</span>
@@ -629,6 +723,7 @@ function buildEditHtml(details) {
             </div>
             <section class="tutorial-section">
                 <h3 class="tutorial-section-title"><span class="tutorial-section-icon"><i class="bi bi-calendar-week"></i></span><span>Schedule Preferences</span></h3>
+                <p class="small text-muted">Leave this empty to keep the current sessions. Adding new preferences replaces the current schedule when you save.</p>
                 <div class="tutorial-schedule-grid">
                     <div class="tutorial-date-field">
                         <label class="form-label">Select Date</label>
@@ -680,7 +775,8 @@ window.openFullEnrollmentEditor = async function(enrollmentId) {
         const scheduleRows = detailRes.data.data.schedule || [];
         const rawSubjectIds = editEnrollmentDetails.subject_ids || editEnrollmentDetails.subject_id || '';
         editSubjectIds = String(rawSubjectIds).split(',').filter(Boolean);
-        editSchedules = scheduleRows.map(row => ({
+        editSchedules = [];
+        editCurrentSchedules = scheduleRows.map(row => ({
             date: row.date,
             day: row.day,
             time: normalizeTime(row.start_time),
@@ -728,9 +824,23 @@ window.openFullEnrollmentEditor = async function(enrollmentId) {
                 });
             },
             preConfirm: () => {
+                if (teacherSubjectConfirmationRequired(document.getElementById('editTeacherId'), document.getElementById('editTeacherSubjectNotice'))) {
+                    Swal.showValidationMessage('Confirm that the selected teacher can handle the requested subjects.');
+                    return false;
+                }
+                if (document.getElementById('editSubjectSelect')?.value === 'others' || document.getElementById('editAddSubject')?.disabled) {
+                    Swal.showValidationMessage('Add the requested subject before saving enrollment changes.');
+                    return false;
+                }
                 const programId = document.getElementById('editProgramId')?.value;
                 const gradeLevelId = document.getElementById('editGradeLevelId')?.value;
                 const teacherId = document.getElementById('editTeacherId')?.value;
+                const branchId = document.getElementById('editBranchId')?.value;
+
+                if (!branchId) {
+                    Swal.showValidationMessage('Please select a branch.');
+                    return false;
+                }
 
                 if (!programId) {
                     Swal.showValidationMessage('Please select a program.');
@@ -749,8 +859,14 @@ window.openFullEnrollmentEditor = async function(enrollmentId) {
                     return false;
                 }
 
+                if (editSchedules.length && editEnrollmentDetails?.validity_end_date) {
+                    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+                    if (today > editEnrollmentDetails.validity_end_date || editSchedules.some(row => row.date < editEnrollmentDetails.validity_start_date || row.date > editEnrollmentDetails.validity_end_date)) {
+                        Swal.showValidationMessage('Session dates must remain within ' + formatTutorialDate(editEnrollmentDetails.validity_start_date) + ' through ' + formatTutorialDate(editEnrollmentDetails.validity_end_date) + '. An expired package requires an authorized extension.'); return false;
+                    }
+                }
                 const scheduleRequirement = getEditProgramScheduleRequirement();
-                if (scheduleRequirement.applicable && !scheduleRequirement.matches) {
+                if (editSchedules.length > 0 && scheduleRequirement.applicable && !scheduleRequirement.matches) {
                     Swal.showValidationMessage(`Schedule must total exactly ${formatEditScheduleUnits(scheduleRequirement.requiredMinutes)} session unit(s).`);
                     return false;
                 }
@@ -762,10 +878,13 @@ window.openFullEnrollmentEditor = async function(enrollmentId) {
                     subject_id: editSubjectIds[0],
                     subject_ids: editSubjectIds,
                     preferred_teacher: teacherId,
+                    preferred_branch_id: branchId,
                     goal: document.getElementById('editGoal')?.value || null,
                     total_of_program: parseFloat(getSelectedProgram()?.tuition || 0),
-                    preferred_time_day: buildPreferredTimeDay() || null,
-                    preferences: editSchedules
+                    ...(editSchedules.length > 0 ? {
+                        preferred_time_day: buildPreferredTimeDay() || null,
+                        preferences: editSchedules
+                    } : {})
                 };
             }
         }).then(result => {

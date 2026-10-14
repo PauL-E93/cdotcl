@@ -1,3 +1,5 @@
+import { renderTutorialValidity } from '../modules/tutorial_validity.js?v=20261013';
+import { appendAgreementLink } from '../modules/agreements.js?v=20261014-program-agreements';
 import { showPaymentReceipt } from '../modules/receipt.js';
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -18,6 +20,7 @@ document.addEventListener('DOMContentLoaded', function() {
         apiUrl: buildEnrollmentUrl(filters),
         tableBody: tableBody,
         onDataLoad: populateTable,
+        showingElement: document.getElementById('pagingInfo'),
         perPage: 5 
     });
 
@@ -32,16 +35,31 @@ document.addEventListener('DOMContentLoaded', function() {
     const statusSelect = document.getElementById('enrollment-status-filter');
     const subjectSelect = document.getElementById('enrollment-subject-filter');
     const teacherSelect = document.getElementById('enrollment-teacher-filter');
-    const applyButton = document.getElementById('enrollment-apply-filters');
+    const filterContainer = document.querySelector('.filter-container');
+    const filterToggle = filterContainer?.querySelector('.filter-toggle-btn');
     let searchTimer;
+
+    const syncFilters = () => {
+        filters.search = searchInput?.value.trim() || '';
+        filters.status = statusSelect?.value || '';
+        filters.subject = subjectSelect?.value || '';
+        filters.teacher = teacherSelect?.value || '';
+    };
 
     if (searchInput) {
         searchInput.addEventListener('input', function() {
             clearTimeout(searchTimer);
             searchTimer = setTimeout(() => {
-                filters.search = this.value.trim();
+                syncFilters();
                 refreshEnrollments();
             }, 250);
+        });
+        searchInput.addEventListener('keydown', event => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            clearTimeout(searchTimer);
+            syncFilters();
+            refreshEnrollments();
         });
     }
 
@@ -54,12 +72,10 @@ document.addEventListener('DOMContentLoaded', function() {
         refreshEnrollments();
     }));
 
-    applyButton?.addEventListener('click', () => {
-        filters.search = searchInput?.value.trim() || '';
-        filters.status = statusSelect?.value || '';
-        filters.subject = subjectSelect?.value || '';
-        filters.teacher = teacherSelect?.value || '';
-        refreshEnrollments();
+    filterToggle?.setAttribute('aria-expanded', 'false');
+    filterToggle?.addEventListener('click', () => {
+        const isOpen = filterContainer.classList.toggle('filter-open');
+        filterToggle.setAttribute('aria-expanded', String(isOpen));
     });
 
     loadEnrollmentFilterLookups('tutorial');
@@ -107,7 +123,7 @@ function updateStats(data) {
     document.getElementById('totalEnrollments').textContent = data.total || 0;
     document.getElementById('newEnrollments').textContent = data.new || 0;
     document.getElementById('pendingEnrollments').textContent = data.pending || 0;
-    document.getElementById('cancelledEnrollments').textContent = data.cancelled || 0;
+    document.getElementById('completedEnrollments').textContent = data.completed || 0;
 }
 
 
@@ -118,7 +134,7 @@ function populateTable(data) {
     tbody.innerHTML = ''; // Clear existing rows
 
     if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center">No enrollments found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">No matching enrollments found.</td></tr>';
         return;
     }
 
@@ -143,17 +159,31 @@ function populateTable(data) {
         // Status
         const tdStatus = document.createElement('td');
         const badge = document.createElement('span');
-        badge.className = `badge ${getStatusClass(row.status)}`;
-        badge.textContent = row.status.charAt(0).toUpperCase() + row.status.slice(1);
+        const enrollmentStatus = String(row.status || 'pending');
+        const applicationStatus = String(row.application_status || '').toLowerCase();
+        const isReadyForScheduling = applicationStatus === 'ready_for_scheduling';
+        const isWaitingForCenter = ['pending_review', 'approved_for_payment', 'ready_for_scheduling'].includes(applicationStatus);
+        badge.className = `badge ${isReadyForScheduling ? 'bg-primary' : applicationStatus === 'approved_for_payment' ? 'bg-info text-dark' : getStatusClass(enrollmentStatus)}`;
+        badge.textContent = isReadyForScheduling ? 'Ready for Scheduling'
+            : applicationStatus === 'approved_for_payment' ? 'Awaiting Center Payment'
+            : applicationStatus === 'pending_review' ? 'Pending Application Review'
+            : enrollmentStatus.charAt(0).toUpperCase() + enrollmentStatus.slice(1);
         tdStatus.appendChild(badge);
         tr.appendChild(tdStatus);
 
         // --- ACTION DROPDOWN ---
         const tdAction = document.createElement('td');
         const status = (row.status || '').toLowerCase();
-        const canComplete = status === 'incomplete';
-        const actionItems = canComplete
-            ? `<li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); openPendingEnrollmentCompletion(${row.enrollment_details_id}, 'tutorial')">Complete</a></li>`
+        const canComplete = status === 'incomplete' && !isWaitingForCenter;
+        const continuesOnlineApplication = canComplete
+            && Number(row.application_id || 0) > 0
+            && String(row.applicant_type || '').toLowerCase() === 'existing_student';
+        const actionItems = isWaitingForCenter
+            ? `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); viewEnrollment(${row.enrollment_details_id})">View</a></li>`
+            : canComplete
+            ? (continuesOnlineApplication
+                ? `<li><button type="button" class="dropdown-item text-primary fw-semibold" onclick="openStudentEnrollmentRequestModal(${row.enrollment_details_id})"><i class="bi bi-arrow-right-circle me-2"></i>Complete Enrollment</button></li>`
+                : `<li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); openPendingEnrollmentCompletion(${row.enrollment_details_id}, 'tutorial')">Complete</a></li>`)
             : `
                     <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); viewEnrollment(${row.enrollment_details_id})">View</a></li>
                     <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); downloadStudentORF(${row.enrollment_details_id})">Download ORF</a></li>
@@ -177,10 +207,10 @@ function populateTable(data) {
 
 function getStatusClass(status) {
     switch (status.toLowerCase()) {
-        case 'active': case 'enrolled': return 'bg-success';
+        case 'enrolled': return 'bg-success';
+        case 'completed': return 'bg-theme-pink';
+        case 'approved': return 'bg-primary';
         case 'pending': case 'incomplete': return 'bg-warning text-dark';
-        case 'cancelled': return 'bg-danger';
-        case 'session done': return 'bg-info';
         default: return 'bg-secondary';
     }
 }
@@ -245,6 +275,8 @@ function viewEnrollment(id) {
         .then(response => {
             if (response.data.status === 'success') {
                 populateModal(response.data.data.details, response.data.data.schedule, modalBody);
+                renderTutorialValidity(modalBody, id);
+                appendAgreementLink(modalBody, id);
             } else {
                 modalBody.innerHTML = `<div class="alert alert-danger m-3">Error: ${response.data.message}</div>`;
             }
@@ -295,8 +327,8 @@ function populateModal(details, schedule, container) {
         .map(part => String(part).trim())
         .join(' ') || 'N/A';
     const scheduleItems = Array.isArray(schedule) && schedule.length
-        ? schedule.map(item => `${escapeHtml(item.day)}${item.start_time ? ` · ${escapeHtml(formatTime(item.start_time))}${item.end_time ? ` - ${escapeHtml(formatTime(item.end_time))}` : ''}` : ''}`).join('<br>')
-        : 'No specific schedule assigned yet.';
+        ? schedule.map(item => `<span class="preplay-schedule-item"><i class="bi bi-calendar3"></i><strong>${escapeHtml(item.day)}</strong>${item.start_time ? `<span>${escapeHtml(formatTime(item.start_time))}${item.end_time ? ` – ${escapeHtml(formatTime(item.end_time))}` : ''}</span>` : ''}</span>`).join('')
+        : '<span class="preplay-schedule-empty">No specific schedule assigned yet.</span>';
 
     container.innerHTML = `
         <section class="alert alert-light border preplay-view-card preplay-student-card">
@@ -314,10 +346,10 @@ function populateModal(details, schedule, container) {
         <section class="alert alert-light border preplay-view-card preplay-class-card">
             <h6><span class="preplay-section-icon" aria-hidden="true"><i class="bi bi-mortarboard"></i></span>Class &amp; Schedule Details</h6>
             <div class="row">
-                <div class="col-md-3 preplay-view-field"><label>Subject</label><div class="fw-bold">${escapeHtml(details.subject_name)}</div></div>
-                <div class="col-md-3 preplay-view-field"><label>Grade Level</label><div class="fw-bold">${escapeHtml(details.grade_level)}</div></div>
-                <div class="col-md-3 preplay-view-field"><label>Tutor</label><div class="fw-bold">${escapeHtml(details.teacher_name)}</div></div>
-                <div class="col-md-3 preplay-view-field"><label>Preferred Schedule</label><div class="fw-bold">${scheduleItems}</div></div>
+                <div class="col-md-4 preplay-view-field"><label>Subject</label><div class="fw-bold">${escapeHtml(details.subject_name)}</div></div>
+                <div class="col-md-4 preplay-view-field"><label>Grade Level</label><div class="fw-bold">${escapeHtml(details.grade_level)}</div></div>
+                <div class="col-md-4 preplay-view-field"><label>Assigned Tutor</label><div class="fw-bold">${escapeHtml(details.teacher_name)}</div></div>
+                <div class="col-12 preplay-view-field preplay-schedule-field"><label>Preferred Schedule</label><div class="preplay-schedule-list">${scheduleItems}</div></div>
             </div>
         </section>`;
     return;
@@ -419,7 +451,10 @@ function populateModal(details, schedule, container) {
 function getStudentPaymentHistoryStatus(status) {
     const normalizedStatus = String(status || '').toLowerCase();
 
-    if (['received', 'enrolled', 'complete', 'completed', 'active'].includes(normalizedStatus)) {
+    if (['complete', 'completed'].includes(normalizedStatus)) {
+        return { tone: 'completed', icon: 'bi-check-circle-fill', label: String(status).toUpperCase() };
+    }
+    if (['received', 'enrolled', 'active'].includes(normalizedStatus)) {
         return { tone: 'success', icon: 'bi-check-circle-fill', label: String(status).toUpperCase() };
     }
     if (['pending', 'incomplete'].includes(normalizedStatus)) {
@@ -437,9 +472,7 @@ function getStudentPaymentReceiptKey(payment) {
 }
 
 function resolveStudentPaymentProofUrl(proofPath) {
-    if (!proofPath) return '';
-    if (/^(?:https?:)?\/\//.test(proofPath)) return proofPath;
-    return `../../${String(proofPath).replace(/^\/+/, '')}`;
+    return window.resolveUploadUrl(proofPath);
 }
 
 function buildStudentPaymentHistoryReceiptData(enrollmentId, studentName, history, payment) {

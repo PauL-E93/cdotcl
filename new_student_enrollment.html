@@ -1,14 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script src="js/utilities/upload_url.js?v=20261006-upload-images-r2"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Apply online for CDO Tutor playschool, preschool, and tutorial programs.">
     <title>New Student Enrollment | CDO Tutor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&amp;family=Nunito:wght@400;600;700;800;900&amp;display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="css/new_student_enrollment.css?v=20260828-receipt-alert">
-    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-    <script src="js/vendor/sweetalert2.all.min.js"></script>
+    <link rel="stylesheet" href="css/new_student_enrollment.css?v=20261004-header-news">
+    <link rel="stylesheet" href="css/agreements.css?v=20261014-pink-theme">
+    <script src="node_modules/axios/dist/axios.min.js?v=20261006-upload-images"></script>
+    <script src="js/vendor/sweetalert2.all.min.js?v=20261006-upload-images"></script>
 </head>
 <body>
     <header class="landing-header">
@@ -22,9 +28,12 @@
 
         <nav class="landing-nav" aria-label="Main navigation">
             <a class="landing-nav__link" href="index.html#home">Home</a>
-            <a class="landing-nav__link" href="index.html#about">About Us</a>
+            <a class="landing-nav__link" href="index.html#news">News</a>
             <a class="landing-nav__link" href="index.html#programs">Programs</a>
-            <a class="landing-nav__link" href="index.html#contact">Contact Us</a>
+            <a class="landing-nav__link" href="index.html#about">About</a>
+            <a class="landing-nav__link" href="index.html#centers">Centers</a>
+            <a class="landing-nav__link" href="index.html#faq">FAQ</a>
+            <a class="landing-nav__link" href="index.html#contact">Contact</a>
         </nav>
 
         <div class="landing-header__actions">
@@ -41,10 +50,20 @@
 
     <main class="application-shell">
         <section class="application-intro">
-            <span class="application-eyebrow">ONLINE APPLICATION</span>
-            <h1>Start your child’s learning journey.</h1>
-            <p>This form is for new students only. Complete the application and choose Cash or GCash for the registration fee and downpayment.</p>
-            <div class="application-notice"><i class="bi bi-info-circle-fill"></i><span>A parent email may be shared by multiple children. A student is considered existing only when the same email, complete name, and birthdate all match.</span></div>
+            <div class="application-intro__copy">
+                <span class="application-eyebrow"><i aria-hidden="true">✦</i> ONLINE APPLICATION</span>
+                <h1>A bright beginning<br><em>starts here!</em></h1>
+                <p>Enroll your child in a joyful, supportive learning experience with caring licensed teachers.</p>
+                <div class="application-program-pills" aria-label="Available programs"><span>🧸 Playschool</span><span>🎨 Preschool</span><span>✏️ Tutorial</span></div>
+            </div>
+            <div class="application-intro__guide">
+                <span class="guide-icon" aria-hidden="true">📚</span>
+                <div><strong>New students are welcome!</strong><p>Complete the five guided steps below. Choose Cash or an online payment method for the registration fee and downpayment.</p></div>
+                <div class="application-notice"><i class="bi bi-info-circle-fill"></i><span>A parent email may be shared by multiple children. We match existing students using their email, complete name, and birthdate.</span></div>
+            </div>
+            <span class="intro-doodle intro-doodle--pencil" aria-hidden="true">✏️</span>
+            <span class="intro-doodle intro-doodle--star" aria-hidden="true">★</span>
+            <span class="intro-doodle intro-doodle--abc" aria-hidden="true">ABC</span>
         </section>
 
         <section class="application-card">
@@ -57,6 +76,7 @@
             </nav>
 
             <form id="newStudentApplicationForm" novalidate>
+                <p id="enrollmentDraftStatus" class="small text-muted px-3 pt-3" role="status">Progress is saved automatically in this tab. Payment screenshots must be selected again after refreshing.</p>
                 <section class="form-step active" data-form-step="1">
                     <div class="form-section-heading">
                         <div><span>STEP 1</span><h2>Student Information</h2></div>
@@ -70,7 +90,7 @@
                         <div class="col-md-3"><label class="form-label" for="lastName">Last name *</label><input class="form-control" id="lastName" required></div>
                         <div class="col-md-1"><label class="form-label" for="extension">Ext.</label><input class="form-control" id="extension" placeholder="Jr."></div>
                         <div class="col-md-4"><label class="form-label" for="nickname">Nickname</label><input class="form-control" id="nickname"></div>
-                        <div class="col-md-4"><label class="form-label" for="birthday">Birthdate *</label><input type="date" class="form-control" id="birthday" required></div>
+                        <div class="col-md-4"><label class="form-label" for="birthday">Birthdate *</label><input type="date" class="form-control" id="birthday" aria-describedby="birthdayHelp" required><div class="form-text" id="birthdayHelp">Student must be at least 2 years old.</div></div>
                         <div class="col-md-4"><label class="form-label" for="gender">Gender *</label><select class="form-select" id="gender" required><option value="">Select gender</option></select></div>
                         <div class="col-12"><label class="form-label" for="healthNote">Health notes or learning considerations</label><textarea class="form-control" id="healthNote" rows="2" placeholder="Optional"></textarea></div>
                     </div>
@@ -86,7 +106,12 @@
                             </div>
                             <div class="form-text" id="guardianContactHelp">Enter 10 digits beginning with 9 (example: 9171234567).</div>
                         </div>
-                        <div class="col-md-3"><label class="form-label" for="guardianRelationship">Relationship *</label><input class="form-control" id="guardianRelationship" placeholder="Mother, Father, Guardian" required></div>
+                        <div class="col-md-3"><label class="form-label" for="guardianRelationship">Relationship *</label><select class="form-select" id="guardianRelationship" required><option value="">Loading relationships...</option></select></div>
+                        <div class="col-md-6 d-none" id="otherGuardianRelationshipField">
+                            <label class="form-label" for="otherGuardianRelationship">Specify relationship *</label>
+                            <input class="form-control" id="otherGuardianRelationship" maxlength="50" placeholder="Example: Aunt, Uncle, Sister" disabled aria-describedby="otherGuardianRelationshipHelp">
+                            <div class="form-text" id="otherGuardianRelationshipHelp">This relationship will be saved when you submit the application.</div>
+                        </div>
                         <div class="col-md-6"><label class="form-label" for="email">Parent/guardian email *</label><input type="email" class="form-control" id="email" required><div class="form-text">This email can be used for applications for multiple children.</div></div>
                     </div>
 
@@ -142,10 +167,24 @@
                                     <div class="subject-dropdown-menu d-none" id="subjectPicker" role="group" aria-label="Select subjects"><span class="text-muted">Loading subjects…</span></div>
                                 </div>
                                 <div class="selection-summary" id="selectedSubjectsSummary"></div>
+                                <div class="mt-3 d-none" id="otherSubjectField">
+                                    <label class="form-label" for="otherSubjectName">Requested subject *</label>
+                                    <input class="form-control" id="otherSubjectName" type="text" maxlength="100" placeholder="Enter the subject you would like to study" disabled>
+                                    <small class="text-muted">The center will review your requested subject and check teacher availability.</small>
+                                </div>
                             </div>
                             <div class="col-12"><label class="form-label" for="goal">Learning goal</label><textarea class="form-control" id="goal" rows="2" placeholder="What would you like the student to improve?"></textarea></div>
                         </div>
 
+                        <div class="mb-3">
+                            <label class="form-label" for="preferredSessionHours">How long should each session last?</label>
+                            <select class="form-select" id="preferredSessionHours" aria-describedby="sessionDurationNote">
+                                <option value="1">1 hour</option>
+                                <option value="1.5">1 hour and 30 minutes</option>
+                                <option value="2">2 hours</option>
+                            </select>
+                            <small class="text-muted" id="sessionDurationNote">The program includes 12 consumable hours in total. Each session uses the selected duration from that balance: 12 one-hour sessions, 8 sessions of 1 hour and 30 minutes, or 6 two-hour sessions. The center will confirm your final schedule.</small>
+                        </div>
                         <h3 class="form-group-title">Preferred schedule or weekly availability of the student</h3>
                         <p class="text-muted">Example: Monday, 1:00 PM to 5:00 PM is the availability of the student.</p>
                         <div class="availability-builder">
@@ -158,6 +197,7 @@
                         <div class="availability-list" id="availabilityList" tabindex="-1"><p class="empty-availability">No preferred times added yet.</p></div>
                     </div>
 
+                    <div id="newStudentAgreements"></div>
                     <div class="form-actions"><button type="button" class="btn btn-light" data-go-step="2"><i class="bi bi-arrow-left me-2"></i>Back</button><button type="button" class="btn btn-primary" id="reviewBillingButton">Review Billing <i class="bi bi-arrow-right ms-2"></i></button></div>
                 </section>
 
@@ -175,8 +215,8 @@
         </section>
     </main>
 
-    <footer class="application-footer"><span>CDO Tutor and Learning Center</span><span>Need help? Contact your preferred center.</span></footer>
-    <script src="js/utilities/gcash_ocr.js?v=20260825-ref-row-2" defer></script>
-    <script src="js/new_student_enrollment.js?v=20260828-receipt-alert" defer></script>
+    <footer class="application-footer"><span><strong>CDO Tutor</strong> · Learn, Play &amp; Grow</span><span>Need help? Contact your preferred learning center. <span aria-hidden="true">♥</span></span></footer>
+    <script src="js/utilities/gcash_ocr.js?v=20261006-upload-images" defer></script>
+    <script type="module" src="js/new_student_enrollment.js?v=20261014-select-all"></script>
 </body>
 </html>

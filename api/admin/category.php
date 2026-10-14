@@ -1,7 +1,9 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 // api/admin/category.php
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 
 class Category {
     function getAllCategories(){

@@ -1,15 +1,17 @@
 <?php
+require_once __DIR__ . '/security/AuthGuard.php';
+AuthGuard::requireUser();
+
 header('Content-Type: application/json; charset=UTF-8');
-header('Access-Control-Allow-Origin: *');
 
-use PHPMailer\PHPMailer\Exception as MailException;
-use PHPMailer\PHPMailer\PHPMailer;
-
-require_once __DIR__ . '/PHPMailer/src/Exception.php';
-require_once __DIR__ . '/PHPMailer/src/PHPMailer.php';
-require_once __DIR__ . '/PHPMailer/src/SMTP.php';
-require_once __DIR__ . '/admin/connection-pdo.php';
+$conn = AuthGuard::connection();
+require_once __DIR__ . '/email_service.php';
 require_once __DIR__ . '/notification_helper.php';
+require_once __DIR__ . '/enrollment_completion_helper.php';
+require_once __DIR__ . '/session_substitute_helper.php';
+require_once __DIR__ . '/session_sequence_helper.php';
+require_once __DIR__ . '/tutorial_validity_helper.php';
+ensureTutorialValiditySchema($conn);
 
 class OngoingSession
 {
@@ -52,11 +54,13 @@ class OngoingSession
         return is_array($data) ? $data : [];
     }
 
-    private function getScheduleForUpdate($preferenceId, $enrollmentDetailsId, $scheduleDate, $teacherId)
+    private function getScheduleForUpdate($preferenceId, $enrollmentDetailsId, $scheduleDate, $teacherId, array $preferenceIds = [])
     {
         $params = [':teacher_id' => $teacherId];
 
-        if ($preferenceId > 0) {
+        if ($preferenceIds) {
+            $identifierSql = 'eps.preference_id IN (' . implode(',', $preferenceIds) . ')';
+        } elseif ($preferenceId > 0) {
             $identifierSql = 'eps.preference_id = :preference_id';
             $params[':preference_id'] = $preferenceId;
         } else {
@@ -72,8 +76,8 @@ class OngoingSession
                     eps.day,
                     eps.start_time,
                     eps.end_time,
-                    eps.status,
-                    ed.preferred_teacher AS teacher_id,
+                    eps.status, ed.validity_start_date, ed.validity_end_date,
+                    COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) AS teacher_id,
                     eh.student_id,
                     eh.branch_id,
                     p.name AS program_name,
@@ -90,16 +94,16 @@ class OngoingSession
                 LEFT JOIN program p ON p.program_id = ed.program_id
                 LEFT JOIN program_type pt ON pt.program_type_id = p.program_type
                 LEFT JOIN subject sub ON sub.subject_id = ed.subject_id
-                LEFT JOIN employee t ON t.employee_id = ed.preferred_teacher
+                LEFT JOIN employee t ON t.employee_id = COALESCE(eps.substitute_teacher_id, ed.preferred_teacher)
                 LEFT JOIN branch b ON b.branch_id = eh.branch_id
                 WHERE {$identifierSql}
-                  AND ed.preferred_teacher = :teacher_id
-                LIMIT 1
+                  AND COALESCE(eps.substitute_teacher_id, ed.preferred_teacher) = :teacher_id
+                " . ($preferenceIds ? "ORDER BY eps.start_time, eps.preference_id" : "LIMIT 1") . "
                 FOR UPDATE";
 
         $stmt = $this->conn->prepare($sql);
         $stmt->execute($params);
-        return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        return $preferenceIds ? selectTeacherMeeting($stmt, $preferenceIds, 'ongoing') : ($stmt->fetch(PDO::FETCH_ASSOC) ?: null);
     }
 
     private function isHouseBased($programType)
@@ -174,37 +178,16 @@ class OngoingSession
 
     private function sendOngoingEmail($schedule, $isHouseBased)
     {
-        $mail = new PHPMailer(true);
-
-        try {
-            $mail->isSMTP();
-            $mail->Host = 'smtp.gmail.com';
-            $mail->SMTPAuth = true;
-            $mail->Username = 'espinosapaul810@gmail.com';
-            $mail->Password = 'yjds vbuo gxas knkm';
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port = 587;
-            $mail->CharSet = 'UTF-8';
-            $mail->SMTPOptions = [
-                'ssl' => [
-                    'verify_peer' => false,
-                    'verify_peer_name' => false,
-                    'allow_self_signed' => true
-                ]
-            ];
-
-            $mail->setFrom('espinosapaul810@gmail.com', 'CDO Tutor Session Notification');
-            $mail->addAddress($schedule['student_email'], $schedule['student_name']);
-            $mail->isHTML(true);
-            $mail->Subject = 'Session Started - ' . date('F j, Y', strtotime($schedule['date']));
-            $mail->Body = $this->buildOngoingEmail($schedule, $isHouseBased);
-            $mail->AltBody = 'Your tutorial session is now ongoing. The teacher has started the session.';
-
-            return $mail->send();
-        } catch (MailException $e) {
-            error_log('Ongoing session email failed: ' . $mail->ErrorInfo);
-            return false;
-        }
+        return (new EmailService($this->conn))->send(
+            $schedule['student_email'],
+            'Session Started - ' . date('F j, Y', strtotime($schedule['date'])),
+            $this->buildOngoingEmail($schedule, $isHouseBased),
+            [
+                'from_name' => 'CDO Tutor Session Notification',
+                'recipient_name' => $schedule['student_name'],
+                'alt_body' => 'Your tutorial session is now ongoing. The teacher has started the session.'
+            ]
+        );
     }
 
     public function run()
@@ -217,6 +200,7 @@ class OngoingSession
         try {
             $teacherId = $this->getTeacherId();
             $data = $this->getRequestData();
+            $preferenceIds = !empty($data['preference_ids']) ? SessionSubstituteService::identifiers($data) : [];
             $preferenceId = (int) ($data['preference_id'] ?? 0);
             $enrollmentDetailsId = (int) ($data['enrollment_details_id'] ?? 0);
             $scheduleDate = trim((string) ($data['schedule_date'] ?? ''));
@@ -239,7 +223,8 @@ class OngoingSession
                 $preferenceId,
                 $enrollmentDetailsId,
                 $scheduleDate,
-                $teacherId
+                $teacherId,
+                $preferenceIds
             );
 
             if (!$schedule) {
@@ -265,17 +250,38 @@ class OngoingSession
                 return;
             }
 
+            assertTutorialSessionStart($schedule);
+            if (findEarlierUnresolvedSession(
+                $this->conn,
+                $schedule['preference_id'],
+                [],
+                $schedule['enrollment_details_id'],
+                $schedule['date'],
+                true
+            )) {
+                $this->conn->rollBack();
+                $this->respond(
+                    'error',
+                    'Complete all earlier sessions before starting this session.',
+                    [],
+                    409
+                );
+                return;
+            }
+
             $update = $this->conn->prepare(
                 "UPDATE enrollment_preferred_schedule
                  SET status = 'ongoing'
-                 WHERE preference_id = :preference_id
+                 WHERE preference_id IN (" . implode(',', $schedule['preference_ids'] ?? [(int)$schedule['preference_id']]) . ")
                    AND status IN ('pending', 'confirmed')"
             );
-            $update->execute([':preference_id' => $schedule['preference_id']]);
+            $update->execute();
 
-            if ($update->rowCount() !== 1) {
+            if ($update->rowCount() < 1) {
                 throw new RuntimeException('The session status could not be updated.');
             }
+
+            syncEnrollmentCompletionStatus($this->conn, (int) $schedule['enrollment_details_id']);
 
             $this->conn->commit();
 

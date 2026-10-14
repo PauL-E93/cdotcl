@@ -1,5 +1,10 @@
 (() => {
     const OCR_URL = window.GCASH_OCR_SCRIPT_URL || 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    const GCASH_REFERENCE_PATTERN = /^(?:\d{10}|\d{12}|\d{13})$/;
+
+    function isValidReference(value) {
+        return GCASH_REFERENCE_PATTERN.test(String(value || ''));
+    }
 
     function ensureLibrary() {
         if (window.Tesseract?.recognize) return Promise.resolve(window.Tesseract);
@@ -30,12 +35,12 @@
         const normalized = String(text || '').replace(/[|]/g, 'I').replace(/\s+/g, ' ');
         const anchored = [...normalized.matchAll(/ref(?:erence)?\s*(?:no|n0|number|#)?\.?\s*[:\-]?\s*([A-Z0-9\s-]{8,30})/gi)]
             .map(match => normalizeReference(match[1]))
-            .filter(value => value.length >= 8 && value.length <= 20 && !/^0+$/.test(value));
-        if (anchored.length) return anchored.sort((a, b) => Math.abs(a.length - 13) - Math.abs(b.length - 13))[0];
+            .filter(value => isValidReference(value) && !/^0+$/.test(value));
+        if (anchored.length) return anchored[0];
         const fallback = [...normalized.matchAll(/\d[\d\s-]{7,22}\d/g)]
             .map(match => normalizeReference(match[0]))
-            .filter(value => value.length >= 8 && value.length <= 20);
-        return fallback.sort((a, b) => Math.abs(a.length - 13) - Math.abs(b.length - 13))[0] || '';
+            .filter(isValidReference);
+        return fallback[0] || '';
     }
 
     function loadImage(file) {
@@ -78,17 +83,13 @@
     function bestReferenceCandidate(values) {
         const candidates = values
             .flatMap(value => String(value || '').match(/\d{8,20}/g) || [])
-            .filter(value => value.length >= 8 && value.length <= 20);
-        return candidates.sort((a, b) => {
-            const aExact = a.length === 13 ? 1 : 0;
-            const bExact = b.length === 13 ? 1 : 0;
-            return bExact - aExact || Math.abs(a.length - 13) - Math.abs(b.length - 13);
-        })[0] || '';
+            .filter(isValidReference);
+        return candidates[0] || '';
     }
 
     async function detectReferencePrecisely(Tesseract, file, onProgress) {
         const image = await loadImage(file);
-        // Current GCash receipts place the 13-digit Ref No. on the left side of
+        // Current GCash receipts place the 10-, 12-, or 13-digit Ref No. on the left side of
         // the row around the middle of the screenshot. Multiple narrow crops
         // cover both the compact and tall receipt layouts without including
         // the transaction date/time on the right.
@@ -117,7 +118,7 @@
                 currentCropIndex = index;
                 const result = await worker.recognize(cropForReference(image, crops[index]));
                 const digits = normalizeReference(result?.data?.text || '');
-                if (digits.length === 13) return digits;
+                if (isValidReference(digits)) return digits;
                 recognized.push(digits);
             }
         } finally {
@@ -176,7 +177,7 @@
         const preciseReference = await detectReferencePrecisely(Tesseract, file, onProgress);
         const fallbackReference = extractReference(text);
         const reference = [preciseReference, fallbackReference]
-            .find(candidate => /^\d{13}$/.test(candidate || '')) || '';
+            .find(isValidReference) || '';
         return { amount, reference, text };
     };
 
@@ -194,6 +195,7 @@
         const run = async () => {
             const file = fileInput.files?.[0];
             preview(file, previewWrapper, previewImage);
+            if (options.isEnabled && !options.isEnabled()) return;
             if (!file) return status(statusElement, 'Upload the GCash receipt screenshot first.', 'warning');
             if (!/^image\//i.test(file.type || '') && !/\.(png|jpe?g|webp|bmp)$/i.test(file.name || '')) {
                 return status(statusElement, 'Choose a valid receipt image.', 'danger');
@@ -208,6 +210,7 @@
                     file,
                     message => status(statusElement, message, 'primary')
                 );
+                if (options.isEnabled && !options.isEnabled()) return;
                 if (amount !== null) amountInput.value = amount.toFixed(2);
                 if (reference) refInput.value = reference;
                 if (amount !== null && reference) status(statusElement, `Detected ${amount.toFixed(2)} and reference ${reference}. Please verify both.`, 'success');

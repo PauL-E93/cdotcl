@@ -1,50 +1,56 @@
 // index.js
-import { createHeader } from "./utilities/header.js";
-import { createSidebar } from "./utilities/navegation.js";
-import { initRbacPermissions } from "./utilities/rbac_navigation.js";
-import { handleLogin, handleEmployeeSignup, handleSignup, initLoginPage, initializeAuthGuard } from "./modules/login.js?v=20260809-captcha-expiry";
+import './utilities/csrf.js';
+import { initProgramSections, showProgramSection } from './modules/program_sections.js?v=20261014-search-only';
+import { initSessionAutomationTimer } from './utilities/session_automation_timer.js?v=20261012-device-clock';
+import { initSessionAutomation } from './modules/session_automation.js?v=20261012-12-hour-time';
+import { createHeader } from "./utilities/header.js?v=20261006-upload-images-r2";
+import { createSidebar } from "./utilities/navegation.js?v=20261014-contract-menu";
+import { initRbacPermissions } from "./utilities/rbac_navigation.js?v=20261001-payment-view-only";
+import { handleLogin, handleEmployeeSignup, handleSignup, initLoginPage, initializeAuthGuard } from "./modules/login.js?v=20261014-agreements";
 import "./modules/receipt.js";
 import "./modules/receipt_mobile.js";
 import "./modules/orf.js";
-import "./modules/billing.js?v=20260828-assessment-sync";
+import "./modules/billing.js?v=20261014-penalty-adjustments";
 import "./modules/payment_assessment.js?v=20260828-assessment-rbac";
-import "./utilities/gcash_ocr.js?v=20260825-ref-row-2";
-import { initProgramPage, setupAddProgramModal } from "./modules/program.js?v=20260814-program-filters";
+import "./utilities/gcash_ocr.js?v=20261001-payment-methods";
+import { initProgramPage, setupAddProgramModal } from "./modules/program.js?v=20261014-penalty-adjustments";
 import { setupAddProgramTypeModal, loadProgramTypes } from "./modules/program_type.js";
 import { initSubjectPage, setupAddSubjectModal } from "./modules/subject.js";
 import { initGradeLevelPage, setupAddGradeLevelModal } from "./modules/grade_level.js?v=20260823-grade-level-paging";
 import { loadDiscounts, setupAddDiscountModal } from "./modules/discount.js";
 import { loadRegistrationAmounts, setupAddRegistrationAmountModal } from "./modules/registration_amount.js";
 import { initServicesPage, setupAddServiceModal } from "./modules/services.js";
-import { initPaymentMethodsPage, setupAddPaymentMethodModal } from "./modules/payment_method.js?v=20260812-payment-methods";
+import { initPaymentMethodsPage, setupAddPaymentMethodModal } from "./modules/payment_method.js?v=20261006-upload-images-r2";
 import { loadSchoolYears, setupAddSchoolYearModal, setupEditSchoolYearStatusModal } from "./modules/school_year.js?v=20260814-schedule-details";
 import { initCardManagementPage, initCardManagementEditorPage } from "./modules/card_mangpre.js?v=20260814-school-year-curriculum";
-import "./modules/view_enrollment_pre_play.js?v=20260828-assessment-rbac";
-import "./modules/view_enrollment.js?v=20260828-assessment-rbac";
-import "./modules/edit_enrollment.js?v=20260823-grade-level-crud";
-import "./modules/employee.js";
-import "./modules/employee_rbac.js";
-import "./modules/role_base.js?v=20260828-payment-assessment-rbac";
+import "./modules/view_enrollment_pre_play.js?v=20261014-agreements";
+import "./modules/view_enrollment.js?v=20261014-program-agreements";
+import "./modules/edit_enrollment.js?v=20261009-edit-inline-validation";
+import "./modules/employee.js?v=20261013-theme-plus";
+import "./modules/employee_rbac.js?v=20261013-theme-plus";
+import "./modules/role_base.js?v=20261014-penalty-permissions";
 import { openAddClassModal } from "./modules/class_add.js";
-import { initSectionView } from "./modules/section_view.js?v=20260814-profile-table-fields";
+import { initSectionView } from "./modules/section_view.js?v=20261012-domain-select-all";
 import { initSectionAttendancePage } from "./modules/section_attendance.js";
-import { initSectionReportCardsPage } from "./modules/preschool_report_card.js?v=20260814-school-year-curriculum";
+import { initSectionReportCardsPage } from "./modules/preschool_report_card.js?v=20261012-domain-select-all";
 import { openAddSectionModal } from "./modules/section.js";
 import { initProductPage, openAddProductModal, openAddCategoryModal } from "./modules/product.js?v=20260814-product-search";
 import { initProductReleasePage } from "./modules/product_release.js?v=20260825-product-modal-focus";
-import { resetEnrollmentState, openEnrollmentModal, openApplicationDownpaymentModal } from "./modules/addenrollment.js?v=20260823-admin-field-validation";
-import { initNewStudentApplications } from "./modules/enrollment_applications.js?v=20260828-program-teacher-filter";
-import { initLandingPage } from "./modules/landingpage.js?v=20260823-public-applications";
-import { initLandingPageManager } from "./modules/landing_page_manager.js";
-import { SessionManager } from './studentmodule/session.js?v=20260823-meeting-numbers';
-import { canUseProgramPermission, initProgramPermissions } from "./modules/program_rbac.js";
+import { resetEnrollmentState, openEnrollmentModal, openApplicationDownpaymentModal } from "./modules/addenrollment.js?v=20261011-disabled-hours";
+import { initNewStudentApplications } from "./modules/enrollment_applications.js?v=20261014-agreements";
+import { initLandingPage } from "./modules/landingpage.js?v=20261004-subject-names";
+import { initLandingPageManager } from "./modules/landing_page_manager.js?v=20260903-all-roles";
+import { initFaqLanding, initFaqManager } from "./modules/faq.js?v=20261001-faq-archive";
+import { SessionManager } from './studentmodule/session.js?v=20261012-correct-no-show-access';
+import { canUseProgramPermission, initProgramPermissions } from "./modules/program_rbac.js?v=20261001-payment-view-only";
 import { applySchoolCalendarPagePermissions, canUseSchoolCalendarPermission, initSchoolCalendarPermissions } from "./modules/school_calendar_rbac.js";
 import { applyPaymentPagePermissions, initPaymentPermissions } from "./modules/payment_rbac.js";
 import { applyClassPagePermissions, canUseClassPermission, initClassPermissions } from "./modules/class_rbac.js";
 import { applySessionPagePermissions, initSessionPermissions } from "./modules/session_rbac.js";
 import { applyProductPagePermissions, canUseProductPermission, initProductPermissions } from "./modules/product_rbac.js";
+import { initScheduleAddButton } from "./modules/schedule_add.js?v=20261013-theme-plus";
 import { applySchedulePagePermissions, initSchedulePermissions } from "./modules/schedule_rbac.js";
-import { initStudentManagementPage } from "./modules/student_management.js?v=20260828-mobile";
+import { initStudentManagementPage } from "./modules/student_management.js?v=20261006-upload-images-r2";
 
 
 
@@ -58,12 +64,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     const canInitializePage = await initializeAuthGuard();
     if (!canInitializePage) return;
 
+    initSessionAutomationTimer();
+
     initLoginPage();
     await initRbacPermissions();
     const hasDynamicHeader = Boolean(document.getElementById('dynamic-header'));
     const hasApplicationShell = hasDynamicHeader || Boolean(document.querySelector('.main-content'));
     if (hasDynamicHeader) createHeader();
-    if (hasApplicationShell) createSidebar();
+    if (hasApplicationShell) await createSidebar();
 
     const pathname = window.location.pathname;
 
@@ -72,9 +80,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     if (pathname.includes('/student/')) {
-        import("./studentmodule/billingPlayPre.js?v=20260825-assessment-summary");
+        import("./studentmodule/billingPlayPre.js?v=20261014-penalty-adjustments");
     } else {
-        import("./modules/billingPlayPre.js?v=20260825-assessment-summary");
+        import("./modules/billingPlayPre.js?v=20261014-penalty-adjustments");
     }
 
     if (pathname.includes('schedule.html')) {
@@ -83,6 +91,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (!access.allowed) {
             return;
         }
+        initScheduleAddButton();
     }
 
     if (pathname.includes('payment.html')) {
@@ -113,6 +122,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         initLandingPage();
     }
 
+    if (document.querySelector('[data-faq-list]')) {
+        initFaqLanding();
+    }
+
     if (pathname.endsWith('/enrollement.html') || pathname.endsWith('/enrollement_pre_play.html')) {
         if (!pathname.includes('/student/')) {
             initNewStudentApplications();
@@ -122,7 +135,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             enrollBtn.addEventListener('click', () => {
                 if (pathname.includes('/student/enrollement_pre_play.html')) {
                     window.currentEnrollmentCategory = 'preschool';
-                    import("./studentmodule/pre_play_enrollment.js").then((module) => {
+                    import("./studentmodule/pre_play_enrollment.js?v=20261009-enrollment-payment-approval").then((module) => {
                         module.openStudentPrePlayEnrollment();
                     });
                     return;
@@ -229,7 +242,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     else if (pathname.includes('program.html')) {
         await initProgramPermissions(true);
+        if (!pathname.includes('/student/')) initProgramSections();
         await initProgramPage();
+        if (!pathname.includes('/student/')) showProgramSection();
+        if (canUseProgramPermission('view') && canUseProgramPermission('view_session_automation')) await initSessionAutomation();
 
         loadProgramTypes();
         initGradeLevelPage();
@@ -239,7 +255,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         initServicesPage();
         initPaymentMethodsPage();
         initCardManagementPage();
-        if (pathname.includes('/owner/') && canUseProgramPermission('view_landing')) initLandingPageManager();
+        if (!pathname.includes('/student/') && canUseProgramPermission('view_landing')) {
+            initLandingPageManager();
+            initFaqManager();
+        }
 
         if (canUseProgramPermission('create')) {
             document.getElementById('btnAddProgram')?.addEventListener('click', () => setupAddProgramModal());
@@ -295,6 +314,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
+    else if (pathname.includes('/owner/faq.html')) {
+        await initProgramPermissions(true);
+        initFaqManager();
+    }
+
     else if (pathname.includes('/owner/class.html') ||
              pathname.includes('/auditor/class.html') ||
              pathname.includes('/branch_admin/class.html') ||
@@ -344,14 +368,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     else if (pathname.includes('/student/schedule.html')) {
-        import("./studentmodule/CalendarModule.js").then((module) => {
+        import("./studentmodule/CalendarModule.js?v=20261004-done-email-alert").then((module) => {
             const CalendarModule = module.default || module.CalendarModule;
             new CalendarModule('calendar-module-root');
         });
     }
 
     else if (pathname.includes('/student/profile.html')) {
-        import("./studentmodule/profile.js").then((module) => {
+        import("./studentmodule/profile.js?v=20261006-upload-images-r2").then((module) => {
             module.initStudentProfile();
         });
     }
@@ -362,12 +386,12 @@ document.addEventListener("DOMContentLoaded", async () => {
              pathname.includes('/branch_admin/profile.html') ||
              pathname.includes('/secretary/profile.html') ||
              pathname.includes('/teacher/profile.html')) {
-        import("./modules/employee_profile.js").then((module) => {
+        import("./modules/employee_profile.js?v=20261006-upload-images-r2").then((module) => {
             module.initEmployeeProfile();
         });
     }
 
-    if ((pathname.includes("enrollement.html") || pathname.includes("program.html") || pathname.includes("school_calendar.html") || pathname.includes("payment.html") || pathname.includes("card_management.html") || pathname.includes("section_report_cards.html") || pathname.includes("attendance.html"))
+    if ((pathname.includes("enrollement.html") || pathname.includes("enrollment_request.html") || pathname.includes("program.html") || pathname.includes("school_calendar.html") || pathname.includes("payment.html") || pathname.includes("card_management.html") || pathname.includes("section_report_cards.html") || pathname.includes("attendance.html"))
          && !JSON.parse(localStorage.getItem("user"))) {
         window.location.href = "../../login.html";
     }

@@ -113,7 +113,7 @@
 
 .student-filter-card {
     display: grid;
-    grid-template-columns: minmax(260px, 1.4fr) repeat(3, minmax(150px, .7fr)) auto;
+    grid-template-columns: minmax(240px, 1.4fr) repeat(4, minmax(135px, .7fr)) auto;
     gap: 12px;
     align-items: end;
     padding: 18px;

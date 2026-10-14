@@ -1,5 +1,5 @@
 // js/modules/program.js
-import { applyProgramPagePermissions, canUseProgramPermission, guardProgramPermission, initProgramPermissions } from './program_rbac.js';
+import { applyProgramPagePermissions, canUseProgramPermission, guardProgramPermission, initProgramPermissions } from './program_rbac.js?v=20261001-payment-view-only';
 
 let cachedProgramTypes = [];
 let cachedDiscounts = [];
@@ -42,25 +42,12 @@ export function refreshProgramTypes() {
     fetchProgramTypes();
 }
 
-export function loadProgramStats() {
-    if (!canUseProgramPermission('view_programs')) return;
-    axios.get('../../api/admin/program.php', { params: { operation: 'getPrograms' } })
-    .then(res => {
-        if (res.data.status === 'success') {
-            const programs = res.data.data;
-            document.getElementById('total_programs').innerText = programs.length;
-            document.getElementById('active_programs').innerText = programs.filter(p => p.status === 'active').length;
-            document.getElementById('inactive_programs').innerText = programs.filter(p => p.status === 'inactive').length;
-        }
-    });
-}
-
 export function loadPrograms(searchQuery = null) {
     if (!canUseProgramPermission('view_programs')) return;
     const tableBody = document.getElementById('program_table_body');
     if (!tableBody) return;
     if (searchQuery !== null) programFilters.search = String(searchQuery).trim().toLowerCase();
-    tableBody.innerHTML = '<tr><td colspan="11" class="text-center">Loading...</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="12" class="text-center">Loading...</td></tr>';
 
     axios.get('../../api/admin/program.php', { params: { operation: 'getPrograms' } })
     .then(res => {
@@ -71,7 +58,7 @@ export function loadPrograms(searchQuery = null) {
 
             tableBody.innerHTML = '';
             if (!programs.length) {
-                tableBody.innerHTML = '<tr><td colspan="11" class="text-center text-muted">No programs match the selected filters.</td></tr>';
+                tableBody.innerHTML = '<tr><td colspan="12" class="text-center text-muted">No programs match the selected filters.</td></tr>';
                 return;
             }
             programs.forEach(p => {
@@ -85,6 +72,7 @@ export function loadPrograms(searchQuery = null) {
                         <td><small>${p.discription || 'N/A'}</small></td>
                         <td>₱${parseFloat(p.tuition).toLocaleString()}</td>
                         <td>${p.total_units} <small class="text-muted text-uppercase">${p.unit_type}</small></td>
+                        <td>${p.unit_type === 'session' ? (p.validity_days ? `${Number(p.validity_days)} days` : 'Not set') : 'N/A'}</td>
                         <td><span class="badge bg-info text-dark">${p.type_name || 'No Type'}</span></td>
                         <td>₱${parseFloat(p.registration_fee || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td>
@@ -209,6 +197,7 @@ function getFormHTML(data = {}) {
                     <option value="year" ${data.unit_type === 'year' ? 'selected' : ''}>Year</option>
                 </select>
             </div>
+            <div class="col-md-6 mb-3"><label class="form-label" for="prog_validity_days">Tutorial Validity (Days)</label><input type="number" id="prog_validity_days" class="form-control" min="1" max="3650" step="1" value="${data.validity_days ?? ''}" placeholder="e.g., 30"><div class="form-text">Required for session packages. Starts on the agreed first session date, counted as day 1.</div></div>
             <div class="col-md-6 mb-3"><label class="form-label">Type <span class="text-danger" aria-hidden="true">*</span></label><select id="prog_type" class="form-select" required>${typeOptions}</select></div>
             <div class="col-md-6 mb-3"><label class="form-label">Status <span class="text-danger" aria-hidden="true">*</span></label>
                 <select id="prog_status" class="form-select" required>
@@ -220,6 +209,7 @@ function getFormHTML(data = {}) {
             <div class="col-md-6 mb-3">
                 <label class="form-label">Penalty Amount Per Day</label>
                 <input type="number" id="prog_penalty" class="form-control" value="${data.penalty_amount ?? data.penalty ?? 0}" step="0.01" min="0" placeholder="e.g., 100.00">
+                <div class="form-text">Applies only to tuition installments. Miscellaneous and other fees have no penalty. For a waiver or reduction agreed at the center, open the student's billing statement in Payment and select Adjust Penalty.</div>
             </div>
             <div class="col-md-6 mb-3">
                 <label class="form-label">Apply Penalty After (Days)</label>
@@ -261,6 +251,7 @@ function submitProgramData(operation, id = null) {
         tuition: document.getElementById('prog_tuition').value,
         total_units: document.getElementById('prog_units').value,
         unit_type: document.getElementById('prog_unit_type').value,
+        validity_days: document.getElementById('prog_validity_days').value || null,
         program_type: document.getElementById('prog_type').value,
         status: document.getElementById('prog_status').value,
         registration_fee: document.getElementById('prog_registration_fee').value || 0.00,
@@ -282,13 +273,36 @@ function submitProgramData(operation, id = null) {
         return;
     }
 
+    if (payload.unit_type === 'session' && (!/^[0-9]+$/.test(payload.validity_days || '') || Number(payload.validity_days) < 1 || Number(payload.validity_days) > 3650)) {
+        Swal.fire('Validity required', 'Enter 1?3650 whole days for this session package.', 'warning'); return;
+    }
+
     axios.post('../../api/admin/program.php', { operation, json: JSON.stringify(payload) })
     .then(res => {
         if (res.data.status === 'success') {
             bootstrap.Modal.getInstance(document.getElementById('addProgramModal')).hide();
             loadPrograms();
-            loadProgramStats();
+            const isUpdate = operation === 'updateProgram';
+            Swal.fire({
+                icon: 'success',
+                title: isUpdate ? 'Program Updated' : 'Program Saved',
+                text: res.data.message || (isUpdate
+                    ? 'The program was updated successfully.'
+                    : 'The program was saved successfully.'),
+                timer: 2000,
+                showConfirmButton: false
+            });
+        } else {
+            Swal.fire('Unable to Save', res.data.message || 'The program could not be saved.', 'error');
         }
+    })
+    .catch(err => {
+        console.error('Error saving program:', err);
+        Swal.fire(
+            'Unable to Save',
+            err.response?.data?.message || 'A network or server error occurred while saving the program.',
+            'error'
+        );
     });
 }
 
@@ -307,7 +321,6 @@ export async function initProgramPage() {
     if (canUseProgramPermission('view_programs')) {
         setupProgramFilterControls();
         loadPrograms();
-        loadProgramStats();
     }
 
     const searchInput = document.getElementById('search-input');

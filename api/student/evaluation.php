@@ -1,6 +1,8 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 
 require_once __DIR__ . '/../school_year_context.php';
 

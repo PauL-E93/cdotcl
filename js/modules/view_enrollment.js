@@ -1,5 +1,8 @@
 import { applyEnrollmentPagePermissions, canUseEnrollmentPermission, guardEnrollmentPermission, initEnrollmentPermissions, shouldApplyEnrollmentRbac } from './enrollment_rbac.js';
 import { applyPaymentPagePermissions, canUsePaymentPermission, guardPaymentPermission, initPaymentPermissions, isPaymentModulePage, shouldApplyPaymentRbac } from './payment_rbac.js';
+import { canUseOnlineApplicationPermission } from './enrollment_applications.js?v=20261006-upload-images-r2';
+import { renderTutorialValidity } from './tutorial_validity.js?v=20261013';
+import { appendAgreementLink } from './agreements.js?v=20261014-program-agreements';
 import { startAutoRefresh } from '../utilities/auto_refresh.js';
 
 // js/modules/view_enrollment.js
@@ -15,6 +18,7 @@ const enrollmentFilters = {
     status: '',
     subject: '',
     branch: '',
+    schoolYear: '',
     enrollment_date: '',
     summary: 'total'
 };
@@ -26,66 +30,71 @@ function formatStudentName(details = {}) {
         .join(' ');
 }
 
-function formatScheduleDisplay(value) {
-    if (!value) return 'None';
-
-    const text = String(value).trim();
-    if (!text || text.toLowerCase() === 'none') return 'None';
+function parsePreferredSchedule(value) {
+    const text = String(value || '').trim();
+    if (!text || text.toLowerCase() === 'none') return [];
 
     const formatTimeValue = timeValue => {
         const raw = String(timeValue || '').trim();
         if (!raw) return '';
 
-        const match = raw.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
+        const match = raw.match(/^(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*(am|pm)?$/i);
         if (!match) return raw;
 
         let hour = Number(match[1]);
         const minute = match[2] || '00';
         const periodInput = match[3]?.toUpperCase();
+        const period = periodInput || (hour >= 12 ? 'PM' : 'AM');
 
-        let period = periodInput || (hour >= 12 ? 'PM' : 'AM');
-        if (!periodInput && hour >= 12) {
-            period = 'PM';
-        }
+        if (periodInput === 'AM' && hour === 12) hour = 0;
+        if (periodInput === 'PM' && hour < 12) hour += 12;
 
-        if (periodInput === 'AM' && hour === 12) {
-            hour = 0;
-        } else if (periodInput === 'PM' && hour < 12) {
-            hour += 12;
-        }
-
-        const normalizedHour = hour % 12 || 12;
         const displayMinute = minute === '00' ? '' : `:${minute}`;
-        return `${normalizedHour}${displayMinute}${period.toLowerCase()}`;
+        return `${hour % 12 || 12}${displayMinute}${period.toLowerCase()}`;
     };
 
-    const entries = text
-        .split(',')
-        .map(entry => entry.trim())
-        .filter(Boolean);
+    return text.split(',').map(entry => entry.trim()).filter(Boolean).map(entry => {
+        const dayMatch = entry.match(/^([A-Za-z]+)\s*(.*)$/);
+        if (!dayMatch) return { day: entry, time: '' };
 
-    const formattedEntries = entries.map(entry => {
-        const dayMatch = entry.match(/^([A-Za-z]+)\s+(.+)$/);
-        if (!dayMatch) return entry;
-
-        const day = dayMatch[1].charAt(0).toUpperCase() + dayMatch[1].slice(1);
-        const timePart = dayMatch[2].trim();
-        const rangeParts = timePart.split(/\s*(?:-|to)\s*/i).map(part => part.trim()).filter(Boolean);
-
-        if (rangeParts.length === 0) {
-            return `${day}`;
-        }
-
-        const [startTime, endTime] = rangeParts;
-        const formattedStart = formatTimeValue(startTime);
-        const formattedEnd = endTime ? formatTimeValue(endTime) : '';
-
-        return formattedEnd
-            ? `${day} ${formattedStart} - ${formattedEnd}`
-            : `${day} ${formattedStart}`;
+        const day = dayMatch[1].charAt(0).toUpperCase() + dayMatch[1].slice(1).toLowerCase();
+        const range = dayMatch[2].trim().split(/\s*(?:-|to)\s*/i).filter(Boolean);
+        const start = formatTimeValue(range[0]);
+        const end = formatTimeValue(range[1]);
+        return { day, time: end ? `${start} – ${end}` : start };
     });
+}
 
-    return formattedEntries.join('<br>');
+function renderPreferredSchedule(container, value) {
+    if (!container) return;
+    container.replaceChildren();
+
+    const entries = parsePreferredSchedule(value);
+    if (!entries.length) {
+        const empty = document.createElement('span');
+        empty.className = 'preplay-schedule-empty';
+        empty.textContent = 'No preferred schedule provided.';
+        container.appendChild(empty);
+        return;
+    }
+
+    entries.forEach(entry => {
+        const item = document.createElement('div');
+        item.className = 'preplay-schedule-item';
+
+        const icon = document.createElement('i');
+        icon.className = 'bi bi-calendar3';
+        icon.setAttribute('aria-hidden', 'true');
+
+        const day = document.createElement('strong');
+        day.textContent = entry.day;
+
+        const time = document.createElement('span');
+        time.textContent = entry.time || 'Time not specified';
+
+        item.append(icon, day, time);
+        container.appendChild(item);
+    });
 }
 
 function prepareEnrollmentModalLayout() {
@@ -142,23 +151,38 @@ function prepareEnrollmentModalLayout() {
                     <label class="small text-muted">Status</label>
                     <div class="preplay-status-pill" id="view_status">...</div>
                 </div>
-                <div class="col-md-4 preplay-view-field">
-                    <label class="small text-muted">Subject &amp; Grade</label>
-                    <div class="fw-bold" id="view_subject_grade">...</div>
-                </div>
-                <div class="col-md-4 preplay-view-field">
-                    <label class="small text-muted">Preferred Teacher</label>
-                    <div class="fw-bold" id="view_teacher_ro">...</div>
-                </div>
-                <div class="col-md-4 preplay-view-field">
-                    <label class="small text-muted">Schedule</label>
-                    <div class="fw-bold" id="view_schedule_ro">...</div>
-                </div>
                 <div class="col-12 preplay-view-field">
                     <label class="small text-muted">Goal</label>
                     <div class="fst-italic" id="view_goal">...</div>
                 </div>
             `;
+        }
+
+        let classCard = modal.querySelector('.tutorial-class-schedule-card');
+        if (!classCard) {
+            classCard = document.createElement('section');
+            classCard.className = 'alert alert-light border preplay-view-card preplay-class-card tutorial-class-schedule-card';
+            classCard.innerHTML = `
+                <h6 class="text-primary fw-bold mb-3"><span class="preplay-section-icon" aria-hidden="true"><i class="bi bi-mortarboard"></i></span>Class &amp; Schedule Details</h6>
+                <div class="row g-3">
+                    <div class="col-md-4 preplay-view-field">
+                        <label class="small text-muted">Subject</label>
+                        <div class="fw-bold" id="view_subject">...</div>
+                    </div>
+                    <div class="col-md-4 preplay-view-field">
+                        <label class="small text-muted">Grade Level</label>
+                        <div class="fw-bold" id="view_grade_level">...</div>
+                    </div>
+                    <div class="col-md-4 preplay-view-field">
+                        <label class="small text-muted">Assigned Tutor</label>
+                        <div class="fw-bold" id="view_teacher_ro">...</div>
+                    </div>
+                    <div class="col-12 preplay-view-field preplay-schedule-field">
+                        <label class="small text-muted">Preferred Schedule</label>
+                        <div class="preplay-schedule-list" id="view_schedule_ro"></div>
+                    </div>
+                </div>`;
+            studentCard.insertAdjacentElement('afterend', classCard);
         }
     }
 
@@ -166,13 +190,7 @@ function prepareEnrollmentModalLayout() {
 }
 
 function resolvePaymentProofUrl(proofPath) {
-    if (!proofPath) return '';
-    if (/^(?:https?:)?\/\//.test(proofPath)) {
-        return proofPath;
-    }
-
-    const cleaned = String(proofPath).replace(/^\/+/, '');
-    return `../../${cleaned}`;
+    return window.resolveUploadUrl(proofPath);
 }
 
 // Function to determine if program is preschool and open appropriate billing modal
@@ -248,7 +266,9 @@ function formatEnrolledBy(item) {
 
 function shouldIncludeTutorialApplications() {
     const pathname = window.location.pathname.toLowerCase();
-    return pathname.includes('/owner/enrollement.html') || pathname.includes('/owner/payment.html');
+    const isStaffApplicationPage = !pathname.includes('/student/')
+        && (pathname.includes('/enrollement.html') || pathname.includes('/payment.html'));
+    return isStaffApplicationPage && canUseOnlineApplicationPermission('view_online_applications');
 }
 
 function getTutorialListUrl(summaryFilter = 'total') {
@@ -273,6 +293,9 @@ function getTutorialListUrl(summaryFilter = 'total') {
     }
     if (enrollmentFilters.branch) {
         params.append('branch_id', enrollmentFilters.branch);
+    }
+    if (enrollmentFilters.schoolYear) {
+        params.append('school_year_id', enrollmentFilters.schoolYear);
     }
     if (enrollmentFilters.enrollment_date) {
         params.append('enrollment_date', enrollmentFilters.enrollment_date);
@@ -342,6 +365,7 @@ function setupEnrollmentFilterControls() {
     const statusSelect = document.getElementById('enrollment-status-filter');
     const subjectSelect = document.getElementById('enrollment-subject-filter');
     const branchSelect = document.getElementById('enrollment-branch-filter');
+    const schoolYearSelect = document.getElementById('enrollment-school-year-filter');
     const dateInput = document.getElementById('enrollment-date-filter');
     const applyButton = document.getElementById('enrollment-apply-filters');
 
@@ -393,6 +417,15 @@ function setupEnrollmentFilterControls() {
         });
     }
 
+    if (schoolYearSelect) {
+        schoolYearSelect.addEventListener('change', () => {
+            enrollmentFilters.schoolYear = schoolYearSelect.value;
+            paginationManager.apiUrl = getTutorialListUrl(enrollmentFilters.summary);
+            paginationManager.loadPage(1);
+            loadEnrollmentStats();
+        });
+    }
+
     if (dateInput) {
         dateInput.addEventListener('change', () => {
             enrollmentFilters.enrollment_date = dateInput.value;
@@ -407,7 +440,9 @@ function setupEnrollmentFilterControls() {
             enrollmentFilters.status = statusSelect?.value || '';
             enrollmentFilters.subject = subjectSelect?.value || '';
             enrollmentFilters.branch = branchSelect?.value || '';
+            enrollmentFilters.schoolYear = schoolYearSelect?.value || '';
             enrollmentFilters.enrollment_date = dateInput?.value || '';
+            loadEnrollmentStats();
             paginationManager.apiUrl = getTutorialListUrl(enrollmentFilters.summary);
             paginationManager.loadPage(1);
         });
@@ -415,12 +450,12 @@ function setupEnrollmentFilterControls() {
 }
 
 const tutorialApplicationStatusOptions = [
-    ['application_pending_review', 'Online Application — Pending Review'],
-    ['application_approved_for_payment', 'Online Application — Awaiting Center Payment'],
-    ['application_ready_for_scheduling', 'Online Application — Payment Received / Ready for Scheduling'],
-    ['application_enrolled', 'Online Application — Enrolled'],
-    ['application_rejected', 'Online Application — Rejected'],
-    ['application_cancelled', 'Online Application — Cancelled']
+    ['application_pending_review', 'Pending Review'],
+    ['application_approved_for_payment', 'Awaiting Center Payment'],
+    ['application_ready_for_scheduling', 'Payment Received / Ready for Scheduling'],
+    ['application_enrolled', 'Enrolled'],
+    ['application_rejected', 'Rejected'],
+    ['application_cancelled', 'Cancelled']
 ];
 
 function populateEnrollmentStatusOptions(statusSelect, statuses = [], includeApplicationStatuses = false) {
@@ -441,7 +476,7 @@ function populateEnrollmentStatusOptions(statusSelect, statuses = [], includeApp
 
     if (includeApplicationStatuses) {
         const applicationGroup = document.createElement('optgroup');
-        applicationGroup.label = 'Online Application Status';
+        applicationGroup.label = 'Online Application';
         tutorialApplicationStatusOptions.forEach(([value, label]) => {
             const option = document.createElement('option');
             option.value = value;
@@ -469,6 +504,12 @@ function loadEnrollmentFilterLookups() {
             const statusSelect = document.getElementById('enrollment-status-filter');
             const subjectSelect = document.getElementById('enrollment-subject-filter');
             const branchSelect = document.getElementById('enrollment-branch-filter');
+            const schoolYearSelect = document.getElementById('enrollment-school-year-filter');
+
+            if (schoolYearSelect && Array.isArray(data.filter_school_years)) {
+                setSelectOptions(schoolYearSelect, data.filter_school_years, 'All School Years', 'school_year_id', item => item.school_year);
+                schoolYearSelect.value = enrollmentFilters.schoolYear;
+            }
 
             if (Array.isArray(data.statuses)) {
                 populateEnrollmentStatusOptions(
@@ -567,7 +608,9 @@ async function getAllEnrollmentExportData() {
         item.teacher_name || 'Not assigned',
         item.enrollment_date || 'N/A',
         paymentPage
-            ? (String(item.status || '').toLowerCase() === 'incomplete' ? 'Incomplete' : (item.payment_status || 'Unpaid'))
+            ? (String(item.application_status || '').toLowerCase() === 'ready_for_scheduling'
+                ? 'Ready for Scheduling'
+                : (String(item.status || '').toLowerCase() === 'incomplete' ? 'Incomplete' : (item.payment_status || 'Unpaid')))
             : (item.status || 'N/A').toUpperCase()
     ]);
 
@@ -703,6 +746,7 @@ function renderEnrollments(enrollments) {
             cancelled: 'CANCELLED'
         };
         const applicationStatus = String(item.application_status || '').toLowerCase();
+        const isReadyForScheduling = Boolean(item.application_id) && applicationStatus === 'ready_for_scheduling';
         const isPendingOnlineApplication = Boolean(item.application_id && applicationStatusLabels[applicationStatus]);
         const isOnlineApplicationPaymentTask = isPaymentPage
             && Boolean(item.application_id)
@@ -710,7 +754,9 @@ function renderEnrollments(enrollments) {
             && ['pending_review', 'approved_for_payment'].includes(applicationStatus);
         const displayStatus = isOnlineApplicationPaymentTask
             ? applicationStatusLabels[applicationStatus]
-            : (isPaymentPage ? paymentStatus : (applicationStatusLabels[applicationStatus] || (item.status || '').toUpperCase()));
+            : (isPaymentPage
+                ? (isReadyForScheduling ? applicationStatusLabels[applicationStatus] : paymentStatus)
+                : (applicationStatusLabels[applicationStatus] || (item.status || '').toUpperCase()));
 
         let statusBadge;
         if (isOnlineApplicationPaymentTask) {
@@ -723,7 +769,7 @@ function renderEnrollments(enrollments) {
                 'Unpaid': 'danger',
                 'Incomplete': 'warning text-dark'
             };
-            statusBadge = paymentStatusClasses[paymentStatus] || 'secondary';
+            statusBadge = isReadyForScheduling ? 'primary' : (paymentStatusClasses[paymentStatus] || 'secondary');
         } else {
             if (isPendingOnlineApplication) {
                 statusBadge = {
@@ -732,19 +778,18 @@ function renderEnrollments(enrollments) {
                     cancelled: 'secondary'
                 }[applicationStatus] || 'warning text-dark';
             } else switch (enrollmentLifecycleStatus) {
-                case 'active':
                 case 'enrolled':
                     statusBadge = 'success';
+                    break;
+                case 'completed':
+                    statusBadge = 'theme-pink';
+                    break;
+                case 'approved':
+                    statusBadge = 'primary';
                     break;
                 case 'pending':
                 case 'incomplete':
                     statusBadge = 'warning text-dark';
-                    break;
-                case 'cancelled':
-                    statusBadge = 'danger';
-                    break;
-                case 'session done':
-                    statusBadge = 'info';
                     break;
                 default:
                     statusBadge = 'secondary';
@@ -758,7 +803,7 @@ function renderEnrollments(enrollments) {
             window.location.pathname.endsWith(`/${role}/enrollement.html`)
         );
         const canOpenEnrollmentSession = isSupportedTutorialEnrollmentPage
-            && ['pending', 'active', 'enrolled', 'completed', 'session done'].includes(status);
+            && ['pending', 'approved', 'enrolled', 'completed'].includes(status);
         const openSessionAction = canOpenEnrollmentSession
             ? `<li><a class="dropdown-item" href="./session.html?enrollment_details_id=${item.enrollment_details_id}">Session</a></li>`
             : '';
@@ -775,9 +820,14 @@ function renderEnrollments(enrollments) {
 
         if (isOnlineApplicationPaymentTask) {
             const applicationPaymentMethod = String(item.application_payment_method || '').toLowerCase();
+            const canReviewApplication = canUseOnlineApplicationPermission('approve_online_applications')
+                || canUseOnlineApplicationPermission('reject_online_applications');
+            const canReceiveApplicationPayment = canUseOnlineApplicationPermission('receive_online_application_payment');
             const paymentTaskLabel = applicationStatus === 'approved_for_payment'
-                ? 'Pay Enrollment'
-                : (applicationPaymentMethod.includes('gcash') ? 'Check GCash Payment' : 'Review & Pay Enrollment');
+                ? (canReceiveApplicationPayment ? 'Pay Enrollment' : 'View Application')
+                : (applicationPaymentMethod.includes('gcash') && canReviewApplication && canReceiveApplicationPayment
+                    ? 'Check GCash Payment'
+                    : (canReviewApplication ? 'Review Application' : 'View Application'));
             actionButtons = `
                 <div class="dropdown" onclick="event.stopPropagation();">
                     <button class="btn btn-sm btn-outline-secondary border-0" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Online application payment actions">
@@ -794,9 +844,18 @@ function renderEnrollments(enrollments) {
                 ? `openBillingPlayPreModal(${item.enrollment_details_id})`
                 : `openBillingModalByProgram(${item.enrollment_details_id}, '${safeProgramName}')`;
             const paymentActions = [
-                `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); ${payCall}"><i class="bi bi-credit-card me-2"></i>${canCreatePayment ? 'Pay' : 'View Billing'}</a></li>`,
+                `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); ${payCall}"><i class="bi bi-credit-card me-2"></i>${canCreatePayment && !isReadyForScheduling ? 'Pay' : 'View Billing'}</a></li>`,
                 `<li><a class="dropdown-item" href="#" onclick="event.preventDefault(); openPaymentHistoryModal(${item.enrollment_details_id}, ${!canApprovePayment})"><i class="bi bi-eye me-2"></i>View</a></li>`
             ];
+            if (isReadyForScheduling) {
+                const canSchedule = canUseOnlineApplicationPermission('finalize_online_applications');
+                const canViewApplication = canUseOnlineApplicationPermission('view_online_applications');
+                if (canSchedule || canViewApplication) {
+                    paymentActions.unshift(`<li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); ${canSchedule ? 'window.openApplicationScheduling' : 'window.viewNewStudentApplication'}(${Number(item.application_id)})"><i class="bi bi-calendar2-check me-2"></i>${canSchedule ? 'Go to Scheduling' : 'View Application'}</a></li>`);
+                }
+            } else if (status === 'incomplete' && !isStudentPage() && canApproveEnrollment) {
+                paymentActions.unshift(`<li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); openPendingEnrollmentCompletion(${item.enrollment_details_id}, 'tutorial')"><i class="bi bi-clipboard-check me-2"></i>Complete Onsite Enrollment</a></li>`);
+            }
             if (canViewPaymentAssessment && ['/owner/', '/secretary/', '/branch_admin/', '/auditor/', '/teacher/'].some(rolePath => pagePath.includes(rolePath))) {
                 paymentActions.push(`<li><a class="dropdown-item fw-semibold text-dark" href="#" onclick="event.preventDefault(); openPaymentAssessment(${item.enrollment_details_id})"><i class="bi bi-clipboard2-check me-2"></i>Assessment</a></li>`);
             }
@@ -854,7 +913,7 @@ function renderEnrollments(enrollments) {
                                 <i class="bi bi-three-dots-vertical"></i>
                             </button>
                             <ul class="dropdown-menu dropdown-menu-end">
-                                <li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); openPendingEnrollmentCompletion(${item.enrollment_details_id}, 'tutorial')">Complete</a></li>
+                                <li><a class="dropdown-item text-primary fw-semibold" href="#" onclick="event.preventDefault(); openPendingEnrollmentCompletion(${item.enrollment_details_id}, 'tutorial')"><i class="bi bi-calendar2-check me-2"></i>Complete</a></li>
                             </ul>
                         </div>
                     `;
@@ -911,7 +970,7 @@ function renderEnrollments(enrollments) {
 
 function loadEnrollmentStats() {
     const includeApplications = shouldIncludeTutorialApplications() ? '&include_applications=1' : '';
-    axios.get(`../../api/admin/enrollment.php?operation=getEnrollmentStats&type=tutorial${includeApplications}`)
+    axios.get(`../../api/admin/enrollment.php?operation=getEnrollmentStats&type=tutorial${includeApplications}&school_year_id=${encodeURIComponent(enrollmentFilters.schoolYear)}`)
     .then(res => {
         if (res.data.status === 'success') {
             const stats = res.data.data;
@@ -920,10 +979,10 @@ function loadEnrollmentStats() {
                 document.getElementById('new_enrollments').innerText = stats.new;
                 document.getElementById('pending_applications').innerText = stats.pending;
                 const incompleteElement = document.getElementById('incomplete_enrollments');
-                const cancellationsElement = document.getElementById('cancellations');
+                const completedElement = document.getElementById('completed_enrollments');
 
                 if (incompleteElement) incompleteElement.innerText = stats.incomplete;
-                if (cancellationsElement) cancellationsElement.innerText = stats.cancelled;
+                if (completedElement) completedElement.innerText = stats.completed;
 
             }
         }
@@ -1171,8 +1230,10 @@ window.viewDetails = function(id, viewOnly = true) {
             setText('view_student_name', formatStudentName(d));
             setText('view_student_id', d.student_id_number || d.student_id || 'N/A');
             setText('view_program', d.program_name || 'N/A');
-            setText('view_subject_grade', (d.subject_name || 'N/A') + ' (' + (d.grade_level || '?') + ')');
-            setText('view_teacher_ro', d.teacher_name || 'Not assigned');
+            renderTutorialValidity(document.querySelector('#viewEnrollmentModal .modal-body'), d.enrollment_details_id);
+            appendAgreementLink(document.querySelector('#viewEnrollmentModal .modal-body'), d.enrollment_details_id);
+            setText('view_subject', d.subject_name || 'N/A');
+            setText('view_grade_level', d.grade_level || 'N/A');
             setText('view_branch', d.branch_name || 'N/A');
             setText('view_enrolled_by', formatEnrolledBy(d));
             const classText = d.class_id_from_section || d.class_id;
@@ -1181,6 +1242,7 @@ window.viewDetails = function(id, viewOnly = true) {
 
             const sectionTeacher = d.section_teacher_name || d.teacher_name || 'Not assigned';
             setText('view_section_teacher', sectionTeacher);
+            setText('view_teacher_ro', sectionTeacher);
 
             const sectionScheds = resDetails.data.data.section_schedule || [];
             const sectionSchedText = sectionScheds.length > 0 
@@ -1189,9 +1251,7 @@ window.viewDetails = function(id, viewOnly = true) {
             setText('view_section_schedule', sectionSchedText);
 
             const scheduleField = document.getElementById('view_schedule_ro');
-            if (scheduleField) {
-                scheduleField.innerHTML = formatScheduleDisplay(d.preferred_time_day || 'None');
-            }
+            renderPreferredSchedule(scheduleField, d.preferred_time_day);
             setText('view_status', (d.status || 'N/A').toUpperCase());
             setText('view_goal', d.goal || 'No goal set');
             renderStudentAddress(d);
@@ -1204,7 +1264,7 @@ window.viewDetails = function(id, viewOnly = true) {
                 const branchWrapper = document.getElementById('view_branch')?.parentElement;
                 if (branchWrapper) {
                     const wrapper = document.createElement('div');
-                    wrapper.className = 'col-md-6';
+                    wrapper.className = 'col-md-4 preplay-view-field';
                     wrapper.innerHTML = `<label class="small text-muted">School Year</label><div class="fw-bold" id="view_school_year">${schoolYearLabel}</div>`;
                     branchWrapper.insertAdjacentElement('afterend', wrapper);
                 }
@@ -1623,14 +1683,16 @@ window.openPaymentHistoryModal = function(enrollment_details_id, viewOnly = fals
 
         const statusLabel = enrollmentStatus ? enrollmentStatus.toUpperCase() : 'UNKNOWN';
         const normalizedEnrollmentStatus = enrollmentStatus.toLowerCase();
-        const enrollmentStatusTone = ['enrolled', 'received', 'complete', 'completed', 'active'].includes(normalizedEnrollmentStatus)
-            ? 'success'
+        const enrollmentStatusTone = ['complete', 'completed'].includes(normalizedEnrollmentStatus)
+            ? 'completed'
+            : ['enrolled', 'received', 'active'].includes(normalizedEnrollmentStatus)
+                ? 'success'
             : ['pending', 'incomplete'].includes(normalizedEnrollmentStatus)
                 ? 'pending'
                 : ['declined', 'cancelled', 'canceled'].includes(normalizedEnrollmentStatus)
                     ? 'danger'
                     : 'neutral';
-        const enrollmentStatusIcon = enrollmentStatusTone === 'success'
+        const enrollmentStatusIcon = ['success', 'completed'].includes(enrollmentStatusTone)
             ? 'bi-check-circle'
             : enrollmentStatusTone === 'pending'
                 ? 'bi-clock'
@@ -1703,7 +1765,7 @@ window.openPaymentHistoryModal = function(enrollment_details_id, viewOnly = fals
             const amountValue = totalAmountPaid.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             const canReviewPendingPayment = !effectiveViewOnly && payment.payment_status === 'Pending';
             const screenshotHtml = payment.payment_screenshot_path
-                ? `<img src="${resolvePaymentProofUrl(payment.payment_screenshot_path)}" alt="GCash payment screenshot" class="img-fluid rounded-3" style="max-height: 420px; object-fit: contain;">`
+                ? `<img src="${resolvePaymentProofUrl(payment.payment_screenshot_path)}" alt="Payment screenshot" class="img-fluid rounded-3" style="max-height: 420px; object-fit: contain;">`
                 : '<div class="text-muted py-5">No payment screenshot was uploaded for this record.</div>';
 
             Swal.fire({
@@ -1721,7 +1783,7 @@ window.openPaymentHistoryModal = function(enrollment_details_id, viewOnly = fals
                 reverseButtons: true,
                 html: `
                     <div class="text-start">
-                        <label class="form-label fw-bold text-secondary small mb-1">GCash Payment Screenshot</label>
+                        <label class="form-label fw-bold text-secondary small mb-1">Payment Screenshot</label>
                         <div class="border rounded-3 p-2 bg-light text-center mb-3">
                             ${screenshotHtml}
                         </div>
@@ -1733,7 +1795,7 @@ window.openPaymentHistoryModal = function(enrollment_details_id, viewOnly = fals
                             </div>
                         </div>
                         <div>
-                            <label class="form-label fw-bold text-secondary small mb-1">GCash Reference Number</label>
+                            <label class="form-label fw-bold text-secondary small mb-1">Reference Number</label>
                             <input type="text" class="form-control" value="${payment.reference_no || ''}" readonly>
                         </div>
                     </div>

@@ -1,7 +1,30 @@
 import { canRoleAccessModule, getRbacModulePermission, RBAC_NAV_UPDATED_EVENT } from "./rbac_navigation.js";
 import { buildAppUrl } from "./app_url.js";
+import { PROGRAM_SECTIONS, resolveProgramSection } from './program_sections.js';
 
 let hasBoundRbacSidebarRefresh = false;
+
+async function getStudentPaymentNavigationAccess() {
+    try {
+        const response = await fetch(buildAppUrl('api/student/enrollment.php?operation=getNavigationAccess'), {
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json' }
+        });
+        const payload = await response.json();
+
+        if (!response.ok || payload?.status !== 'success') {
+            throw new Error(payload?.message || `Request failed with status ${response.status}`);
+        }
+
+        return {
+            tutorial: payload.data?.tutorial === true,
+            preschool: payload.data?.preschool === true
+        };
+    } catch (error) {
+        console.error('Unable to load student enrollment navigation access:', error);
+        return { tutorial: false, preschool: false };
+    }
+}
 
 function bindRbacSidebarRefresh() {
     if (hasBoundRbacSidebarRefresh) return;
@@ -22,14 +45,14 @@ function bindRbacSidebarRefresh() {
         }
 
         if (document.querySelector('.main-content')) {
-            createSidebar();
+            void createSidebar();
         }
     });
 
     hasBoundRbacSidebarRefresh = true;
 }
 
-export function createSidebar() {
+export async function createSidebar() {
     const existingSidebar = document.getElementById('sidebar');
     if (existingSidebar) {
         existingSidebar.remove();
@@ -70,6 +93,9 @@ export function createSidebar() {
     };
 
     const userFolder = roleFolderMap[userRole] || 'owner';
+    const studentPaymentAccess = userRole === 'student'
+        ? await getStudentPaymentNavigationAccess()
+        : null;
 
     const navItems = [
         { name: 'DASHBOARD', href: buildAppUrl(`html/${userFolder}/dashboard.html`), icon: 'bi-speedometer2', roles: ['owner','auditor','branch admin','secretary','student','teacher'] },
@@ -95,7 +121,6 @@ export function createSidebar() {
             ]
         },
 
-        { name: 'PROFILE', href: buildAppUrl(`html/${userFolder}/profile.html`), icon: 'bi-person-circle', roles: ['owner','auditor','branch admin','secretary','student','teacher'] },
         {
             name: 'EMPLOYEE',
             icon: 'bi-people',
@@ -106,7 +131,22 @@ export function createSidebar() {
                 { name: 'Modules', href: buildAppUrl(`html/${userFolder}/role_base.html`), moduleKey: 'employee', permissionKey: 'manage_rbac' }
             ]
         },
-        { name: 'PROGRAM', href: buildAppUrl(`html/${userFolder}/program.html`), icon: 'bi-grid', moduleKey: 'program', roles: ['owner','auditor','secretary'] },
+        {
+            name: 'PROGRAM', icon: 'bi-grid', moduleKey: 'program', roles: ['owner','auditor','secretary'],
+            children: [
+                ...PROGRAM_SECTIONS.slice(0, 1).map(section => ({
+                    name: section.label,
+                    href: buildAppUrl(`html/${userFolder}/program.html#${section.key}`),
+                    sectionKey: section.key, moduleKey: 'program', permissionKey: section.permission
+                })),
+                { name: 'Contracts & Agreements', href: buildAppUrl('html/owner/agreements.html'), roles: ['owner'] },
+                ...PROGRAM_SECTIONS.slice(1).map(section => ({
+                    name: section.label,
+                    href: buildAppUrl(`html/${userFolder}/program.html#${section.key}`),
+                    sectionKey: section.key, moduleKey: 'program', permissionKey: section.permission
+                }))
+            ]
+        },
         { name: 'SCHOOL CALENDAR', href: buildAppUrl(`html/${userFolder}/school_calendar.html`), icon: 'bi-calendar-range', moduleKey: 'school_calendar', roles: ['owner','secretary'] },
 
         {
@@ -115,8 +155,8 @@ export function createSidebar() {
             moduleKey: 'payment',
             roles: ['owner','auditor','branch admin','student','secretary'],
             children: [
-                { name: 'Tutorial', href: buildAppUrl(`html/${userFolder}/payment.html`) },
-                { name: 'Pre-school / Play-school', href: buildAppUrl(`html/${userFolder}/payment_pre_play.html`) }
+                { name: 'Tutorial', href: buildAppUrl(`html/${userFolder}/payment.html`), requiresEnrollmentCategory: 'tutorial' },
+                { name: 'Pre-school / Play-school', href: buildAppUrl(`html/${userFolder}/payment_pre_play.html`), requiresEnrollmentCategory: 'preschool' }
             ]
         },
 
@@ -159,9 +199,15 @@ export function createSidebar() {
             if (item.children) {
                 const subMenu = document.createElement('ul');
                 subMenu.className = 'submenu';
+                if (item.moduleKey === 'program') subMenu.classList.add('program-submenu');
                 subMenu.style.display = 'none';
 
                 const visibleChildren = item.children.filter(child => {
+                    if (child.roles && !child.roles.includes(userRole)) return false;
+                    if (studentPaymentAccess && child.requiresEnrollmentCategory) {
+                        return studentPaymentAccess[child.requiresEnrollmentCategory] === true;
+                    }
+
                     if (!child.moduleKey || !child.permissionKey) {
                         return true;
                     }
@@ -180,13 +226,21 @@ export function createSidebar() {
                     subA.href = child.href;
                     subA.textContent = child.name;
                     subA.className = 'submenu-link';
+                    if (child.sectionKey) subA.dataset.programSectionLink = child.sectionKey;
                     subA.addEventListener('click', () => {
                         closeSidebarOnMobile();
                     });
 
                     // active state
-                    if (currentPath.includes(child.href.split('/').pop())) {
+                    const childUrl = new URL(child.href, window.location.href);
+                    const activeProgramSection = resolveProgramSection(window.location.hash,
+                        PROGRAM_SECTIONS.filter(section => getRbacModulePermission(userRole, 'program', section.permission)));
+                    const childIsActive = child.sectionKey
+                        ? currentPath === childUrl.pathname && child.sectionKey === activeProgramSection?.key
+                        : currentPath.includes(childUrl.pathname.split('/').pop());
+                    if (childIsActive) {
                         subLi.classList.add('active');
+                        subA.setAttribute('aria-current', 'page');
                         subMenu.style.display = 'block';
                         li.classList.add('open');
                     }
@@ -196,10 +250,15 @@ export function createSidebar() {
                 });
 
                 // toggle dropdown
-                a.addEventListener('click', () => {
+                a.href = '#';
+                a.setAttribute('role', 'button');
+                a.setAttribute('aria-expanded', String(subMenu.style.display === 'block'));
+                a.addEventListener('click', event => {
+                    event.preventDefault();
                     const isOpen = subMenu.style.display === 'block';
                     subMenu.style.display = isOpen ? 'none' : 'block';
                     li.classList.toggle('open');
+                    a.setAttribute('aria-expanded', String(!isOpen));
                 });
 
                 li.appendChild(subMenu);
@@ -224,7 +283,7 @@ export function createSidebar() {
     const mainContent = document.querySelector('.main-content');
 
     if (mainContent) {
-        body.insertBefore(sidebarContainer, mainContent);
+        mainContent.parentNode.insertBefore(sidebarContainer, mainContent);
     } else {
         body.appendChild(sidebarContainer);
     }

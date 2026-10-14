@@ -1,6 +1,8 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 header('Content-Type: application/json');
-header('Access-Control-Allow-Origin: *');
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -62,7 +64,7 @@ try {
                 FROM enrollment_details ed
                 JOIN enrollment_header eh ON eh.enrollment_header_id = ed.enrollment_header_id
                 WHERE eh.branch_id = :branch_id
-                  AND ed.status IN ('active', 'enrolled', 'pending')
+                  AND ed.status IN ('enrolled', 'pending')
             ) AS active_enrollments,
             (
                 SELECT COUNT(*)
@@ -108,7 +110,7 @@ try {
         JOIN student st ON st.student_id = eh.student_id
         LEFT JOIN program p ON p.program_id = ed.program_id
         LEFT JOIN subject sub ON sub.subject_id = ed.subject_id
-        LEFT JOIN employee teacher ON teacher.employee_id = ed.preferred_teacher
+        LEFT JOIN employee teacher ON teacher.employee_id = COALESCE(eps.substitute_teacher_id, ed.preferred_teacher)
         WHERE eh.branch_id = :branch_id
           AND eps.date = CURDATE()
           AND eps.status <> 'cancelled'
@@ -129,7 +131,7 @@ try {
         JOIN enrollment_header eh ON eh.enrollment_header_id = ed.enrollment_header_id
         JOIN student st ON st.student_id = eh.student_id
         LEFT JOIN program p ON p.program_id = ed.program_id
-        LEFT JOIN employee teacher ON teacher.employee_id = ed.preferred_teacher
+        LEFT JOIN employee teacher ON teacher.employee_id = COALESCE(eps.substitute_teacher_id, ed.preferred_teacher)
         WHERE eh.branch_id = :branch_id
           AND eps.date > CURDATE()
           AND eps.status <> 'cancelled'
@@ -191,7 +193,7 @@ try {
         LEFT JOIN subject sub ON sub.subject_id = ed.subject_id
         LEFT JOIN employee teacher ON teacher.employee_id = ed.preferred_teacher
         WHERE eh.branch_id = :branch_id
-          AND ed.status IN ('active', 'enrolled', 'pending')
+          AND ed.status IN ('enrolled', 'pending')
         ORDER BY eh.date_created DESC, ed.enrollment_details_id DESC
         LIMIT 100
     ", $params);

@@ -158,13 +158,119 @@ function loadEnrollmentBranches() {
         });
 }
 
+function renderTutorialSubjects(subjects) {
+    const container = document.querySelector('[data-tutorial-subjects]');
+    if (!container) return;
+    const names = [...new Map(subjects
+        .map(subject => String(subject?.subject_name || '').trim())
+        .filter(Boolean)
+        .map(name => [name.toLowerCase(), name])).values()]
+        .sort((a, b) => a.localeCompare(b));
+    container.innerHTML = names.length
+        ? `<ul class="tutorial-subject-list">${names.map(name => `<li class="tutorial-subject">${escapeHtml(name)}</li>`).join('')}</ul>`
+        : '<p>The subject list is being updated. Please contact your preferred center for available tutorial subjects.</p>';
+    container.setAttribute('aria-busy', 'false');
+}
+
+async function loadTutorialSubjects() {
+    const container = document.querySelector('[data-tutorial-subjects]');
+    if (!container) return;
+    try {
+        const response = await fetch(buildAppUrl('api/enrollment_application.php?operation=getLookups'));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const result = await response.json();
+        if (result.status !== 'success' || !Array.isArray(result.data?.subjects)) {
+            throw new Error('Invalid subject response');
+        }
+        renderTutorialSubjects(result.data.subjects);
+    } catch (error) {
+        console.error('Unable to load tutorial subjects:', error);
+        container.innerHTML = '<p>We could not load the subjects right now. Please refresh the page or contact your preferred center.</p>';
+        container.setAttribute('aria-busy', 'false');
+    }
+}
+
 function parseCoreValues(value) {
     return (value || '').split(/\r?\n|,/).map(item => item.trim()).filter(Boolean)
         .map(item => [item.charAt(0).toUpperCase(), item]);
 }
 
+function setTextWithLineBreaks(element, value) {
+    if (!element || !String(value || '').trim()) return;
+    const lines = String(value).split(/\r?\n/);
+    element.replaceChildren(...lines.flatMap((line, index) => index
+        ? [document.createElement('br'), document.createTextNode(line)]
+        : [document.createTextNode(line)]));
+}
+
+function initLandingNavigation(sectionLinks) {
+    const links = Array.from(sectionLinks).filter(link => {
+        const href = link.getAttribute('href') || '';
+        return href.startsWith('#') && document.querySelector(href);
+    });
+    if (links.length === 0) return;
+
+    const sections = links.map(link => ({
+        link,
+        section: document.querySelector(link.getAttribute('href'))
+    }));
+    let scheduled = false;
+
+    const setActiveLink = activeLink => {
+        links.forEach(link => {
+            const isActive = link === activeLink;
+            link.classList.toggle('active', isActive);
+            if (isActive) {
+                link.setAttribute('aria-current', 'page');
+            } else {
+                link.removeAttribute('aria-current');
+            }
+        });
+    };
+
+    const updateActiveLink = () => {
+        scheduled = false;
+        const headerHeight = document.querySelector('.landing-header')?.offsetHeight || 0;
+        const marker = window.scrollY + headerHeight + Math.min(180, window.innerHeight * 0.25);
+        let current = sections[0];
+
+        sections.forEach(item => {
+            if (item.section.offsetTop <= marker && item.section.offsetTop >= current.section.offsetTop) {
+                current = item;
+            }
+        });
+
+        if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) {
+            current = sections[sections.length - 1];
+        }
+        setActiveLink(current.link);
+    };
+
+    const scheduleUpdate = () => {
+        if (scheduled) return;
+        scheduled = true;
+        window.requestAnimationFrame(updateActiveLink);
+    };
+
+    links.forEach(link => {
+        link.addEventListener('click', () => setActiveLink(link));
+    });
+    window.addEventListener('scroll', scheduleUpdate, { passive: true });
+    window.addEventListener('resize', scheduleUpdate);
+    window.addEventListener('hashchange', scheduleUpdate);
+    updateActiveLink();
+}
+
 function applyLandingPageData(data) {
     if (!data) return;
+    setTextWithLineBreaks(document.querySelector('[data-landing-hero-eyebrow]'), data.hero_eyebrow);
+    setTextWithLineBreaks(document.querySelector('[data-landing-hero-title]'), data.hero_title);
+    setTextWithLineBreaks(document.querySelector('[data-landing-hero-tagline]'), data.hero_tagline);
+    setTextWithLineBreaks(document.querySelector('[data-landing-hero-description]'), data.hero_description);
+    [1, 2, 3, 4].forEach(number => {
+        setTextWithLineBreaks(document.querySelector(`[data-landing-highlight-value="${number}"]`), data[`highlight_${number}_value`]);
+        setTextWithLineBreaks(document.querySelector(`[data-landing-highlight-label="${number}"]`), data[`highlight_${number}_label`]);
+    });
     const principles = [
         { title: 'Mission', text: data.mission || GUIDING_PRINCIPLES[0].text },
         { title: 'Vision', text: data.vision || GUIDING_PRINCIPLES[1].text }
@@ -194,6 +300,9 @@ export function initLandingPage() {
     const enrollLinks = document.querySelectorAll('[data-enroll-link]');
     const sectionLinks = document.querySelectorAll('.landing-nav__link');
     const guidingPrinciplesContainer = document.querySelector('[data-mission-vision-content]');
+
+    initLandingNavigation(sectionLinks);
+    loadTutorialSubjects();
 
     if (guidingPrinciplesContainer) {
         guidingPrinciplesContainer.innerHTML = createGuidingPrinciplesMarkup();

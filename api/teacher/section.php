@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 header('Content-Type: application/json');
 
 if (session_status() === PHP_SESSION_NONE) {

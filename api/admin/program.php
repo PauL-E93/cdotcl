@@ -1,11 +1,15 @@
 <?php
+require_once __DIR__ . '/../security/AuthGuard.php';
+AuthGuard::requireUser();
+
 // api/program.php
 header('Content-Type: application/json');
-header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, GET");
 header("Access-Control-Allow-Headers: Content-Type");
 
 require_once __DIR__ . '/../billing_penalty_helper.php';
+require_once __DIR__ . '/../tutorial_validity_helper.php';
+ensureTutorialValiditySchema(AuthGuard::connection());
 
 class Program {
     private function getPenaltyData($data) {
@@ -54,11 +58,13 @@ class Program {
         $data = json_decode($json, true);
         try {
             [$penaltyAmount, $gracePeriodDays] = $this->getPenaltyData($data);
+            $validityDays = ($data['unit_type'] ?? 'session') === 'session' ? tutorialValidityDays($data['validity_days'] ?? null) : null;
             $conn->beginTransaction();
-            $sql = "INSERT INTO program (name, discription, tuition, total_units, unit_type, program_type, status, downpayment, registration_fee, default_discount_id, service_id) 
-                    VALUES (:name, :discription, :tuition, :total_units, :unit_type, :program_type, :status, :downpayment, :registration_fee, :default_discount_id, :service_id)";
+            $sql = "INSERT INTO program (name, discription, tuition, total_units, unit_type, program_type, status, downpayment, registration_fee, default_discount_id, service_id, validity_days) 
+                    VALUES (:name, :discription, :tuition, :total_units, :unit_type, :program_type, :status, :downpayment, :registration_fee, :default_discount_id, :service_id, :validity_days)";
             $stmt = $conn->prepare($sql);
             $stmt->execute([
+                ":validity_days" => $validityDays,
                 ":name"                => $data['name'],
                 ":discription"         => $data['discription'] ?? '',
                 ":tuition"             => $data['tuition'] ?? 0.00,
@@ -85,12 +91,14 @@ class Program {
         $data = json_decode($json, true);
         try {
             [$penaltyAmount, $gracePeriodDays] = $this->getPenaltyData($data);
+            $validityDays = ($data['unit_type'] ?? 'session') === 'session' ? tutorialValidityDays($data['validity_days'] ?? null) : null;
             $conn->beginTransaction();
             $sql = "UPDATE program SET name = :name, discription = :discription, tuition = :tuition, 
                     total_units = :total_units, unit_type = :unit_type, program_type = :program_type, 
-                    status = :status, downpayment = :downpayment, registration_fee = :registration_fee, default_discount_id = :default_discount_id, service_id = :service_id WHERE program_id = :program_id";
+                    status = :status, downpayment = :downpayment, registration_fee = :registration_fee, default_discount_id = :default_discount_id, service_id = :service_id, validity_days = :validity_days WHERE program_id = :program_id";
             $stmt = $conn->prepare($sql);
             $stmt->execute([
+                ":validity_days" => $validityDays,
                 ":name"                => $data['name'],
                 ":discription"         => $data['discription'],
                 ":tuition"             => $data['tuition'],

@@ -1,4 +1,5 @@
 // js/studentmodule/billing.js
+import { penaltyAdjustmentCard } from '../modules/penalty_adjustment.js';
 
 /**
  * STUDENT BILLING CONTROLLER
@@ -15,36 +16,13 @@ function getStudentReceiptHandler() {
         : null;
 }
 
-function getStudentModuleImportUrl(relativePath) {
-    return new URL(relativePath, window.location.href).href;
-}
-
-async function ensureStudentTutorialEnrollmentHelpers() {
-    if (typeof window.openPendingEnrollmentCompletion === 'function') {
-        return;
-    }
-
-    await import(getStudentModuleImportUrl('../../js/studentmodule/student_enrollement.js'));
-}
-
-window.openStudentTutorialIncompleteEnrollment = async function(enrollmentId) {
-    await ensureStudentTutorialEnrollmentHelpers();
-
-    if (typeof window.openPendingEnrollmentCompletion === 'function') {
-        return window.openPendingEnrollmentCompletion(enrollmentId, 'tutorial');
-    }
-
-    Swal.fire('Error', 'Enrollment completion is not available right now.', 'error');
+window.openStudentTutorialIncompleteEnrollment = function(enrollmentId) {
+    sessionStorage.setItem('studentPendingEnrollmentCompletion', JSON.stringify({ enrollmentId, category: 'tutorial' }));
+    window.location.assign('./enrollement.html');
 };
 
 function resolvePaymentProofUrl(proofPath) {
-    if (!proofPath) return '';
-    if (/^(?:https?:)?\/\//.test(proofPath)) {
-        return proofPath;
-    }
-
-    const cleaned = String(proofPath).replace(/^\/+/, '');
-    return `../../${cleaned}`;
+    return window.resolveUploadUrl(proofPath);
 }
 
 function escapeStudentPaymentDetail(value) {
@@ -57,10 +35,7 @@ function escapeStudentPaymentDetail(value) {
 }
 
 function resolveStudentPaymentQrUrl(qrPath) {
-    const value = String(qrPath || '').trim();
-    if (!value) return '';
-    if (/^(?:https?:|data:|blob:|\/)/i.test(value) || value.startsWith('../')) return value;
-    return `../../${value.replace(/^\.\//, '')}`;
+    return window.resolveUploadUrl(qrPath);
 }
 
 function buildStudentPaymentMethodDetails(method) {
@@ -151,6 +126,15 @@ function getStudentReceiptKey(payment) {
     return String(payment.receipt_id || payment.payment_id || '');
 }
 
+function studentPaymentHasProof(payment) {
+    return String(payment.payment_method || '').toLowerCase().includes('gcash')
+        || Boolean(payment.payment_screenshot_path);
+}
+
+function canStudentViewPaymentReceipt(payment) {
+    return String(payment.payment_status || '').toLowerCase() === 'received';
+}
+
 function buildStudentReceiptData(enrollmentId, studentName, history, payment, billingData = {}) {
     const receiptKey = getStudentReceiptKey(payment);
     const receiptRows = history.filter(item => getStudentReceiptKey(item) === receiptKey);
@@ -204,7 +188,7 @@ window.openStudentBillingModal = function(enrollmentId, showPayment = true) {
     Promise.all([
         axios.get(`../../api/student/payment.php?operation=getBillingDetails&enrollment_id=${enrollmentId}`),
         axios.get(`../../api/student/payment.php?operation=getPaymentMethods`),
-        axios.get(`../../api/admin/enrollment.php?operation=getEnrollmentDetails&id=${enrollmentId}`).catch(() => ({ data: { status: 'error', data: { details: {} } } }))
+        axios.get(`../../api/student/enrollment.php?operation=getEnrollmentDetails&id=${enrollmentId}`).catch(() => ({ data: { status: 'error', data: { details: {} } } }))
     ])
     .then(([billingRes, methodsRes, enrollmentRes]) => {
         console.log("Billing Response:", billingRes);
@@ -214,7 +198,7 @@ window.openStudentBillingModal = function(enrollmentId, showPayment = true) {
         if (billingRes.data.status === 'success' && methodsRes.data.status === 'success') {
             const enrollmentDetails = enrollmentRes.data?.status === 'success' ? enrollmentRes.data.data?.details || {} : {};
             const enrollmentStatus = enrollmentDetails.header_status || enrollmentDetails.status || billingRes.data.data.enrollment_status || '';
-            renderStudentBillingModal(billingRes.data.data, methodsRes.data.data, enrollmentId, showPayment, enrollmentStatus);
+            renderStudentBillingModal(billingRes.data.data, methodsRes.data.data, enrollmentId, showPayment, enrollmentStatus, enrollmentDetails.application_status);
         } else {
             Swal.fire("Error", "Could not fetch necessary data.", "error");
         }
@@ -929,21 +913,23 @@ function ensureStudentBillingModalStyles() {
     document.head.appendChild(styles);
 }
 
-function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayment = true, enrollmentStatus = '') {
+function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayment = true, enrollmentStatus = '', applicationStatus = '') {
     ensureStudentBillingModalStyles();
     // Calculate breakdown from the schedule
     const totalFee = parseFloat(data.total_amount);
     const isIncompleteEnrollment = String(enrollmentStatus || '').toLowerCase() === 'incomplete';
+    const normalizedApplicationStatus = String(applicationStatus || '').toLowerCase();
+    const isReadyForScheduling = normalizedApplicationStatus === 'ready_for_scheduling';
+    const isAwaitingCenterReview = ['pending_review', 'approved_for_payment'].includes(normalizedApplicationStatus);
 
     const isFullyPaid = data.balance <= 0;
 
-    // Find GCash payment method ID
-    const gcashMethod = paymentMethods.find(pm => pm.payment_method.toLowerCase() === 'gcash');
-    const gcashId = gcashMethod ? gcashMethod.payment_method_id : null;
-    const gcashPaymentDetails = buildStudentPaymentMethodDetails(gcashMethod);
-
-    console.log("Payment Methods:", paymentMethods);
-    console.log("GCash Method:", gcashMethod, "ID:", gcashId);
+    const onlineMethods = paymentMethods.filter(pm =>
+        pm.payment_method && pm.payment_method.trim().toLowerCase() !== 'cash'
+    );
+    const methodOptions = onlineMethods.map(pm =>
+        `<option value="${escapeStudentPaymentDetail(pm.payment_method_id)}">${escapeStudentPaymentDetail(pm.payment_method)}</option>`
+    ).join('');
 
     // Handle case where schedule is missing - show modal with message instead of returning
     const scheduleContent = data.schedule.length === 0 
@@ -970,6 +956,7 @@ function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayme
 
     const html = `
         <div class="student-billing-container">
+            ${penaltyAdjustmentCard(data.schedule, true)}
             <section class="student-billing-card" aria-labelledby="studentEnrollmentDetailsTitle">
                 <h3 class="student-billing-section-title" id="studentEnrollmentDetailsTitle">
                     <span class="student-billing-section-icon"><i class="bi bi-person-circle" aria-hidden="true"></i></span>
@@ -1028,7 +1015,15 @@ function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayme
                 </div>
             </section>
 
-            ${isIncompleteEnrollment ? `
+            ${isReadyForScheduling || isAwaitingCenterReview ? `
+                <div class="alert alert-info text-center mb-0">
+                    <i class="bi bi-calendar2-check" aria-hidden="true"></i> ${isReadyForScheduling
+                        ? 'Your payment has been received. The center is assigning your teacher and schedule.'
+                        : normalizedApplicationStatus === 'approved_for_payment'
+                            ? 'Your application is awaiting payment at the center. Please contact your branch for payment.'
+                            : 'Your application is awaiting review by the center.'}
+                </div>
+            ` : isIncompleteEnrollment ? `
                 <div class="alert alert-warning text-center mb-0">
                     <i class="bi bi-exclamation-triangle" aria-hidden="true"></i> This enrollment is incomplete. Please complete the enrollment first.
                 </div>
@@ -1039,14 +1034,19 @@ function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayme
                         Make Payment
                     </h3>
 
-                    ${gcashPaymentDetails}
+                    <label class="form-label fw-semibold" for="studentPaymentMethod">Payment Method</label>
+                    <select class="form-select mb-3" id="studentPaymentMethod" required>
+                        <option value="">Choose a payment method</option>${methodOptions}
+                    </select>
+                    <div id="studentPaymentMethodDetails"></div>
+                    <div id="studentPaymentProofFields" class="d-none">
 
                     <div class="student-payment-receipt-heading">
                         <div class="student-payment-receipt-copy">
-                            <strong>Payment Receipt <span class="student-gcash-badge">GCash</span></strong>
-                            Upload your GCash payment screenshot so we can read the amount<br class="d-none d-md-block"> and reference number automatically.
+                            <strong>Payment Receipt <span class="student-gcash-badge" id="studentPaymentMethodBadge"></span></strong>
+                            Upload your payment screenshot as proof of transfer.
                         </div>
-                        <button type="button" class="student-payment-read-receipt" id="studentPaymentRunOcr">
+                        <button type="button" class="student-payment-read-receipt d-none" id="studentPaymentRunOcr">
                             <i class="bi bi-bounding-box" aria-hidden="true"></i> Read Receipt
                         </button>
                     </div>
@@ -1055,16 +1055,16 @@ function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayme
                         <input type="file" id="studentPaymentScreenshot" accept="image/jpeg,image/png,.jpg,.jpeg,.png" required>
                         <span class="student-payment-upload-copy">
                             <i class="bi bi-cloud-arrow-up" aria-hidden="true"></i>
-                            <span class="student-payment-upload-title">Upload GCash screenshot</span>
+                            <span class="student-payment-upload-title">Upload payment screenshot</span>
                             <span class="student-payment-upload-subtitle" id="studentPaymentFilename">Drag and drop your file here, or click to browse</span>
                         </span>
                     </label>
                     <small class="student-payment-file-help">Supports JPG, PNG files up to 10MB.</small>
                     <small id="studentPaymentOcrStatus" class="small text-muted d-block mt-1">
-                        Upload the GCash screenshot and we will read the paid amount and reference number for you.
+                        Enter the payment amount and reference number shown on your receipt.
                     </small>
                     <div id="studentPaymentPreviewWrapper" class="student-payment-preview d-none">
-                        <img id="studentPaymentPreviewImage" alt="GCash receipt preview" class="img-fluid rounded-2">
+                        <img id="studentPaymentPreviewImage" alt="Payment receipt preview" class="img-fluid rounded-2">
                     </div>
 
                     <div class="student-payment-fields">
@@ -1077,10 +1077,11 @@ function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayme
                             <small class="student-payment-field-help"><em>Maximum: &#8369;${data.balance.toLocaleString()}</em></small>
                         </div>
                         <div class="student-payment-field">
-                            <label class="form-label" for="studentPaymentReference">GCash Reference Number <span class="text-danger" aria-hidden="true">*</span></label>
-                            <input type="text" class="form-control" id="studentPaymentReference" placeholder="Enter GCash reference number" required>
+                            <label class="form-label" for="studentPaymentReference"><span id="studentPaymentReferenceLabel">Reference Number</span> <span class="text-danger" aria-hidden="true">*</span></label>
+                            <input type="text" class="form-control" id="studentPaymentReference" required>
                             <small class="student-payment-field-help"><em>Required for payment verification. You can still correct the number manually if needed.</em></small>
                         </div>
+                    </div>
                     </div>
                 </section>
             ` : `<div class="alert alert-success text-center mb-0"><i class="bi bi-check-circle"></i> ${isFullyPaid ? 'This enrollment is fully paid.' : 'Downpayment completed. Please note with the billing schedule.'}</div>`}
@@ -1098,8 +1099,10 @@ function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayme
         width: '970px',
         showCloseButton: true,
         showCancelButton: true,
-        confirmButtonText: isIncompleteEnrollment
-            ? 'pls complete the enrollment'
+        confirmButtonText: (isReadyForScheduling || isAwaitingCenterReview)
+            ? 'Close'
+            : isIncompleteEnrollment
+            ? 'Complete Enrollment'
             : ((!isFullyPaid && showPayment) ? '<i class="bi bi-credit-card"></i> Make Payment' : (isFullyPaid ? '<i class="bi bi-clock-history"></i> View Payment History' : '<i class="bi bi-x-circle"></i> Close')),
         cancelButtonText: '<i class="bi bi-x-circle"></i> Close',
         reverseButtons: true,
@@ -1112,9 +1115,29 @@ function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayme
             cancelButton: 'student-billing-cancel'
         },
         didOpen: () => {
-            if (!isIncompleteEnrollment && !isFullyPaid && showPayment) {
-                bindStudentPaymentAccountCopy('studentPaymentCopyAccount', gcashMethod?.account_number);
-                bindStudentPaymentQrModal(gcashMethod);
+            if (!isReadyForScheduling && !isAwaitingCenterReview && !isIncompleteEnrollment && !isFullyPaid && showPayment) {
+                const methodSelect = document.getElementById('studentPaymentMethod');
+                methodSelect?.addEventListener('change', () => {
+                    const method = onlineMethods.find(pm => String(pm.payment_method_id) === methodSelect.value);
+                    const isGcash = method?.payment_method.trim().toLowerCase() === 'gcash';
+                    document.getElementById('studentPaymentProofFields').classList.toggle('d-none', !method);
+                    document.getElementById('studentPaymentMethodDetails').innerHTML = buildStudentPaymentMethodDetails(method);
+                    document.getElementById('studentPaymentMethodBadge').textContent = method?.payment_method || '';
+                    document.getElementById('studentPaymentReferenceLabel').textContent = isGcash ? 'GCash Reference Number' : 'Reference Number';
+                    document.getElementById('studentPaymentRunOcr').classList.toggle('d-none', !isGcash);
+                    document.getElementById('studentPaymentOcrStatus').textContent = isGcash
+                        ? 'Upload a GCash screenshot to read the amount and reference number automatically, or enter them manually.'
+                        : 'Enter the payment amount and reference number shown on your receipt.';
+                    document.getElementById('studentPaymentReference').value = '';
+                    document.getElementById('studentPaymentAmount').value = '';
+                    document.getElementById('studentPaymentScreenshot').value = '';
+                    document.getElementById('studentPaymentFilename').textContent = 'Drag and drop your file here, or click to browse';
+                    document.getElementById('studentPaymentPreviewWrapper').classList.add('d-none');
+                    if (method) {
+                        bindStudentPaymentAccountCopy('studentPaymentCopyAccount', method.account_number);
+                        bindStudentPaymentQrModal(method);
+                    }
+                });
                 const screenshotInput = document.getElementById('studentPaymentScreenshot');
                 const filename = document.getElementById('studentPaymentFilename');
                 if (screenshotInput && filename) {
@@ -1130,15 +1153,18 @@ function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayme
                     refInputId: 'studentPaymentReference',
                     statusId: 'studentPaymentOcrStatus',
                     previewWrapperId: 'studentPaymentPreviewWrapper',
-                    previewImageId: 'studentPaymentPreviewImage'
+                    previewImageId: 'studentPaymentPreviewImage',
+                    isEnabled: () => onlineMethods.find(pm => String(pm.payment_method_id) === document.getElementById('studentPaymentMethod')?.value)
+                        ?.payment_method.trim().toLowerCase() === 'gcash'
                 });
             }
         },
         preConfirm: () => {
-            if (isIncompleteEnrollment || isFullyPaid || !showPayment) return true;
+            if (isReadyForScheduling || isAwaitingCenterReview || isIncompleteEnrollment || isFullyPaid || !showPayment) return true;
 
-            if (!gcashId) {
-                Swal.showValidationMessage('GCash payment method not configured. Please contact administrator.');
+            const method = onlineMethods.find(pm => String(pm.payment_method_id) === document.getElementById('studentPaymentMethod')?.value);
+            if (!method) {
+                Swal.showValidationMessage('Choose a payment method');
                 return false;
             }
 
@@ -1156,31 +1182,33 @@ function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayme
                 return false;
             }
             if (!screenshotFile) {
-                Swal.showValidationMessage('Please upload the GCash payment screenshot first');
+                Swal.showValidationMessage('Please upload the payment screenshot first');
                 return false;
             }
             if (screenshotFile.size > 10 * 1024 * 1024) {
                 Swal.showValidationMessage('Please upload a JPG or PNG receipt no larger than 10MB');
                 return false;
             }
-            if (ocrBusy) {
+            if (method.payment_method.trim().toLowerCase() === 'gcash' && ocrBusy) {
                 Swal.showValidationMessage('OCR is still reading the screenshot. Please wait a moment.');
                 return false;
             }
             if (!ref || ref.trim() === '') {
-                Swal.showValidationMessage('GCash reference number is required');
+                Swal.showValidationMessage('Payment reference number is required');
                 return false;
             }
-            if (!/^\d{13}$/.test(ref.trim())) {
-                Swal.showValidationMessage('GCash reference number must contain exactly 13 digits');
+            if (method.payment_method.trim().toLowerCase() === 'gcash' && !/^(?:\d{10}|\d{12}|\d{13})$/.test(ref.trim())) {
+                Swal.showValidationMessage('GCash reference number must contain 10, 12, or 13 digits');
                 return false;
             }
 
-            return { amount, ref, screenshotFile };
+            return { amount, ref, screenshotFile, method };
         }
     }).then((result) => {
         if (result.isConfirmed) {
-            if (isIncompleteEnrollment) {
+            if (isReadyForScheduling || isAwaitingCenterReview) {
+                return;
+            } else if (isIncompleteEnrollment) {
                 window.openStudentTutorialIncompleteEnrollment(enrollmentId);
             } else if (isFullyPaid) {
                 // Open payment history modal
@@ -1198,7 +1226,7 @@ function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayme
 
                 const payload = {
                     enrollment_id: enrollmentId,
-                    method: gcashId,
+                    method: paymentData.method.payment_method_id,
                     amount: paymentData.amount,
                     ref: paymentData.ref
                 };
@@ -1212,42 +1240,11 @@ function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayme
 
                 axios.post('../../api/student/payment.php', formData).then(res => {
                     if (res.data.status === 'success') {
-                        const paidAmount = parseFloat(paymentData.amount || 0);
-                        const currentBalance = parseFloat(data.balance || 0);
-                        const newBalance = Math.max(currentBalance - paidAmount, 0);
-                        const receiptBill = Array.isArray(data.schedule)
-                            ? data.schedule.find(item => item.status !== 'paid') || data.schedule[0]
-                            : null;
-                        const paymentKind = paidAmount >= currentBalance ? 'Full Payment' : 'Partial Payment';
-                        const receiptData = {
-                            enrollmentId,
-                            studentName: data.student_name,
-                            programName: data.program_name,
-                            programType: data.program_type,
-                            paymentKind,
-                            paymentType: paymentKind,
-                            paymentFor: receiptBill ? receiptBill.billing_type || 'Tuition Fee' : 'Tuition Fee',
-                            paymentMethod: 'GCash',
-                            referenceNo: paymentData.ref || null,
-                            paymentScreenshotPath: res.data.payment_screenshot_path || null,
-                            receiptNo: res.data.receipt_id || null,
-                            amountPaid: paidAmount,
-                            balance: newBalance,
-                            totalAmount: paidAmount,
-                            lineItems: Array.isArray(res.data.line_items) ? res.data.line_items : [],
-                            paymentDate: new Date()
-                        };
-
                         Swal.fire({
-                            title: "Payment Submitted!",
-                            text: res.data.message,
-                            icon: "success",
+                            title: 'Payment submitted for review',
+                            text: 'Your payment is awaiting approval. Your receipt will be generated after your payment is approved. You can view it in Payment History once approved.',
+                            icon: 'info',
                             confirmButtonColor: '#e85d88'
-                        }).then(() => {
-                            const receiptHandler = getStudentReceiptHandler();
-                            if (typeof receiptHandler === 'function') {
-                                return receiptHandler(receiptData);
-                            }
                         }).then(() => {
                             window.dispatchEvent(new CustomEvent('payment-status-updated', {
                                 detail: { scope: 'tutorial', source: 'student-payment-submit' }
@@ -1295,23 +1292,24 @@ function renderPaymentHistoryModal(enrollmentId, studentName, history, billingDa
         const receiptRows = currentHistory.filter(item => getStudentReceiptKey(item) === receiptKey);
         const detailRows = receiptRows.length > 0 ? receiptRows : [payment];
         const screenshotHtml = payment.payment_screenshot_path
-            ? `<img src="${resolvePaymentProofUrl(payment.payment_screenshot_path)}" alt="GCash payment screenshot" class="img-fluid rounded-3" style="max-height: 420px; object-fit: contain;">`
+            ? `<img src="${escapeStudentPaymentDetail(resolvePaymentProofUrl(payment.payment_screenshot_path))}" alt="Payment screenshot" class="img-fluid rounded-3" style="max-height: 420px; object-fit: contain;">`
             : '<div class="text-muted py-5">No payment screenshot was uploaded for this record.</div>';
         const totalAmountPaid = detailRows.reduce((sum, item) => sum + parseFloat(item.amount_paid || 0), 0);
         const amountValue = totalAmountPaid.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
         Swal.fire({
-            title: 'Payment Details',
+            title: 'Payment Proof',
             width: '720px',
             showCancelButton: true,
             cancelButtonText: 'Close',
+            showConfirmButton: canStudentViewPaymentReceipt(payment),
             confirmButtonText: 'View Receipt',
             confirmButtonColor: '#5a67d8',
             cancelButtonColor: '#6c757d',
             reverseButtons: true,
             html: `
                 <div class="text-start">
-                    <label class="form-label fw-bold text-secondary small mb-1">GCash Payment Screenshot</label>
+                    <label class="form-label fw-bold text-secondary small mb-1">Payment Screenshot</label>
                     <div class="border rounded-3 p-2 bg-light text-center mb-3">
                         ${screenshotHtml}
                     </div>
@@ -1323,13 +1321,13 @@ function renderPaymentHistoryModal(enrollmentId, studentName, history, billingDa
                         </div>
                     </div>
                     <div>
-                        <label class="form-label fw-bold text-secondary small mb-1">GCash Reference Number</label>
-                        <input type="text" class="form-control" value="${payment.reference_no || ''}" readonly>
+                        <label class="form-label fw-bold text-secondary small mb-1">Reference Number</label>
+                        <input type="text" class="form-control" value="${escapeStudentPaymentDetail(payment.reference_no || '')}" readonly>
                     </div>
                 </div>
             `
         }).then(result => {
-            if (!result.isConfirmed) {
+            if (!result.isConfirmed || !canStudentViewPaymentReceipt(payment)) {
                 return;
             }
 
@@ -1371,6 +1369,12 @@ function renderPaymentHistoryModal(enrollmentId, studentName, history, billingDa
                         : ''}`
                     : 'N/A';
                 const paymentPresentation = getPaymentStatusPresentation(payment.payment_status);
+                const receiptKey = escapeStudentPaymentDetail(getStudentReceiptKey(payment));
+                const actionButton = studentPaymentHasProof(payment)
+                    ? `<button type="button" class="payment-history-action view-student-payment-proof" data-receipt-key="${receiptKey}"><i class="bi bi-image"></i>View Proof</button>`
+                    : canStudentViewPaymentReceipt(payment)
+                        ? `<button type="button" class="payment-history-action view-student-payment-receipt" data-receipt-key="${receiptKey}"><i class="bi bi-receipt"></i>View Receipt</button>`
+                        : '<span class="text-muted">-</span>';
 
                 return `
                     <tr>
@@ -1380,13 +1384,20 @@ function renderPaymentHistoryModal(enrollmentId, studentName, history, billingDa
                         <td data-label="Payment Method">${payment.payment_method || 'N/A'}</td>
                         <td data-label="Reference No.">${payment.reference_no || 'N/A'}</td>
                         <td data-label="Status"><span class="payment-row-status payment-row-status--${paymentPresentation.tone}"><i class="bi ${paymentPresentation.icon}"></i>${payment.payment_status || 'N/A'}</span></td>
-                        <td data-label="Actions"><div class="payment-history-actions"><button type="button" class="payment-history-action view-student-payment-receipt" data-receipt-key="${getStudentReceiptKey(payment)}"><i class="bi bi-receipt"></i>View Receipt</button></div></td>
+                        <td data-label="Actions"><div class="payment-history-actions">${actionButton}</div></td>
                     </tr>
                 `;
             }).join('')
             : '<tr><td colspan="7" class="payment-history-empty">No payment history found.</td></tr>';
 
         tableBody.innerHTML = historyRows;
+
+        tableBody.querySelectorAll('.view-student-payment-proof').forEach(button => {
+            button.addEventListener('click', () => {
+                const payment = currentHistory.find(item => getStudentReceiptKey(item) === button.dataset.receiptKey);
+                if (payment) showStudentPaymentDetailsModal(payment);
+            });
+        });
 
         document.querySelectorAll('.view-student-payment-receipt').forEach(button => {
             button.addEventListener('click', () => {
