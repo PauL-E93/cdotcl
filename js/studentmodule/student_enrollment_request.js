@@ -1,4 +1,6 @@
 import { AgreementForm } from '../modules/agreements.js?v=20261014-select-all';
+import { startTour } from '../guide/tour.js?v=20261023-session-guides';
+import { getEnrollmentRequestGuide } from '../guide/student/pages.js';
 const APPLICATION_API_URL = '../../api/enrollment_application.php';
 let agreementForm;
 const TEACHER_API_URL = '../../api/admin/enrollment.php';
@@ -436,6 +438,9 @@ window.openStudentEnrollmentRequestModal = async function openStudentEnrollmentR
 };
 
 document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('[data-enrollment-request-guide]').forEach(button => {
+        button.addEventListener('click', () => startTour(getEnrollmentRequestGuide(), button));
+    });
     $('requestProgram').addEventListener('change', updateProgramPayment);
     $('payAndContinue').addEventListener('click', submitPayment);
     $('detailsSubjects').addEventListener('change', () => {

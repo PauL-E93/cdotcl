@@ -982,7 +982,7 @@
 }
 /* KEEP SUBMENU OPEN WHEN ACTIVE */
 .sidebar-item.active .submenu {
-    max-height: 300px;
+    max-height: none;
 }
 
 /* ===== SUBMENU ===== */
@@ -997,7 +997,7 @@
 
 /* OPEN */
 .sidebar-item.open .submenu {
-    max-height: 300px;
+    max-height: none;
 }
 
 /* SUB ITEM */
@@ -4801,6 +4801,3 @@ body.sidebar-open::after {
         min-width: 0;
     }
 }
-
-/* Program destinations use the sidebar's scrolling area. */
-.sidebar-item.open .program-submenu { max-height: none; }

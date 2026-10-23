@@ -182,6 +182,7 @@ export async function createSidebar() {
 
             const a = document.createElement('a');
             a.className = 'sidebar-link';
+            a.dataset.guideNav = item.moduleKey || 'dashboard';
             a.style.cursor = 'pointer';
 
             const icon = document.createElement('i');

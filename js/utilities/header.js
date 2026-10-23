@@ -1,6 +1,7 @@
 import { logout } from "../modules/login.js?v=20260921-notification-history";
 import { createNotificationBell } from "./notif.js?v=20260921-actions";
 import { buildAppUrl } from "./app_url.js";
+import { startPageGuide } from "../guide/page.js?v=20261023-student-portal-guides";
 
 function injectHeaderProfileStyles() {
     if (document.getElementById('header-profile-styles')) return;
@@ -294,6 +295,19 @@ export function createHeader() {
 
     dropdownMenu.appendChild(dropdownHeader);
     dropdownMenu.appendChild(profileOption);
+    if (userRole !== 'guest') {
+        const guideOption = document.createElement('button');
+        guideOption.type = 'button';
+        guideOption.className = 'profile-dropdown-action';
+        guideOption.setAttribute('role', 'menuitem');
+        guideOption.innerHTML = '<span class="profile-dropdown-action-icon"><i class="bi bi-info-circle" aria-hidden="true"></i></span><span><strong>Guide</strong><small>Take a tour of this page</small></span><i class="bi bi-chevron-right profile-dropdown-chevron" aria-hidden="true"></i>';
+        guideOption.addEventListener('click', () => {
+            dropdownMenu.hidden = true;
+            profileButton.setAttribute('aria-expanded', 'false');
+            startPageGuide(profileButton);
+        });
+        dropdownMenu.appendChild(guideOption);
+    }
     dropdownMenu.appendChild(logoutOption);
 
     profileButton.addEventListener('click', () => {

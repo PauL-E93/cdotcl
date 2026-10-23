@@ -1,0 +1,16 @@
+.page-guide { position:fixed; inset:0; z-index:100000; isolation:isolate; }
+body.page-guide-dashboard .sidebar, body.page-guide-dashboard .main-content { transition:none !important; scroll-behavior:auto !important; }
+.page-guide-spotlight { position:absolute; border-radius:10px; box-shadow:0 0 0 9999px rgba(25,36,32,.72); outline:3px solid #ea9aa6; pointer-events:none; }
+.page-guide-card { position:absolute; box-sizing:border-box; width:min(370px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; padding:22px; border:1px solid #f2d7dc; border-radius:18px; background:#fff; color:#29212a; box-shadow:0 18px 55px #0003; font-family:inherit; outline:none; }
+.page-guide-card h2 { margin:0 0 10px; font-size:19px; font-weight:750; line-height:1.35; }
+.page-guide-card #page-guide-description { margin:0 0 20px; color:#666070; font-size:14px; line-height:1.65; }
+.page-guide-progress { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:10px; }
+.page-guide-progress span { width:7px; height:7px; border-radius:8px; background:#e5e3e9; }
+.page-guide-progress .is-current { width:22px; background:#b94f62; }
+.page-guide-count { margin:0 0 10px; color:#8b747b; font-size:11px; font-weight:600; }
+.page-guide-controls,.page-guide-controls>div { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.page-guide-controls button { padding:9px 13px; border:0; border-radius:9px; background:#f3f2f5; color:#49414e; font:inherit; font-size:13px; font-weight:650; cursor:pointer; }
+.page-guide-controls [data-guide="skip"] { padding-left:0; background:transparent; color:#786e7e; }
+.page-guide-controls [data-guide="next"] { background:#b94f62; color:#fff; }
+.page-guide-controls button:disabled { opacity:.4; cursor:default; }
+.page-guide-controls button:focus-visible { outline:3px solid #b94f62; outline-offset:3px; }

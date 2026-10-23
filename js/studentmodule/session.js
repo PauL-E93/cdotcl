@@ -1,11 +1,12 @@
 import { openRescheduleModal } from './reschedule.js?v=20261012-disabled-hours';
+import { startSessionDetailsGuide } from '../guide/session.js?v=20261023-student-portal-guides';
 import { canUseSessionPermission, shouldApplySessionRbac } from '../modules/session_rbac.js';
 import {
     getManagerScheduleModalActions,
     getStudentScheduleModalActions,
     formatSessionDuration,
     openScheduleDetailsModal
-} from '../utilities/schedule_details_modal.js?v=20261012-correct-no-show-access';
+} from '../utilities/schedule_details_modal.js?v=20261023-session-guides';
 
 function escapeSessionHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -44,14 +45,14 @@ export class SessionManager {
     async refreshVisibleSession() {
         const container = document.getElementById('session-content');
         if (document.hidden || !container || !this.currentEnrollmentId || this.refreshInFlight
-            || window.Swal?.isVisible() || document.querySelector('.modal.show')) return;
+            || window.Swal?.isVisible() || document.querySelector('.modal.show, .page-guide')) return;
         const enrollmentId = this.currentEnrollmentId;
         this.refreshInFlight = true;
         try {
             const filter = this.mergeConsecutiveSessions ? '&only_active=1' : '';
             const { data } = await axios.get(`../../api/student/session.php?operation=getSessionByEnrollment&enrollment_details_id=${enrollmentId}${filter}`);
             if (enrollmentId !== this.currentEnrollmentId || document.hidden || window.Swal?.isVisible()
-                || document.querySelector('.modal.show') || data.status !== 'success') return;
+                || document.querySelector('.modal.show, .page-guide') || data.status !== 'success') return;
             const fingerprint = JSON.stringify(data.data);
             if (fingerprint !== this.sessionFingerprint) this.render(data.data, container);
         } catch (error) {
@@ -426,7 +427,7 @@ export class SessionManager {
             : '';
 
         return `
-            <div class="card shadow-sm mb-4 border-0 p-4">
+            <div class="card shadow-sm mb-4 border-0 p-4" data-session-guide="overview">
                 <div class="row align-items-center">
                     <div class="col-md-2 text-center">
                         <div class="bg-light p-4 rounded-3 mb-2">
@@ -438,13 +439,13 @@ export class SessionManager {
                         <span class="badge bg-danger-subtle text-danger mb-2">CURRENT SESSION</span>
                         <h2 class="fw-bold">${data.title}</h2>
                         <p class="text-muted">${data.description}</p>
-                        <div class="d-flex flex-wrap gap-4 text-muted small">
+                        <div class="d-flex flex-wrap gap-4 text-muted small" data-session-guide="metadata">
                             <span><i class="bi bi-play-circle me-1"></i> Lesson ${data.currentLesson} of ${data.totalLessons}</span>
                             <span><i class="bi bi-clock me-1"></i> Started: ${data.startTimeFormatted}</span>
                             <span><i class="bi bi-person me-1"></i> Regular teacher: ${escapeSessionHtml(data.instructor)}</span>
                             <span><i class="bi bi-grid me-1"></i> Category: ${data.category}</span>
                         </div>
-                        <div class="mt-3">
+                        <div class="mt-3" data-session-guide="overall-progress">
                             <div class="d-flex justify-content-between small mb-1">
                                 <span>Overall Progress</span>
                                 <span class="text-danger fw-bold">${data.overallProgress}% Completed</span>
@@ -703,6 +704,7 @@ _createProgressTimeline(data) {
         openScheduleDetailsModal({
             schedule,
             actions,
+            onGuide: this.mergeConsecutiveSessions || this.isStudentView ? (modal, options, button) => startSessionDetailsGuide(modal, options, button) : null,
             formatTime: value => this.formatTime(value),
             showCenter: this.isScheduleManagerView && !this.isTeacherView,
             personLabel: this.isScheduleManagerView ? 'Student' : (schedule.substitute_teacher_id ? 'Teacher for this session' : 'Teacher'),
@@ -1080,7 +1082,7 @@ _createProgressTimeline(data) {
 
     _createDetailsSection(data) {
         return `
-            <div class="card shadow-sm border-0 p-4">
+            <div class="card shadow-sm border-0 p-4" data-session-guide="details">
                 <h5 class="fw-bold mb-4">Session Details</h5>
                 <div class="row g-4">
                     <div class="col-md-4">

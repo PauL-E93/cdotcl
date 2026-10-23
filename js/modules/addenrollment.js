@@ -770,11 +770,29 @@ function markRequiredFieldLabels(container) {
     });
 }
 
-function calculateAgeFromBirthday(birthday) {
-    if (!birthday) return null;
+function parseEnrollmentBirthday(birthday) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(birthday || '')) return null;
 
     const birthDate = new Date(`${birthday}T00:00:00`);
-    if (Number.isNaN(birthDate.getTime())) return null;
+    const [year, month, day] = birthday.split('-').map(Number);
+    if (Number.isNaN(birthDate.getTime()) || year < 1
+        || birthDate.getFullYear() !== year
+        || birthDate.getMonth() !== month - 1
+        || birthDate.getDate() !== day) return null;
+    return birthDate;
+}
+
+function getLatestEnrollmentBirthday(isPreschool, today = new Date()) {
+    const year = today.getFullYear() - (isPreschool ? 3 : 5);
+    const month = today.getMonth();
+    // Clamp February 29 to the last valid day of the cutoff year.
+    const day = Math.min(today.getDate(), new Date(year, month + 1, 0).getDate());
+    return `${String(year).padStart(4, '0')}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function calculateAgeFromBirthday(birthday) {
+    const birthDate = parseEnrollmentBirthday(birthday);
+    if (!birthDate) return null;
 
     const today = new Date();
     let age = today.getFullYear() - birthDate.getFullYear();
@@ -791,8 +809,8 @@ function calculateAgeFromBirthday(birthday) {
 }
 
 function validateBirthdayForEnrollmentCategory(birthday, isPreschool) {
-    const birthDate = new Date(`${birthday}T00:00:00`);
-    if (Number.isNaN(birthDate.getTime())) {
+    const birthDate = parseEnrollmentBirthday(birthday);
+    if (!birthDate) {
         return {
             valid: false,
             title: 'Invalid Birthday',
@@ -826,6 +844,14 @@ function validateBirthdayForEnrollmentCategory(birthday, isPreschool) {
 
 function attachBirthdayValidation(input) {
     if (!input) return;
+
+    const isPreschool = window.currentEnrollmentCategory === 'preschool';
+    input.min = '0001-01-01';
+    input.max = getLatestEnrollmentBirthday(isPreschool);
+    // Refresh the cutoff if the form stays open across midnight.
+    input.addEventListener('focus', () => {
+        input.max = getLatestEnrollmentBirthday(isPreschool);
+    });
 
     // iOS may dispatch change events while its native date picker is merely
     // being opened or adjusted. Do not reject/clear that provisional value;
@@ -1224,7 +1250,8 @@ function renderStudentStep() {
                     </div>
                     <div class="col-md-6">
                         <label class="form-label" for="birthday">Birthday</label>
-                        <input type="date" class="form-control" id="birthday" required>
+                        <input type="date" class="form-control" id="birthday" aria-describedby="birthdayHelp" required>
+                        <small id="birthdayHelp" class="student-help-text">Select a birthday for a student ${isPreschool ? 3 : 5} years old or older.</small>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label" for="genderId">Gender</label>

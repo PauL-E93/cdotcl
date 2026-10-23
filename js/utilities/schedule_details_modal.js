@@ -40,7 +40,7 @@ export function formatSessionDuration(startTime, endTime) {
 
 function detailTile(icon, label, value, highlightValue = false) {
     return `
-        <div class="tc-detail-tile">
+        <div class="tc-detail-tile" data-session-detail="${escapeHtml(label.toLowerCase().replace(/\s+/g, '-'))}">
             <div class="tc-detail-tile-icon"><i class="bi bi-${escapeHtml(icon)}"></i></div>
             <div class="tc-detail-tile-copy">
                 <div class="tc-detail-tile-label">${escapeHtml(label)}</div>
@@ -87,6 +87,7 @@ function buildContent(options) {
 
     return `
         <div class="tc-detail-scroll">
+            ${typeof options.onGuide === 'function' ? '<div class="d-flex justify-content-end mb-3"><button type="button" class="tc-detail-btn tc-detail-btn-outline" id="session-details-guide"><i class="bi bi-info-circle" aria-hidden="true"></i> Guide</button></div>' : ''}
             <div class="tc-detail-feature">
                 <div class="tc-detail-feature-icon"><i class="bi bi-clock"></i></div>
                 <div>
@@ -274,6 +275,9 @@ export function openScheduleDetailsModal(options = {}) {
             cancelButton: `tc-detail-btn tc-detail-btn-${cancel.variant || 'outline'}`
         },
         didOpen: modal => {
+            modal.querySelector('#session-details-guide')?.addEventListener('click', event => {
+                options.onGuide(modal, options, event.currentTarget);
+            });
             if (hasStartAction) {
                 const updateStartButtons = () => {
                     const availability = getSessionStartAvailability(options.schedule);
