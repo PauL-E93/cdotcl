@@ -35,6 +35,12 @@ if (in_array($requestedOperation, $ownerOnly, true) && $actor['role_name'] !== '
 if (in_array($requestedOperation, $staffOnly, true) && !in_array($actor['role_name'], $staffRoles, true)) AuthGuard::deny();
 if ($requestedOperation === 'getRbacPermissions' && $actor['user_type'] !== 'employee') AuthGuard::deny();
 $targetId = (int) (($requestedData['employee_id'] ?? null) ?: ($_GET['employee_id'] ?? 0));
+if ($requestedOperation === 'getEmployeeProfile') {
+    // Authorize exactly the query-string ID used by the profile handler.
+    $targetId = filter_var($_GET['employee_id'] ?? null, FILTER_VALIDATE_INT,
+        ['options' => ['min_range' => 1]]);
+    if ($targetId === false) AuthGuard::deny(400, 'A valid employee ID is required.');
+}
 if ($requestedOperation === 'saveSchedule'
     && !in_array($actor['role_name'], $staffRoles, true)
     && !($actor['user_type'] === 'employee' && $actor['role_name'] === 'teacher'
@@ -1140,7 +1146,7 @@ switch($operation){
     case "getEmployeePrograms": $employee->getEmployeePrograms(); break;
     case "assignPrograms": $employee->assignPrograms($json); break;
     case "addProgram": $employee->addProgram($json); break;
-    case "getEmployeeProfile": $employee->getEmployeeProfile($_GET['employee_id']); break;
+    case "getEmployeeProfile": $employee->getEmployeeProfile($targetId); break;
     case "updateEmployeeProfile": $employee->updateEmployeeProfile($json); break;
     case "updateEmployeePassword": $employee->updateEmployeePassword($json); break;
     case "updateOwnerSmtpSettings": $employee->updateOwnerSmtpSettings($json); break;

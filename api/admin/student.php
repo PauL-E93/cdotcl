@@ -22,6 +22,12 @@ if ($requestedOperation !== 'getGenders') {
     $actor = AuthGuard::requireUser();
     $staff = in_array($actor['role_name'], ['owner', 'secretary', 'branch admin'], true);
     $targetId = (int) (($requestedData['student_id'] ?? null) ?: ($_GET['student_id'] ?? 0));
+    if ($requestedOperation === 'getStudentProfile') {
+        // Authorize exactly the query-string ID used by the profile handler.
+        $targetId = filter_var($_GET['student_id'] ?? null, FILTER_VALIDATE_INT,
+            ['options' => ['min_range' => 1]]);
+        if ($targetId === false) AuthGuard::deny(400, 'A valid student ID is required.');
+    }
     if (in_array($requestedOperation, ['addStudent', 'updateStudent'], true) && !$staff
         && !($requestedOperation === 'updateStudent' && $actor['user_type'] === 'student'
             && $targetId === $actor['user_id'])) AuthGuard::deny();
@@ -320,6 +326,11 @@ class Student {
         }
         $current = AuthGuard::account($conn, 'student', (int) $data['student_id']);
         if (!$current) AuthGuard::deny(404, 'Student not found.');
+        $guardianId = (int) ($current['guardian_id'] ?? 0);
+        if (!empty($data['guardian_id'])
+            && ($guardianId <= 0 || (string) $data['guardian_id'] !== (string) $guardianId)) {
+            AuthGuard::deny(403, 'Guardian does not belong to this student.');
+        }
         if (strcasecmp((string) ($current['email'] ?? ''), trim((string) ($data['email'] ?? ''))) !== 0) {
             if ((int) ($_SESSION['student_id'] ?? 0) !== (int) $data['student_id']) {
                 if (empty($current['password_is_temporary'])) AuthGuard::deny();
@@ -343,12 +354,15 @@ class Student {
                 $g_contact = $data['guardian_contact'] ?? '';
                 $g_rel = saveGuardianRelationship($conn, validateGuardianRelationship($data['guardian_relationship'] ?? null));
 
-                $sqlGuardian = "UPDATE guardian SET name = :name, contact_number = :contact, relationship = :rel WHERE guardian_id = :guardian_id";
+                $sqlGuardian = "UPDATE guardian g INNER JOIN student s ON s.guardian_id = g.guardian_id
+                    SET g.name = :name, g.contact_number = :contact, g.relationship = :rel
+                    WHERE g.guardian_id = :guardian_id AND s.student_id = :student_id";
                 $stmtG = $conn->prepare($sqlGuardian);
                 $stmtG->bindParam(":name", $g_name);
                 $stmtG->bindParam(":contact", $g_contact);
                 $stmtG->bindParam(":rel", $g_rel);
-                $stmtG->bindParam(":guardian_id", $data['guardian_id']);
+                $stmtG->bindParam(":guardian_id", $guardianId);
+                $stmtG->bindParam(":student_id", $student_id);
                 $stmtG->execute();
             }
 
@@ -589,12 +603,7 @@ switch($operation){
         $student->updateStudentPassword($json);
         break;
     case "getStudentProfile":
-        $student_id = isset($_GET['student_id']) ? $_GET['student_id'] : null;
-        if ($student_id) {
-            $student->getStudentProfile($student_id);
-        } else {
-            echo json_encode(["status" => "error", "message" => "Student ID required"]);
-        }
+        $student->getStudentProfile($targetId);
         break;
     case "getGenders":
         $student->getGenders();

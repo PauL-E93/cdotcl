@@ -558,13 +558,13 @@ function renderBillingPlayPreModal(data, paymentMethods, enrollmentId, miscProdu
                 </span>
             </label>
             <small class="preplay-payment-file-help">Supports JPG, PNG files up to 10MB.</small>
-            <small id="modalPaymentOcrStatus" class="small text-muted d-block mt-1">
-                Enter the payment amount and reference number shown on your receipt.
-            </small>
             <div id="modalPaymentPreviewWrapper" class="preplay-payment-preview d-none">
                 <img id="modalPaymentPreviewImage" alt="Payment receipt preview" class="img-fluid rounded-2">
             </div>
 
+            <small id="modalPaymentOcrStatus" class="small text-muted d-block mt-1">
+                Enter the payment amount and reference number shown on your receipt.
+            </small>
             <div class="preplay-payment-fields">
                 <div class="preplay-payment-field">
                     <label class="form-label" for="modalPaymentAmount">Payment Amount <span class="text-danger" aria-hidden="true">*</span></label>

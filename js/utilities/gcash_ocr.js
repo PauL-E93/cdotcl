@@ -27,6 +27,32 @@
         element.className = `small d-block mt-2 text-${tone}`;
     }
 
+    function progressStatus(element, message, value = 0) {
+        let label = element.querySelector('[data-ocr-label]');
+        let progress = element.querySelector('[role="progressbar"]');
+        if (!label || !progress) {
+            status(element, '', 'primary');
+            label = document.createElement('span');
+            label.dataset.ocrLabel = 'true';
+            label.setAttribute('role', 'status');
+            label.style.cssText = 'color:var(--dark-pink, #d7768e);font-size:.95rem;font-weight:600;';
+            progress = document.createElement('span');
+            progress.setAttribute('role', 'progressbar');
+            progress.setAttribute('aria-valuemin', '0');
+            progress.setAttribute('aria-valuemax', '100');
+            progress.style.cssText = 'display:block;width:100%;height:18px;margin:10px 0 16px;background:var(--soft-pink, #f9e7ec);border-radius:999px;overflow:hidden;';
+            const fill = document.createElement('span');
+            fill.style.cssText = 'display:block;height:100%;background:var(--primary-pink, #ea9aa6);border-radius:inherit;';
+            progress.append(fill);
+            element.append(label, progress);
+        }
+        label.textContent = message;
+        progress.setAttribute('aria-label', message);
+        const percent = Math.round(Math.min(1, Math.max(0, value)) * 100);
+        progress.setAttribute('aria-valuenow', String(percent));
+        progress.firstElementChild.style.width = `${percent}%`;
+    }
+
     function normalizeReference(value) {
         return String(value || '').toUpperCase().replace(/[OQ]/g, '0').replace(/[IL]/g, '1').replace(/\D/g, '');
     }
@@ -104,7 +130,7 @@
         const worker = await Tesseract.createWorker('eng', undefined, {
             logger: message => {
                 if (message.status === 'recognizing text' && Number.isFinite(message.progress)) {
-                    onProgress?.(`Reading reference number… ${Math.round(((currentCropIndex + message.progress) / crops.length) * 100)}%`);
+                    onProgress?.('Reading reference number…', .7 + ((currentCropIndex + message.progress) / crops.length) * .3);
                 }
             }
         });
@@ -168,7 +194,7 @@
         const result = await Tesseract.recognize(file, 'eng', {
             logger: message => {
                 if (message.status === 'recognizing text' && Number.isFinite(message.progress)) {
-                    onProgress?.(`Reading receipt… ${Math.round(message.progress * 100)}%`);
+                    onProgress?.('Reading receipt…', message.progress * .7);
                 }
             }
         });
@@ -204,11 +230,11 @@
             fileInput.disabled = true;
             actionButton.disabled = true;
             if (confirmButton) confirmButton.disabled = true;
-            status(statusElement, 'Preparing the receipt reader…', 'primary');
+            progressStatus(statusElement, 'Preparing the receipt reader…');
             try {
                 const { amount, reference } = await window.readGcashReceiptImage(
                     file,
-                    message => status(statusElement, message, 'primary')
+                    (message, progress) => progressStatus(statusElement, message, progress)
                 );
                 if (options.isEnabled && !options.isEnabled()) return;
                 if (amount !== null) amountInput.value = amount.toFixed(2);

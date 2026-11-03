@@ -1,5 +1,5 @@
 import {loadAgreementRecords, agreementRecordsHtml, pendingAgreementsHtml, enrollmentAgreementPayload, submitEnrollmentAgreements} from './agreements.js?v=20261014-parent-acceptance';
-import {downloadAgreementPdf} from './agreement_pdf.js?v=20261014-download';
+import {downloadAgreementPdf} from './agreement_pdf.js?v=20261030-checkmarks-12hour';
 const container = document.getElementById('agreementRecords');
 const downloadButton = document.getElementById('downloadAgreements');
 let pdfRecords = null;

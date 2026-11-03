@@ -1060,13 +1060,13 @@ function renderStudentBillingModal(data, paymentMethods, enrollmentId, showPayme
                         </span>
                     </label>
                     <small class="student-payment-file-help">Supports JPG, PNG files up to 10MB.</small>
-                    <small id="studentPaymentOcrStatus" class="small text-muted d-block mt-1">
-                        Enter the payment amount and reference number shown on your receipt.
-                    </small>
                     <div id="studentPaymentPreviewWrapper" class="student-payment-preview d-none">
                         <img id="studentPaymentPreviewImage" alt="Payment receipt preview" class="img-fluid rounded-2">
                     </div>
 
+                    <small id="studentPaymentOcrStatus" class="small text-muted d-block mt-1">
+                        Enter the payment amount and reference number shown on your receipt.
+                    </small>
                     <div class="student-payment-fields">
                         <div class="student-payment-field">
                             <label class="form-label" for="studentPaymentAmount">Payment Amount <span class="text-danger" aria-hidden="true">*</span></label>
