@@ -1,5 +1,7 @@
 import { canUseProgramPermission, guardProgramPermission } from './program_rbac.js?v=20261001-payment-view-only';
 
+import { LANDING_COPY, normalizeLandingCopy } from './landing_content.js?v=20261105';
+
 const API_URL = '../../api/landing_page.php';
 const FIELDS = [
     'hero_eyebrow', 'hero_title', 'hero_tagline', 'hero_description',
@@ -12,8 +14,10 @@ const FIELDS = [
 const DEFAULTS = {
     hero_eyebrow: 'WELCOME TO CDO TUTOR!',
     hero_title: 'We Are\nYour Teachers!',
-    hero_tagline: 'Kind friendly, dedicated professionals',
-    hero_description: 'We are licensed professional teachers who cater all levels and all subjects with excellent and quality services.',
+    hero_tagline: LANDING_COPY.hero_tagline,
+    hero_description: LANDING_COPY.hero_description,
+    mission: LANDING_COPY.mission,
+    vision: LANDING_COPY.vision,
     highlight_1_value: '5.3K+',
     highlight_1_label: 'Followers\nand growing',
     highlight_2_value: 'Licensed',
@@ -27,6 +31,7 @@ const DEFAULTS = {
 let record = null;
 
 function populate(data = {}) {
+    data = normalizeLandingCopy(data);
     FIELDS.forEach(field => {
         const input = document.getElementById(`landing-${field}`);
         if (input) input.value = data[field] || DEFAULTS[field] || '';

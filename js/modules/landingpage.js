@@ -1,15 +1,17 @@
-﻿const GUIDING_PRINCIPLES = [
+import { buildAppUrl } from '../utilities/app_url.js';
+import { LANDING_COPY, normalizeLandingCopy } from './landing_content.js?v=20261105';
+
+const GUIDING_PRINCIPLES = [
     {
         title: 'Mission',
-        text: 'To provide good customer service satisfaction. Excellent learning that will nurture a child academically, emotionally, socially, and physically. Keeping positive, harmonious, enjoyable learning and working environments.'
+        text: LANDING_COPY.mission
     },
     {
         title: 'Vision',
-        text: 'To become a nationally-recognized learning center and school with a hundred of excellence teachers and students.'
+        text: LANDING_COPY.vision
     }
 ];
 
-import { buildAppUrl } from '../utilities/app_url.js';
 
 const CORE_VALUES = [
     ['C', 'Courageous'],
@@ -18,12 +20,6 @@ const CORE_VALUES = [
     ['T', 'Talented'],
     ['L', 'Limitless'],
     ['C', 'Courteous']
-];
-
-const ANNOUNCEMENTS = [
-    { title: 'Announcement 1', text: 'Register now for our upcoming summer review sessions!' },
-    { title: 'Announcement 2', text: 'Limited slots available for after-school tutorial classes.' },
-    { title: 'Announcement 3', text: 'Ask us about our teacher-led enrichment workshops.' }
 ];
 
 function escapeHtml(value = '') {
@@ -263,8 +259,16 @@ function initLandingNavigation(sectionLinks) {
 
 function applyLandingPageData(data) {
     if (!data) return;
+    data = normalizeLandingCopy(data);
     setTextWithLineBreaks(document.querySelector('[data-landing-hero-eyebrow]'), data.hero_eyebrow);
-    setTextWithLineBreaks(document.querySelector('[data-landing-hero-title]'), data.hero_title);
+    const title = document.querySelector('[data-landing-hero-title]');
+    if (title && String(data.hero_title || '').trim()) {
+        const [firstLine, ...remainingLines] = data.hero_title.split(/\r?\n/);
+        const accent = document.createElement('span');
+        setTextWithLineBreaks(accent, remainingLines.join('\n'));
+        title.replaceChildren(document.createTextNode(firstLine), ...(remainingLines.length
+            ? [document.createElement('br'), accent] : []));
+    }
     setTextWithLineBreaks(document.querySelector('[data-landing-hero-tagline]'), data.hero_tagline);
     setTextWithLineBreaks(document.querySelector('[data-landing-hero-description]'), data.hero_description);
     [1, 2, 3, 4].forEach(number => {
@@ -308,7 +312,6 @@ export function initLandingPage() {
         guidingPrinciplesContainer.innerHTML = createGuidingPrinciplesMarkup();
     }
 
-    renderAnnouncements(ANNOUNCEMENTS);
     if (document.querySelector('[data-enrollment-branches]')) {
         loadEnrollmentBranches();
     }
@@ -318,8 +321,14 @@ export function initLandingPage() {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return response.json();
         })
-        .then(data => applyLandingPageData(data?.[0]))
-        .catch(error => console.error('Unable to load landing page content:', error));
+        .then(data => {
+            if (data?.[0]) applyLandingPageData(data[0]);
+            else renderAnnouncements([]);
+        })
+        .catch(error => {
+            console.error('Unable to load landing page content:', error);
+            renderAnnouncements([]);
+        });
 
     heroButton?.addEventListener('click', () => {
         window.location.href = buildAppUrl('new_student_enrollment.html');

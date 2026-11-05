@@ -1879,7 +1879,7 @@ function openPrePlayPaymentHistoryModal(enrollment_details_id, viewOnly = false)
                 tableHtml += `
                     <tr>
                         <td data-label="Date">${payment.payment_date || 'N/A'}</td>
-                        <td data-label="Paid For">${payment.payment_type || payment.billing_type || 'N/A'}</td>
+                        <td data-label="Paid For">${payment.billing_type || payment.payment_type || 'N/A'}</td>
                         <td data-label="Amount">${amountBreakdown}</td>
                         <td data-label="Payment Method">${payment.payment_method || 'N/A'}</td>
                         <td data-label="Reference No.">${payment.reference_no || 'N/A'}</td>

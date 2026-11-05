@@ -38,8 +38,8 @@ import { initProductPage, openAddProductModal, openAddCategoryModal } from "./mo
 import { initProductReleasePage } from "./modules/product_release.js?v=20260825-product-modal-focus";
 import { resetEnrollmentState, openEnrollmentModal, openApplicationDownpaymentModal } from "./modules/addenrollment.js?v=20261016-birthday-picker";
 import { initNewStudentApplications } from "./modules/enrollment_applications.js?v=20261014-agreements";
-import { initLandingPage } from "./modules/landingpage.js?v=20261004-subject-names";
-import { initLandingPageManager } from "./modules/landing_page_manager.js?v=20260903-all-roles";
+import { initLandingPage } from "./modules/landingpage.js?v=20261105-consistent-layout";
+import { initLandingPageManager } from "./modules/landing_page_manager.js?v=20261105-copy";
 import { initFaqLanding, initFaqManager } from "./modules/faq.js?v=20261001-faq-archive";
 import { SessionManager } from './studentmodule/session.js?v=20261023-student-portal-guides';
 import { canUseProgramPermission, initProgramPermissions } from "./modules/program_rbac.js?v=20261001-payment-view-only";

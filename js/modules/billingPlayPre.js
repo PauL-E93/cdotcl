@@ -271,7 +271,7 @@ function downloadPrePlayBillingStatementPdf({
                 : money(amount);
             return [
                 payment.payment_date || 'N/A',
-                payment.payment_type || payment.billing_type || 'N/A',
+                payment.billing_type || payment.payment_type || 'N/A',
                 amountDisplay,
                 payment.payment_method || 'N/A',
                 payment.reference_no || 'N/A',
@@ -484,7 +484,7 @@ window.exportPrePlayBillingStatement = async function(enrollmentId) {
                             const penalty = Number(payment.penalty_paid || 0);
                             return [
                                 payment.payment_date || 'N/A',
-                                payment.payment_type || payment.billing_type || 'N/A',
+                                payment.billing_type || payment.payment_type || 'N/A',
                                 amount,
                                 Number(payment.base_amount_paid ?? Math.max(amount - penalty, 0)),
                                 penalty,

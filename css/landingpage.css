@@ -204,4 +204,24 @@ h1, h2, h3, .landing-brand__label { font-family: "Baloo 2", "Nunito", sans-serif
     main > section { scroll-margin-top: 160px; }
 }
 
+/* Preserve the line breaks and bullet lines saved in the page editor. */
+.mission-vision__panel p { white-space: pre-line; }
+
+/* Read down each column: CDO on the left and TLC on the right. */
+@media (min-width: 521px) {
+    .core-values { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, auto); grid-auto-flow: column; }
+}
+
+@media (min-width: 801px) {
+    .mission-vision__grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(340px, 1.2fr); }
+    .mission-vision__panel { min-width: 0; padding: clamp(20px, 2.3vw, 32px); }
+    .core-values li { min-width: 0; }
+    .core-values li > span:last-child { overflow-wrap: anywhere; }
+}
+
+@media (min-width: 801px) and (max-width: 1050px) {
+    .mission-vision__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .mission-vision__panel--values { grid-column: 1 / -1; }
+}
+
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { transition: none !important; } }
